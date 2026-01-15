@@ -18,6 +18,16 @@ cmake --build build -j
 ./build/ai-z
 ```
 
+NVIDIA PCIe bandwidth benchmark (CUDA):
+
+- Enabled by default if a CUDA Toolkit is found.
+- Force enable/disable with `-DAI_Z_ENABLE_CUDA=ON/OFF`.
+
+```bash
+cmake -S . -B build -DAI_Z_ENABLE_CUDA=ON
+cmake --build build -j
+```
+
 ### Windows
 
 Prereqs:

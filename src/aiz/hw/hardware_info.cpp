@@ -2,23 +2,97 @@
 
 #if defined(_WIN32)
 
+#include <array>
+#include <cctype>
+#include <cstdio>
 #include <cstdlib>
+#include <optional>
+#include <string>
+#include <windows.h>
 
 namespace aiz {
 
+static std::string trim(std::string s) {
+  auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
+  while (!s.empty() && isSpace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
+  while (!s.empty() && isSpace(static_cast<unsigned char>(s.back()))) s.pop_back();
+  return s;
+}
+
+static std::optional<std::string> runCommand(const std::string& cmd) {
+  std::array<char, 4096> buf{};
+  std::string out;
+
+  FILE* pipe = _popen(cmd.c_str(), "r");
+  if (!pipe) return std::nullopt;
+
+  while (fgets(buf.data(), static_cast<int>(buf.size()), pipe) != nullptr) {
+    out += buf.data();
+    if (out.size() > 64 * 1024) break;
+  }
+
+  const int rc = _pclose(pipe);
+  if (rc != 0) return std::nullopt;
+
+  out = trim(out);
+  if (out.empty()) return std::nullopt;
+  return out;
+}
+
+static std::string probeWindowsKernelVersion() {
+  using RtlGetVersionFn = LONG(WINAPI*)(PRTL_OSVERSIONINFOW);
+  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  if (!ntdll) return "unknown";
+
+  auto rtlGetVersion = reinterpret_cast<RtlGetVersionFn>(GetProcAddress(ntdll, "RtlGetVersion"));
+  if (!rtlGetVersion) return "unknown";
+
+  RTL_OSVERSIONINFOW ver{};
+  ver.dwOSVersionInfoSize = sizeof(ver);
+  if (rtlGetVersion(&ver) != 0) return "unknown";
+
+  char buf[64]{};
+  std::snprintf(buf, sizeof(buf), "%lu.%lu.%lu", static_cast<unsigned long>(ver.dwMajorVersion),
+                static_cast<unsigned long>(ver.dwMinorVersion), static_cast<unsigned long>(ver.dwBuildNumber));
+  return std::string(buf);
+}
+
 std::vector<std::string> HardwareInfo::toLines() const {
-  return {
+  const bool hasPerGpu = !perGpuLines.empty();
+  std::vector<std::string> lines = {
       "OS: " + (osPretty.empty() ? std::string("unknown") : osPretty),
+      "Kernel: " + (kernelVersion.empty() ? std::string("unknown") : kernelVersion),
       "CPU: " + (cpuName.empty() ? std::string("unknown") : cpuName),
       "RAM: " + (ramSummary.empty() ? std::string("unknown") : ramSummary),
-      "GPU: " + (gpuName.empty() ? std::string("unknown") : gpuName),
+      // If we have per-GPU lines, the single GPU line is redundant.
+      hasPerGpu ? std::string() : ("GPU: " + (gpuName.empty() ? std::string("unknown") : gpuName)),
       "GPU Driver: " + (gpuDriver.empty() ? std::string("unknown") : gpuDriver),
   };
+
+  // Drop any empty placeholders (e.g., the omitted GPU line).
+  lines.erase(std::remove_if(lines.begin(), lines.end(), [](const std::string& s) { return s.empty(); }), lines.end());
+
+  for (const auto& l : perGpuLines) lines.push_back(l);
+
+    lines.insert(lines.end(), {
+      // If we have per-GPU lines, VRAM is already shown per GPU.
+      hasPerGpu ? std::string() : ("VRAM: " + (vramSummary.empty() ? std::string("unknown") : vramSummary)),
+      "CUDA: " + (cudaVersion.empty() ? std::string("unknown") : cudaVersion),
+      "NVML: " + (nvmlVersion.empty() ? std::string("unknown") : nvmlVersion),
+      "ROCm: " + (rocmVersion.empty() ? std::string("unknown") : rocmVersion),
+      "OpenGL: " + (openglVersion.empty() ? std::string("unknown") : openglVersion),
+      "Vulkan: " + (vulkanVersion.empty() ? std::string("unknown") : vulkanVersion),
+  });
+
+    lines.erase(std::remove_if(lines.begin(), lines.end(), [](const std::string& s) { return s.empty(); }), lines.end());
+
+  return lines;
 }
 
 HardwareInfo HardwareInfo::probe() {
   HardwareInfo info;
   info.osPretty = "Windows";
+  info.kernelVersion = probeWindowsKernelVersion();
   if (const char* cpu = std::getenv("PROCESSOR_IDENTIFIER")) {
     info.cpuName = cpu;
   } else {
@@ -27,6 +101,14 @@ HardwareInfo HardwareInfo::probe() {
   info.ramSummary = "unknown";
   info.gpuName = "unknown";
   info.gpuDriver = "unknown";
+  info.vramSummary = "unknown";
+  info.cudaVersion = runCommand("nvidia-smi 2>nul | findstr /C:\"CUDA Version\"")
+                         .value_or("unknown");
+  info.nvmlVersion = runCommand("nvidia-smi -q 2>nul | findstr /C:\"NVML Version\"")
+                         .value_or("unknown");
+  info.rocmVersion = "unknown";
+  info.openglVersion = "unknown";
+  info.vulkanVersion = "unknown";
   return info;
 }
 
@@ -36,9 +118,11 @@ HardwareInfo HardwareInfo::probe() {
 
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -111,6 +195,164 @@ static std::optional<std::string> runCommand(const std::string& cmd) {
   out = trim(out);
   if (out.empty()) return std::nullopt;
   return out;
+}
+
+static std::string fmtGiBFromMiB(std::uint64_t mib) {
+  const double gib = static_cast<double>(mib) / 1024.0;
+  std::ostringstream oss;
+  oss.setf(std::ios::fixed);
+  oss.precision(1);
+  oss << gib << " GiB";
+  return oss.str();
+}
+
+static std::string fmtGFromMiB(std::uint64_t mib) {
+  const double g = static_cast<double>(mib) / 1024.0;
+  const long rounded = static_cast<long>(std::llround(g));
+  if (std::abs(g - static_cast<double>(rounded)) < 0.05) {
+    return std::to_string(rounded) + "G";
+  }
+  std::ostringstream oss;
+  oss.setf(std::ios::fixed);
+  oss.precision(1);
+  oss << g << "G";
+  return oss.str();
+}
+
+static std::vector<std::string> probePerGpuLinesNvidia() {
+  // Example output rows (csv,noheader,nounits):
+  // 0, NVIDIA GeForce RTX 4090, 24220
+  const auto out = runCommand(
+      "nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader,nounits 2>/dev/null");
+  if (!out) return {};
+
+  // Match the user's requested formatting:
+  // GPU0: <name>
+  //            VRAM: 10G
+  const std::string indent = " ";
+  std::vector<std::string> lines;
+  std::istringstream iss(*out);
+  std::string line;
+  while (std::getline(iss, line)) {
+    line = trim(line);
+    if (line.empty()) continue;
+
+    // Split by commas.
+    std::string a, b, c;
+    {
+      std::istringstream ls(line);
+      if (!std::getline(ls, a, ',')) continue;
+      if (!std::getline(ls, b, ',')) continue;
+      if (!std::getline(ls, c, ',')) continue;
+    }
+    a = trim(a);
+    b = trim(b);
+    c = trim(c);
+
+    std::uint64_t mib = 0;
+    {
+      std::istringstream cs(c);
+      cs >> mib;
+    }
+    if (a.empty() || b.empty() || mib == 0) continue;
+
+    {
+      std::ostringstream l;
+      l << "GPU" << a << ": " << b;
+      lines.push_back(l.str());
+    }
+    {
+      std::ostringstream l;
+      l << indent << "VRAM: " << fmtGFromMiB(mib);
+      lines.push_back(l.str());
+    }
+  }
+
+  return lines;
+}
+
+static std::string probeKernelVersion() {
+  return runCommand("uname -r 2>/dev/null").value_or("unknown");
+}
+
+static std::string probeCudaVersion() {
+  // nvidia-smi output usually contains "CUDA Version: X.Y".
+  const auto v = runCommand(
+      "nvidia-smi 2>/dev/null | grep -o 'CUDA Version: [0-9.]*' | head -n 1 | awk '{print $3}'");
+  return v.value_or("unknown");
+}
+
+static std::string probeNvmlVersion() {
+  const auto v = runCommand(
+      "nvidia-smi -q 2>/dev/null | awk -F: '/NVML Version/{gsub(/^[ \\t]+/,\"\",$2); print $2; exit}'");
+  return v.value_or("unknown");
+}
+
+static std::string probeVramSummary() {
+  // NVIDIA: sum memory.total across all GPUs (MiB).
+  const auto out = runCommand(
+      "nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null");
+  if (!out) return "unknown";
+
+  std::istringstream iss(*out);
+  std::string line;
+  std::uint64_t sumMiB = 0;
+  int gpus = 0;
+  while (std::getline(iss, line)) {
+    line = trim(line);
+    if (line.empty()) continue;
+    std::uint64_t mib = 0;
+    std::istringstream ls(line);
+    ls >> mib;
+    if (mib == 0) continue;
+    sumMiB += mib;
+    ++gpus;
+  }
+
+  if (gpus <= 0 || sumMiB == 0) return "unknown";
+  if (gpus == 1) return fmtGiBFromMiB(sumMiB);
+
+  std::ostringstream oss;
+  oss << fmtGiBFromMiB(sumMiB) << " (" << gpus << " GPUs)";
+  return oss.str();
+}
+
+static std::string probeRocmVersion() {
+  // Common location on Linux.
+  {
+    std::ifstream in("/opt/rocm/.info/version");
+    if (in.is_open()) {
+      std::string v;
+      std::getline(in, v);
+      v = trim(v);
+      if (!v.empty()) return v;
+    }
+  }
+
+  // Best-effort CLI fallbacks.
+  if (auto v = runCommand("rocm-smi --version 2>/dev/null | head -n 1")) return *v;
+  if (auto v = runCommand("rocminfo 2>/dev/null | head -n 1")) return *v;
+  return "unknown";
+}
+
+static std::string probeOpenGLVersion() {
+  // Requires mesa-utils (glxinfo). If absent, returns unknown.
+  const auto v = runCommand(
+      "glxinfo -B 2>/dev/null | awk -F: '/OpenGL version string/{gsub(/^[ \\t]+/,\"\",$2); print $2; exit}'");
+  return v.value_or("unknown");
+}
+
+static std::string probeVulkanVersion() {
+  // Requires vulkan-tools (vulkaninfo). If absent, returns unknown.
+  if (auto v = runCommand(
+          "vulkaninfo --summary 2>/dev/null | awk -F: '/Vulkan Instance Version/{gsub(/^[ \\t]+/,\"\",$2); print $2; exit}'")) {
+    return *v;
+  }
+  if (auto v = runCommand(
+          "vulkaninfo 2>/dev/null | awk -F: '/Vulkan Instance Version/{gsub(/^[ \\t]+/,\"\",$2); print $2; exit}'")) {
+    return *v;
+  }
+  return "unknown";
 }
 
 static std::string probeCpuName() {
@@ -226,22 +468,49 @@ static std::string probeGpuDriver() {
 }
 
 std::vector<std::string> HardwareInfo::toLines() const {
-  return {
+  const bool hasPerGpu = !perGpuLines.empty();
+  std::vector<std::string> lines = {
       "OS: " + (osPretty.empty() ? std::string("unknown") : osPretty),
+      "Kernel: " + (kernelVersion.empty() ? std::string("unknown") : kernelVersion),
       "CPU: " + (cpuName.empty() ? std::string("unknown") : cpuName),
       "RAM: " + (ramSummary.empty() ? std::string("unknown") : ramSummary),
-      "GPU: " + (gpuName.empty() ? std::string("unknown") : gpuName),
+      hasPerGpu ? std::string() : ("GPU: " + (gpuName.empty() ? std::string("unknown") : gpuName)),
       "GPU Driver: " + (gpuDriver.empty() ? std::string("unknown") : gpuDriver),
   };
+
+  lines.erase(std::remove_if(lines.begin(), lines.end(), [](const std::string& s) { return s.empty(); }), lines.end());
+
+  for (const auto& l : perGpuLines) lines.push_back(l);
+
+    lines.insert(lines.end(), {
+      hasPerGpu ? std::string() : ("VRAM: " + (vramSummary.empty() ? std::string("unknown") : vramSummary)),
+      "CUDA: " + (cudaVersion.empty() ? std::string("unknown") : cudaVersion),
+      "NVML: " + (nvmlVersion.empty() ? std::string("unknown") : nvmlVersion),
+      "ROCm: " + (rocmVersion.empty() ? std::string("unknown") : rocmVersion),
+      "OpenGL: " + (openglVersion.empty() ? std::string("unknown") : openglVersion),
+      "Vulkan: " + (vulkanVersion.empty() ? std::string("unknown") : vulkanVersion),
+  });
+
+    lines.erase(std::remove_if(lines.begin(), lines.end(), [](const std::string& s) { return s.empty(); }), lines.end());
+
+  return lines;
 }
 
 HardwareInfo HardwareInfo::probe() {
   HardwareInfo info;
   info.osPretty = readOsPrettyName().value_or("unknown");
+  info.kernelVersion = probeKernelVersion();
   info.cpuName = probeCpuName();
   info.ramSummary = probeRamSummary();
   info.gpuName = probeGpuName();
   info.gpuDriver = probeGpuDriver();
+  info.perGpuLines = probePerGpuLinesNvidia();
+  info.vramSummary = probeVramSummary();
+  info.cudaVersion = probeCudaVersion();
+  info.nvmlVersion = probeNvmlVersion();
+  info.rocmVersion = probeRocmVersion();
+  info.openglVersion = probeOpenGLVersion();
+  info.vulkanVersion = probeVulkanVersion();
   return info;
 }
 

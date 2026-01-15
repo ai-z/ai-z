@@ -420,6 +420,35 @@ static void renderHardware(Frame& out, int bodyTop, const TuiState& state) {
 
 static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
   int y = bodyTop + 1;
+  // Two-column layout: left = benchmark names, right = results.
+  std::size_t maxNameLen = 0;
+  for (const auto& b : state.benches) {
+    if (!b) continue;
+    std::string n = b->name();
+    if (!b->isAvailable()) n += " [unavailable]";
+    maxNameLen = std::max(maxNameLen, n.size());
+  }
+  const int minValueCol = 24;
+  const int maxValueCol = std::max(0, out.width / 2);
+  const int valueCol = std::min(out.width - 1, std::max(minValueCol, std::min(maxValueCol, static_cast<int>(maxNameLen) + 4)));
+
+  // Inside results column, align "label: value" pairs.
+  std::size_t maxLabelLen = 0;
+  for (const auto& r : state.benchResults) {
+    std::size_t start = 0;
+    while (start <= r.size()) {
+      const std::size_t end = r.find('\n', start);
+      const std::string line = (end == std::string::npos) ? r.substr(start) : r.substr(start, end - start);
+      const std::size_t sep = line.find(": ");
+      if (sep != std::string::npos) maxLabelLen = std::max(maxLabelLen, sep);
+      if (end == std::string::npos) break;
+      start = end + 1;
+    }
+  }
+  maxLabelLen = std::min<std::size_t>(maxLabelLen, 8);
+  constexpr int kResultIndent = 4;
+  const int labelCol = std::min(out.width - 1, valueCol + kResultIndent);
+  const int valCol = std::min(out.width - 1, labelCol + static_cast<int>(maxLabelLen) + 2);
 
   // Special entry: run all.
   {
@@ -429,26 +458,73 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
       drawBodyLine(out, y, line, Style::Value);
       ++y;
     }
+
+    // Blank spacer line.
+    if (y < out.height - 2) {
+      drawBodyLine(out, y, L"", Style::Value);
+      ++y;
+    }
   }
 
   for (int i = 0; i < static_cast<int>(state.benches.size()); ++i) {
     const int rowIndex = i + 1;  // shifted by run-all
     const auto& b = state.benches[static_cast<std::size_t>(i)];
 
-    std::wstring line = (rowIndex == state.benchmarksSel ? L"> " : L"  ");
-    line += widenAscii(b ? b->name() : std::string("(null)"));
-
-    if (b && !b->isAvailable()) {
-      line += L" [unavailable]";
-    }
-
-    if (i >= 0 && i < static_cast<int>(state.benchResults.size()) && !state.benchResults[static_cast<std::size_t>(i)].empty()) {
-      line += L"  =  ";
-      line += widenAscii(state.benchResults[static_cast<std::size_t>(i)]);
-    }
+    const std::wstring prefix = (rowIndex == state.benchmarksSel ? L"> " : L"  ");
+    const std::string name = b ? b->name() : std::string("(null)");
+    const bool avail = b && b->isAvailable();
+    const std::string suffix = (b && !avail) ? " [unavailable]" : std::string{};
 
     if (y < out.height - 2) {
-      drawBodyLine(out, y, line, Style::Value);
+      // Clear line.
+      for (int x = 0; x < out.width; ++x) {
+        auto& c = out.at(x, y);
+        c.ch = L' ';
+        c.style = static_cast<std::uint16_t>(Style::Default);
+      }
+
+      // Left column: benchmark name.
+      drawText(out, 0, y, prefix, Style::Value);
+      drawText(out, static_cast<int>(prefix.size()), y, widenAscii(name), avail ? Style::Section : Style::Value);
+      if (!suffix.empty()) {
+        const int sx = static_cast<int>(prefix.size() + name.size());
+        drawText(out, sx, y, widenAscii(suffix), Style::Value);
+      }
+
+      // Right column: results.
+      if (i >= 0 && i < static_cast<int>(state.benchResults.size()) && !state.benchResults[static_cast<std::size_t>(i)].empty()) {
+        std::string r = state.benchResults[static_cast<std::size_t>(i)];
+        std::size_t start = 0;
+        int ry = y;
+        while (start <= r.size() && ry < out.height - 2) {
+          const std::size_t end = r.find('\n', start);
+          const std::string line = (end == std::string::npos) ? r.substr(start) : r.substr(start, end - start);
+
+          if (ry != y) {
+            for (int x = 0; x < out.width; ++x) {
+              auto& c = out.at(x, ry);
+              c.ch = L' ';
+              c.style = static_cast<std::uint16_t>(Style::Default);
+            }
+          }
+
+          const std::size_t sep = line.find(": ");
+          if (sep != std::string::npos) {
+            const std::string label = line.substr(0, sep + 1);
+            const std::string val = line.substr(sep + 2);
+            if (labelCol < out.width) drawText(out, labelCol, ry, widenAscii(label), Style::Value);
+            if (valCol < out.width) drawText(out, valCol, ry, widenAscii(val), Style::Value);
+          } else {
+            if (labelCol < out.width) drawText(out, labelCol, ry, widenAscii(line), Style::Value);
+          }
+
+          if (end == std::string::npos) break;
+          start = end + 1;
+          ++ry;
+        }
+        y = ry;
+      }
+
       ++y;
     }
   }

@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(AI_Z_ENABLE_NVML "Enable NVIDIA NVML backend" ON)
-option(AI_Z_ENABLE_CUDA "Enable CUDA benchmarks/backends" OFF)
+option(AI_Z_ENABLE_CUDA "Enable CUDA benchmarks/backends" ON)
 option(AI_Z_ENABLE_HIP "Enable HIP benchmarks/backends" OFF)
 option(AI_Z_ENABLE_LIBTORCH "Enable LibTorch (PyTorch C++ API) benchmark" OFF)
 option(AI_Z_ENABLE_LEVEL_ZERO "Enable Intel Level Zero backend" OFF)
@@ -59,6 +59,23 @@ if (UNIX)
   target_link_libraries(ai-z PRIVATE dl)
 endif()
 
+if (AI_Z_ENABLE_LIBTORCH)
+  find_package(Torch REQUIRED)
+  target_link_libraries(ai-z PRIVATE ${TORCH_LIBRARIES})
+  target_compile_definitions(ai-z PRIVATE AI_Z_HAS_TORCH)
+endif()
+
+if (AI_Z_ENABLE_CUDA)
+  find_package(CUDAToolkit QUIET)
+  if (NOT CUDAToolkit_FOUND)
+    message(WARNING "AI_Z_ENABLE_CUDA=ON but CUDAToolkit not found; disabling CUDA backend. Configure with -DAI_Z_ENABLE_CUDA=OFF to silence.")
+    set(AI_Z_ENABLE_CUDA OFF CACHE BOOL "Enable CUDA benchmarks/backends" FORCE)
+  else()
+    target_sources(ai-z PRIVATE src/aiz/bench/pcie_bandwidth_cuda.cpp)
+    target_link_libraries(ai-z PRIVATE CUDA::cudart)
+  endif()
+endif()
+
 target_compile_definitions(ai-z PRIVATE
   $<$<BOOL:${AI_Z_ENABLE_NVML}>:AI_Z_ENABLE_NVML>
   $<$<BOOL:${AI_Z_ENABLE_CUDA}>:AI_Z_ENABLE_CUDA>
@@ -67,12 +84,6 @@ target_compile_definitions(ai-z PRIVATE
   $<$<BOOL:${AI_Z_ENABLE_LEVEL_ZERO}>:AI_Z_ENABLE_LEVEL_ZERO>
   $<$<BOOL:${AI_Z_ENABLE_SYCL}>:AI_Z_ENABLE_SYCL>
 )
-
-if (AI_Z_ENABLE_LIBTORCH)
-  find_package(Torch REQUIRED)
-  target_link_libraries(ai-z PRIVATE ${TORCH_LIBRARIES})
-  target_compile_definitions(ai-z PRIVATE AI_Z_HAS_TORCH)
-endif()
 
 # Keep warnings reasonable for early scaffold.
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

@@ -3,9 +3,14 @@
 
 #include <chrono>
 #include <memory>
+#include <sstream>
 #include <string>
 
 namespace aiz {
+
+#ifdef AI_Z_ENABLE_CUDA
+std::unique_ptr<IBenchmark> makePcieBandwidthBenchmarkCuda();
+#endif
 
 namespace {
 
@@ -25,7 +30,13 @@ public:
     const double sec = std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count();
     const double ops = static_cast<double>(iters) * 2.0;  // mul+add
     const double gops = (ops / sec) / 1e9;
-    return BenchResult{true, "CPU loop ~" + std::to_string(gops) + " Gop/s"};
+    {
+      std::ostringstream oss;
+      oss.setf(std::ios::fixed);
+      oss.precision(2);
+      oss << gops;
+      return BenchResult{true, "FLOPS: " + oss.str() + " Gop/s"};
+    }
   }
 };
 
@@ -33,7 +44,11 @@ class PcieBandwidthStub final : public IBenchmark {
 public:
   std::string name() const override { return "PCIe bandwidth test"; }
   bool isAvailable() const override { return false; }
-  BenchResult run() override { return BenchResult{false, "Not built with a PCIe transfer backend (CUDA/HIP/SYCL)."}; }
+  BenchResult run() override {
+    return BenchResult{false,
+                       "Not built with a PCIe transfer backend. Reconfigure with -DAI_Z_ENABLE_CUDA=ON (NVIDIA), "
+                       "or enable HIP/SYCL in a future pass."};
+  }
 };
 
 class TorchMatmulStub final : public IBenchmark {
@@ -58,7 +73,13 @@ public:
 }  // namespace
 
 // Simple factory helpers for UI.
-std::unique_ptr<IBenchmark> makePcieBandwidthBenchmark() { return std::make_unique<PcieBandwidthStub>(); }
+std::unique_ptr<IBenchmark> makePcieBandwidthBenchmark() {
+#ifdef AI_Z_ENABLE_CUDA
+  return makePcieBandwidthBenchmarkCuda();
+#else
+  return std::make_unique<PcieBandwidthStub>();
+#endif
+}
 std::unique_ptr<IBenchmark> makeFlopsBenchmark() { return std::make_unique<FlopsStub>(); }
 std::unique_ptr<IBenchmark> makeTorchMatmulBenchmark() { return std::make_unique<TorchMatmulStub>(); }
 

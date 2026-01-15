@@ -586,7 +586,40 @@ static void drawBenchmarks(
     const std::vector<std::unique_ptr<IBenchmark>>& benches,
     const std::vector<std::string>& benchResults,
     const std::string& lastResult) {
+  const bool colors = has_colors() != 0;
   int y = 2;
+
+  // Two-column layout: left = benchmark names, right = results.
+  // Keep results in their own column rather than directly under the benchmark title.
+  std::size_t maxNameLen = 0;
+  for (const auto& b : benches) {
+    if (!b) continue;
+    std::string n = b->name();
+    if (!b->isAvailable()) n += " [unavailable]";
+    maxNameLen = std::max(maxNameLen, n.size());
+  }
+  // Value column starts after the name column, but clamp so it doesn't drift too far right.
+  const int minValueCol = 24;
+  const int maxValueCol = std::max(0, cols / 2);
+  const int valueCol = std::min(cols - 1, std::max(minValueCol, std::min(maxValueCol, static_cast<int>(maxNameLen) + 4)));
+
+  // Inside the results column, align "label: value" pairs.
+  std::size_t maxResultLabelLen = 0;
+  for (const auto& r : benchResults) {
+    std::size_t start = 0;
+    while (start <= r.size()) {
+      const std::size_t end = r.find('\n', start);
+      const std::string line = (end == std::string::npos) ? r.substr(start) : r.substr(start, end - start);
+      const std::size_t sep = line.find(": ");
+      if (sep != std::string::npos) maxResultLabelLen = std::max(maxResultLabelLen, sep);  // label only
+      if (end == std::string::npos) break;
+      start = end + 1;
+    }
+  }
+  maxResultLabelLen = std::min<std::size_t>(maxResultLabelLen, 8);
+  constexpr int kResultIndent = 4;  // indent inside the results column
+  const int labelCol = std::min(cols - 1, valueCol + kResultIndent);
+  const int valCol = std::min(cols - 1, labelCol + static_cast<int>(maxResultLabelLen) + 2);
 
   // Special entry: run all.
   {
@@ -594,23 +627,63 @@ static void drawBenchmarks(
     mvhline(y, 0, ' ', cols);
     mvaddnstr(y, 0, line.c_str(), cols);
     ++y;
+    // Blank spacer line between "run all" and individual benches.
+    if (y < rows - 2) {
+      mvhline(y, 0, ' ', cols);
+      ++y;
+    }
   }
 
   for (int i = 0; i < static_cast<int>(benches.size()); ++i) {
     const int rowIndex = i + 1;  // shifted by "run all"
     const auto& b = benches[static_cast<std::size_t>(i)];
-    std::string line = (rowIndex == selected ? "> " : "  ") + b->name();
-    if (!b->isAvailable()) {
-      line += " [unavailable]";
-    }
-
-    if (i >= 0 && i < static_cast<int>(benchResults.size()) && !benchResults[static_cast<std::size_t>(i)].empty()) {
-      line += "  =  ";
-      line += benchResults[static_cast<std::size_t>(i)];
-    }
-
     mvhline(y, 0, ' ', cols);
-    mvaddnstr(y, 0, line.c_str(), cols);
+
+    const std::string prefix = (rowIndex == selected ? "> " : "  ");
+    const std::string name = b ? b->name() : std::string("(null)");
+    const bool avail = b && b->isAvailable();
+    const std::string suffix = (b && !avail) ? " [unavailable]" : std::string{};
+
+    // Left column: benchmark name.
+    mvaddnstr(y, 0, prefix.c_str(), cols);
+    if (colors && avail) attron(COLOR_PAIR(4) | A_BOLD);
+    mvaddnstr(y, static_cast<int>(prefix.size()), name.c_str(), std::max(0, cols - static_cast<int>(prefix.size())));
+    if (colors && avail) attroff(COLOR_PAIR(4) | A_BOLD);
+    if (!suffix.empty()) {
+      const int sx = static_cast<int>(prefix.size() + name.size());
+      if (sx < cols) mvaddnstr(y, sx, suffix.c_str(), cols - sx);
+    }
+
+    // Right column: results.
+    if (i >= 0 && i < static_cast<int>(benchResults.size()) && !benchResults[static_cast<std::size_t>(i)].empty()) {
+      std::string r = benchResults[static_cast<std::size_t>(i)];
+      std::size_t start = 0;
+      int ry = y;
+      while (start <= r.size() && ry < rows - 2) {
+        const std::size_t end = r.find('\n', start);
+        const std::string line = (end == std::string::npos) ? r.substr(start) : r.substr(start, end - start);
+
+        if (ry != y) {
+          mvhline(ry, 0, ' ', cols);
+        }
+
+        const std::size_t sep = line.find(": ");
+        if (sep != std::string::npos) {
+          const std::string label = line.substr(0, sep + 1);
+          const std::string val = line.substr(sep + 2);
+          if (labelCol < cols) mvaddnstr(ry, labelCol, label.c_str(), cols - labelCol);
+          if (valCol < cols) mvaddnstr(ry, valCol, val.c_str(), cols - valCol);
+        } else {
+          if (labelCol < cols) mvaddnstr(ry, labelCol, line.c_str(), cols - labelCol);
+        }
+
+        if (end == std::string::npos) break;
+        start = end + 1;
+        ++ry;
+      }
+      y = ry;
+    }
+
     ++y;
   }
 
@@ -972,7 +1045,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       drawHeader(cols, "AI-Z - Help");
       drawHelp(rows, cols);
     } else if (screen == Screen::Benchmarks) {
-      drawHeader(cols, "AI-Z - Benchmarks");
+      // Show the same basic metrics header as the main screen.
+      drawTitleBarTimelines(cols, cpu, pcieRx, pcieTx, ram, gpuTel);
       drawBenchmarks(rows, cols, benchSelected, benches, benchResults, lastBenchResult);
     } else if (screen == Screen::Config) {
       drawHeader(cols, "AI-Z - Config");
@@ -1021,10 +1095,6 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
               lastBenchResult = "Running all...";
               for (std::size_t i = 0; i < benches.size(); ++i) {
                 auto& b = benches[i];
-                if (!b->isAvailable()) {
-                  benchResults[i] = "unavailable";
-                  continue;
-                }
                 const BenchResult r = b->run();
                 benchResults[i] = r.ok ? r.summary : ("FAIL: " + r.summary);
               }
@@ -1032,14 +1102,9 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
             } else {
               const int benchIndex = benchSelected - 1;
               auto& b = benches[static_cast<std::size_t>(benchIndex)];
-              if (!b->isAvailable()) {
-                benchResults[static_cast<std::size_t>(benchIndex)] = "unavailable";
-                lastBenchResult = "Unavailable.";
-              } else {
-                const BenchResult r = b->run();
-                benchResults[static_cast<std::size_t>(benchIndex)] = r.ok ? r.summary : ("FAIL: " + r.summary);
-                lastBenchResult = r.ok ? ("OK: " + r.summary) : ("FAIL: " + r.summary);
-              }
+              const BenchResult r = b->run();
+              benchResults[static_cast<std::size_t>(benchIndex)] = r.ok ? r.summary : ("FAIL: " + r.summary);
+              lastBenchResult = r.ok ? ("OK: " + r.summary) : ("FAIL: " + r.summary);
             }
           }
         } else if (screen == Screen::Config) {

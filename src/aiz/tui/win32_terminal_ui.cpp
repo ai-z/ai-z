@@ -516,10 +516,6 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
                   state.lastBenchResult = "Running all...";
                   for (std::size_t i = 0; i < state.benches.size(); ++i) {
                     auto& b = state.benches[i];
-                    if (!b || !b->isAvailable()) {
-                      state.benchResults[i] = "unavailable";
-                      continue;
-                    }
                     const BenchResult r = b->run();
                     state.benchResults[i] = r.ok ? r.summary : ("FAIL: " + r.summary);
                   }
@@ -528,14 +524,9 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
                   const int benchIndex = sel - 1;
                   if (benchIndex >= 0 && benchIndex < static_cast<int>(state.benches.size())) {
                     auto& b = state.benches[static_cast<std::size_t>(benchIndex)];
-                    if (!b || !b->isAvailable()) {
-                      state.benchResults[static_cast<std::size_t>(benchIndex)] = "unavailable";
-                      state.lastBenchResult = "Unavailable.";
-                    } else {
-                      const BenchResult r = b->run();
-                      state.benchResults[static_cast<std::size_t>(benchIndex)] = r.ok ? r.summary : ("FAIL: " + r.summary);
-                      state.lastBenchResult = r.ok ? ("OK: " + r.summary) : ("FAIL: " + r.summary);
-                    }
+                    const BenchResult r = b->run();
+                    state.benchResults[static_cast<std::size_t>(benchIndex)] = r.ok ? r.summary : ("FAIL: " + r.summary);
+                    state.lastBenchResult = r.ok ? ("OK: " + r.summary) : ("FAIL: " + r.summary);
                   }
                 }
               }
