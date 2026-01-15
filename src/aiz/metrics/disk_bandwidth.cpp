@@ -2,12 +2,94 @@
 
 #if defined(_WIN32)
 
+#ifndef NOMINMAX
+#  define NOMINMAX
+#endif
+
+#include <windows.h>
+
+#include <pdh.h>
+#include <pdhmsg.h>
+
+#include <cstdio>
+#include <string>
+
 namespace aiz {
 
 DiskBandwidthCollector::DiskBandwidthCollector(std::string devicePrefix) : devicePrefix_(std::move(devicePrefix)) {}
 
 std::optional<Sample> DiskBandwidthCollector::sample() {
-  return std::nullopt;
+  static bool initialized = false;
+  static bool warmed = false;
+  static HQUERY query = nullptr;
+  static HCOUNTER counter = nullptr;
+
+  if (!initialized) {
+    initialized = true;
+
+    const PDH_STATUS qs = PdhOpenQueryW(nullptr, 0, &query);
+    if (qs != ERROR_SUCCESS) {
+      query = nullptr;
+      return std::nullopt;
+    }
+
+    // Prefer total disk bytes/sec across all physical disks.
+    // Notes:
+    // - On some systems/locales/counter sets this may not exist; we fall back below.
+    const wchar_t* totalPath = L"\\PhysicalDisk(_Total)\\Disk Bytes/sec";
+    PDH_STATUS cs = PdhAddEnglishCounterW(query, totalPath, 0, &counter);
+    if (cs != ERROR_SUCCESS) {
+      // Fallback: LogicalDisk is often present.
+      const wchar_t* fallbackPath = L"\\LogicalDisk(_Total)\\Disk Bytes/sec";
+      cs = PdhAddEnglishCounterW(query, fallbackPath, 0, &counter);
+    }
+
+    if (cs != ERROR_SUCCESS) {
+      PdhCloseQuery(query);
+      query = nullptr;
+      counter = nullptr;
+      return std::nullopt;
+    }
+
+    // First collect is required to initialize the counter.
+    if (PdhCollectQueryData(query) != ERROR_SUCCESS) {
+      PdhCloseQuery(query);
+      query = nullptr;
+      counter = nullptr;
+      return std::nullopt;
+    }
+
+    warmed = false;
+    return Sample{0.0, "MB/s", "warming"};
+  }
+
+  if (query == nullptr || counter == nullptr) {
+    return std::nullopt;
+  }
+
+  const PDH_STATUS collectStatus = PdhCollectQueryData(query);
+  if (collectStatus != ERROR_SUCCESS) {
+    return std::nullopt;
+  }
+
+  PDH_FMT_COUNTERVALUE value;
+  DWORD counterType = 0;
+  const PDH_STATUS fmtStatus = PdhGetFormattedCounterValue(counter, PDH_FMT_DOUBLE, &counterType, &value);
+  if (fmtStatus != ERROR_SUCCESS || value.CStatus != ERROR_SUCCESS) {
+    return std::nullopt;
+  }
+
+  // PDH returns instantaneous bytes/sec for this counter.
+  const double bytesPerSec = value.doubleValue;
+  const double mbps = bytesPerSec / (1024.0 * 1024.0);
+
+  if (!warmed) {
+    warmed = true;
+    return Sample{0.0, "MB/s", "warming"};
+  }
+
+  // devicePrefix_ is ignored on Windows for now; we report total.
+  return Sample{mbps, "MB/s", "all"};
 }
 
 }  // namespace aiz

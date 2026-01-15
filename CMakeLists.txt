@@ -30,7 +30,7 @@ add_executable(ai-z
   src/aiz/metrics/nvidia_nvml.cpp
   src/aiz/metrics/gpu_stub.cpp
   src/aiz/metrics/pcie_stub.cpp
-  src/aiz/tui/platform_ui_ncurses.cpp
+  src/aiz/metrics/ram_usage.cpp
   src/aiz/bench/bench_stub.cpp
 )
 
@@ -40,11 +40,16 @@ target_include_directories(ai-z PRIVATE ${AI_Z_GENERATED_DIR})
 if (WIN32)
   target_sources(ai-z PRIVATE
     src/aiz/tui/windows_console_ui.cpp
+    src/aiz/tui/win32_terminal_ui.cpp
+    src/aiz/tui/tui_core.cpp
   )
+  target_link_libraries(ai-z PRIVATE pdh)
 else()
   find_package(Curses REQUIRED)
   target_sources(ai-z PRIVATE
+    src/aiz/tui/platform_ui_ncurses.cpp
     src/aiz/tui/ncurses_ui.cpp
+    src/aiz/tui/tui_core.cpp
   )
   target_link_libraries(ai-z PRIVATE ${CURSES_LIBRARIES})
   target_include_directories(ai-z PRIVATE ${CURSES_INCLUDE_DIR})
