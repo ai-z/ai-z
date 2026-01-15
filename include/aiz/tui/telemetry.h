@@ -11,7 +11,12 @@ struct TelemetrySnapshot {
   std::optional<Sample> cpu;
   std::optional<Sample> disk;
   std::optional<Sample> gpu;
-  std::optional<Sample> pcie;
+  std::optional<Sample> pcieRx;
+  std::optional<Sample> pcieTx;
+
+  // Percent (0..100).
+  std::optional<Sample> ramPct;
+  std::optional<Sample> vramPct;
 
   // Pre-formatted memory strings are okay for now; we can refactor to typed later.
   std::string ramText;

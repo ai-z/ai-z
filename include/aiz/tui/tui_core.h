@@ -67,7 +67,11 @@ struct TuiState {
 
   // Timelines history (oldest -> newest) for scrolling bars.
   Timeline cpuTl{240};
+  Timeline ramTl{240};
+  Timeline vramTl{240};
   Timeline diskTl{240};
+  Timeline pcieRxTl{240};
+  Timeline pcieTxTl{240};
 
   // Debug: increments each rendered frame.
   std::uint64_t tick = 0;

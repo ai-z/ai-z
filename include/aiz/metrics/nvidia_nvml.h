@@ -14,6 +14,12 @@ struct NvmlTelemetry {
   std::string pstate;          // e.g. "P8"
 };
 
+struct NvmlPcieThroughput {
+  // NVML reports PCIe throughput in KB/s. We return MB/s.
+  double rxMBps = 0.0;
+  double txMBps = 0.0;
+};
+
 // Returns the number of NVML-visible GPUs.
 // Returns nullopt if NVML isn't present/usable.
 std::optional<unsigned int> nvmlGpuCount();
@@ -31,5 +37,15 @@ std::optional<NvmlTelemetry> readNvmlTelemetryForGpu(unsigned int index);
 // - pstate: best-performance state among GPUs (minimum P number)
 // Returns nullopt if NVML isn't present/usable.
 std::optional<NvmlTelemetry> readNvmlTelemetry();
+
+// Reads PCIe throughput (RX/TX) for a specific GPU via NVML.
+// Returns nullopt if NVML isn't present/usable or the driver doesn't expose the counter.
+std::optional<NvmlPcieThroughput> readNvmlPcieThroughputForGpu(unsigned int index);
+
+// Reads aggregated PCIe throughput (RX/TX) across all NVML-visible GPUs.
+// Aggregation rules:
+// - rxMBps/txMBps: sum across GPUs
+// Returns nullopt if NVML isn't present/usable.
+std::optional<NvmlPcieThroughput> readNvmlPcieThroughput();
 
 }  // namespace aiz

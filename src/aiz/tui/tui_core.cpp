@@ -195,7 +195,6 @@ static void drawScrollingBars(Frame& out, int topY, int leftX, int height, int w
 }
 
 static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, const Config& cfg) {
-  (void)cfg;
   // This is an incremental port: start with the title bar numbers, then add scrolling graphs.
   fillLine(out, 0, L' ', Style::Header);
 
@@ -209,10 +208,32 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   title += !state.latest.ramText.empty() ? state.latest.ramText : std::string("--");
   title += "  ";
 
+  title += "VRAM ";
+  title += state.latest.vramPct ? (fmt0(state.latest.vramPct->value) + "%") : std::string("--");
+  title += "  ";
+
   title += "Disk ";
   if (state.latest.disk) {
     title += fmt1(state.latest.disk->value);
     title += state.latest.disk->unit;
+  } else {
+    title += "--";
+  }
+  title += "  ";
+
+  title += "PCIeRX ";
+  if (state.latest.pcieRx) {
+    title += fmt0(state.latest.pcieRx->value);
+    title += state.latest.pcieRx->unit;
+  } else {
+    title += "--";
+  }
+  title += "  ";
+
+  title += "PCIeTX ";
+  if (state.latest.pcieTx) {
+    title += fmt0(state.latest.pcieTx->value);
+    title += state.latest.pcieTx->unit;
   } else {
     title += "--";
   }
@@ -237,8 +258,16 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   };
 
   std::vector<Panel> panels;
-  panels.push_back(Panel{"CPU", true, &state.latest.cpu, &state.cpuTl, 100.0});
-  panels.push_back(Panel{"Disk", true, &state.latest.disk, &state.diskTl, 5000.0});
+  panels.push_back(Panel{"CPU", cfg.showCpu, &state.latest.cpu, &state.cpuTl, 100.0});
+  panels.push_back(Panel{"RAM", true, &state.latest.ramPct, &state.ramTl, 100.0});
+  panels.push_back(Panel{"VRAM", true, &state.latest.vramPct, &state.vramTl, 100.0});
+  panels.push_back(Panel{"Disk", cfg.showDisk, &state.latest.disk, &state.diskTl, 5000.0});
+  panels.push_back(Panel{"PCIe RX", cfg.showPcie, &state.latest.pcieRx, &state.pcieRxTl, 64'000.0});
+  panels.push_back(Panel{"PCIe TX", cfg.showPcie, &state.latest.pcieTx, &state.pcieTxTl, 64'000.0});
+
+  panels.erase(
+      std::remove_if(panels.begin(), panels.end(), [](const Panel& p) { return !p.enabled; }),
+      panels.end());
 
   if (panels.empty()) {
     drawBodyLine(out, 2, L"No timelines enabled. Use Config (F4 / C) to enable.", Style::Value);
@@ -290,7 +319,7 @@ static void renderHelp(Frame& out, int bodyTop) {
       "",
       "Description:",
       "  C++ TUI for performance timelines and benchmarks.",
-      "  Timelines: CPU, GPU, Disk bandwidth, PCIe bandwidth.",
+      "  Timelines: CPU, RAM, VRAM, GPU, Disk bandwidth, PCIe RX/TX.",
       "",
       "Guide:",
       "  - Timelines are vertical bars that scroll over time.",

@@ -6,6 +6,8 @@
 
 #include <aiz/metrics/cpu_usage.h>
 #include <aiz/metrics/disk_bandwidth.h>
+#include <aiz/metrics/nvidia_nvml.h>
+#include <aiz/metrics/pcie_bandwidth.h>
 #include <aiz/metrics/ram_usage.h>
 
 #include <aiz/bench/factory.h>
@@ -454,6 +456,8 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
 
   CpuUsageCollector cpuCollector;
   DiskBandwidthCollector diskCollector;
+  PcieRxBandwidthCollector pcieRxCollector;
+  PcieTxBandwidthCollector pcieTxCollector;
   const auto lastSampleAtInit = std::chrono::steady_clock::now();
   (void)lastSampleAtInit;
 
@@ -554,13 +558,28 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
     state.latest.cpu = cpuCollector.sample();
     state.latest.disk = diskCollector.sample();
 
+    // PCIe is best-effort (NVML-only right now).
+    state.latest.pcieRx = pcieRxCollector.sample();
+    state.latest.pcieTx = pcieTxCollector.sample();
+
     if (const auto ram = readRamUsage()) {
       // Match the ncurses title style roughly: "used/totalG(pct%)".
       char buf[128]{};
       std::snprintf(buf, sizeof(buf), "%.1f/%.1fG(%.0f%%)", ram->usedGiB, ram->totalGiB, ram->usedPct);
       state.latest.ramText = buf;
+
+      state.latest.ramPct = Sample{ram->usedPct, "%", "os"};
     } else {
       state.latest.ramText.clear();
+      state.latest.ramPct.reset();
+    }
+
+    // Aggregate VRAM% via NVML when available.
+    if (const auto nv = readNvmlTelemetry(); nv && nv->memTotalGiB > 0.0) {
+      const double pct = 100.0 * nv->memUsedGiB / nv->memTotalGiB;
+      state.latest.vramPct = Sample{pct, "%", "nvml"};
+    } else {
+      state.latest.vramPct.reset();
     }
 
     const Viewport vp = currentViewport(hOut);
@@ -574,16 +593,40 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
         for (double v : state.cpuTl.values()) resized.push(v);
         state.cpuTl = std::move(resized);
       }
+      if (state.ramTl.capacity() < want) {
+        Timeline resized(want);
+        for (double v : state.ramTl.values()) resized.push(v);
+        state.ramTl = std::move(resized);
+      }
+      if (state.vramTl.capacity() < want) {
+        Timeline resized(want);
+        for (double v : state.vramTl.values()) resized.push(v);
+        state.vramTl = std::move(resized);
+      }
       if (state.diskTl.capacity() < want) {
         Timeline resized(want);
         for (double v : state.diskTl.values()) resized.push(v);
         state.diskTl = std::move(resized);
       }
+      if (state.pcieRxTl.capacity() < want) {
+        Timeline resized(want);
+        for (double v : state.pcieRxTl.values()) resized.push(v);
+        state.pcieRxTl = std::move(resized);
+      }
+      if (state.pcieTxTl.capacity() < want) {
+        Timeline resized(want);
+        for (double v : state.pcieTxTl.values()) resized.push(v);
+        state.pcieTxTl = std::move(resized);
+      }
     }
 
     // Push current samples into history.
     if (state.latest.cpu) state.cpuTl.push(state.latest.cpu->value);
+    if (state.latest.ramPct) state.ramTl.push(state.latest.ramPct->value);
+    if (state.latest.vramPct) state.vramTl.push(state.latest.vramPct->value);
     if (state.latest.disk) state.diskTl.push(state.latest.disk->value);
+    if (state.latest.pcieRx) state.pcieRxTl.push(state.latest.pcieRx->value);
+    if (state.latest.pcieTx) state.pcieTxTl.push(state.latest.pcieTx->value);
 
     static auto lastAnsiDraw = std::chrono::steady_clock::now();
     static Screen lastScreen = state.screen;

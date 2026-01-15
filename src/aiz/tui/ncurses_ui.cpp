@@ -7,6 +7,7 @@
 #include <aiz/metrics/gpu_usage.h>
 #include <aiz/metrics/nvidia_nvml.h>
 #include <aiz/metrics/pcie_bandwidth.h>
+#include <aiz/metrics/ram_usage.h>
 #include <aiz/metrics/timeline.h>
 #include <aiz/version.h>
 
@@ -177,12 +178,6 @@ static void drawHeader(int cols, const std::string& title) {
   }
 }
 
-struct RamUsage {
-  double usedGiB = 0.0;
-  double totalGiB = 0.0;
-  double usedPct = 0.0;
-};
-
 struct VramUsage {
   double usedGiB = 0.0;
   double totalGiB = 0.0;
@@ -273,54 +268,6 @@ static std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index
   return std::nullopt;
 }
 
-static std::optional<RamUsage> readRamUsage() {
-  std::ifstream in("/proc/meminfo");
-  if (!in.is_open()) return std::nullopt;
-
-  std::string line;
-  std::uint64_t memTotalKb = 0;
-  std::uint64_t memAvailKb = 0;
-  while (std::getline(in, line)) {
-    if (line.rfind("MemTotal:", 0) == 0) {
-      std::istringstream iss(line);
-      std::string key;
-      iss >> key >> memTotalKb;
-    } else if (line.rfind("MemAvailable:", 0) == 0) {
-      std::istringstream iss(line);
-      std::string key;
-      iss >> key >> memAvailKb;
-    }
-    if (memTotalKb != 0 && memAvailKb != 0) break;
-  }
-
-  if (memTotalKb == 0) return std::nullopt;
-  if (memAvailKb > memTotalKb) memAvailKb = memTotalKb;
-
-  const double totalGiB = static_cast<double>(memTotalKb) / (1024.0 * 1024.0);
-  const double availGiB = static_cast<double>(memAvailKb) / (1024.0 * 1024.0);
-  const double usedGiB = std::max(0.0, totalGiB - availGiB);
-  const double usedPct = totalGiB > 0.0 ? (100.0 * usedGiB / totalGiB) : 0.0;
-  return RamUsage{usedGiB, totalGiB, usedPct};
-}
-
-static std::optional<double> readRamTotalGiB() {
-  std::ifstream in("/proc/meminfo");
-  if (!in.is_open()) return std::nullopt;
-
-  std::string line;
-  std::uint64_t memTotalKb = 0;
-  while (std::getline(in, line)) {
-    if (line.rfind("MemTotal:", 0) == 0) {
-      std::istringstream iss(line);
-      std::string key;
-      iss >> key >> memTotalKb;
-      break;
-    }
-  }
-  if (memTotalKb == 0) return std::nullopt;
-  return static_cast<double>(memTotalKb) / (1024.0 * 1024.0);
-}
-
 static std::string fmt1(double v) {
   std::ostringstream oss;
   oss.setf(std::ios::fixed);
@@ -369,7 +316,8 @@ static std::string makeTitleBar(const std::optional<Sample>& cpu,
 
 static void drawTitleBarTimelines(int cols,
                                   const std::optional<Sample>& cpu,
-                                  const std::optional<Sample>& pcie,
+                                  const std::optional<Sample>& pcieRx,
+                                  const std::optional<Sample>& pcieTx,
                                   const std::optional<RamUsage>& ram,
                                   const std::vector<std::optional<GpuTelemetry>>& gpus) {
   const bool colors = has_colors() != 0;
@@ -441,10 +389,17 @@ static void drawTitleBarTimelines(int cols,
     }
   }
 
-  // PCIe
-  addGreenLabel(0, x0, "PCIe");
-  if (pcie) {
-    addValue(0, x0, fmt0(pcie->value) + pcie->unit);
+  // PCIe RX/TX
+  addGreenLabel(0, x0, "PCIeRX");
+  if (pcieRx) {
+    addValue(0, x0, fmt0(pcieRx->value) + pcieRx->unit);
+  } else {
+    addValue(0, x0, "--");
+  }
+
+  addGreenLabel(0, x0, "PCIeTX");
+  if (pcieTx) {
+    addValue(0, x0, fmt0(pcieTx->value) + pcieTx->unit);
   } else {
     addValue(0, x0, "--");
   }
@@ -517,13 +472,19 @@ static void drawTimelines(
   const std::string& cpuDevice,
   const std::string& gpuDevice,
     const std::optional<Sample>& cpu,
+    const std::optional<Sample>& ram,
+    const std::optional<Sample>& vram,
     const std::vector<std::optional<Sample>>& gpus,
     const std::optional<Sample>& disk,
-    const std::optional<Sample>& pcie,
+    const std::optional<Sample>& pcieRx,
+    const std::optional<Sample>& pcieTx,
     const Timeline& cpuTl,
+    const Timeline& ramTl,
+    const Timeline& vramTl,
     const std::vector<Timeline>& gpuTls,
     const Timeline& diskTl,
-    const Timeline& pcieTl) {
+    const Timeline& pcieRxTl,
+    const Timeline& pcieTxTl) {
   struct Panel {
     std::string name;
     bool enabled;
@@ -536,6 +497,10 @@ static void drawTimelines(
   std::vector<Panel> panels;
   panels.push_back(Panel{"CPU", cfg.showCpu, &cpu, &cpuTl, 100.0, cpuDevice});
 
+  // Memory timelines are currently always shown when telemetry is available (no config toggles yet).
+  panels.push_back(Panel{"RAM", true, &ram, &ramTl, 100.0, std::string{}});
+  panels.push_back(Panel{"VRAM", true, &vram, &vramTl, 100.0, std::string{}});
+
   if (cfg.showGpu) {
     const std::size_t n = std::min(gpus.size(), gpuTls.size());
     for (std::size_t i = 0; i < n; ++i) {
@@ -547,7 +512,8 @@ static void drawTimelines(
   }
 
   panels.push_back(Panel{"Disk", cfg.showDisk, &disk, &diskTl, 5000.0, std::string{}});
-  panels.push_back(Panel{"PCIe", cfg.showPcie, &pcie, &pcieTl, 64'000.0, std::string{}});
+  panels.push_back(Panel{"PCIe RX", cfg.showPcie, &pcieRx, &pcieRxTl, 64'000.0, std::string{}});
+  panels.push_back(Panel{"PCIe TX", cfg.showPcie, &pcieTx, &pcieTxTl, 64'000.0, std::string{}});
 
   panels.erase(
       std::remove_if(panels.begin(), panels.end(), [](const Panel& p) { return !p.enabled; }),
@@ -736,7 +702,7 @@ static void drawHelp(int rows, int cols) {
       "",
       "Description:",
       "  Linux C++ TUI for performance timelines and benchmarks.",
-      "  Timelines: CPU, GPU, Disk bandwidth, PCIe bandwidth.",
+      "  Timelines: CPU, RAM, VRAM, GPU, Disk bandwidth, PCIe RX/TX.",
       "",
       "Guide:",
       "  - Timelines are vertical bars that scroll over time.",
@@ -822,12 +788,15 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   GpuUsageCollector gpuCol;
   DiskBandwidthCollector diskCol;
   PcieBandwidthCollector pcieCol;
+  PcieRxBandwidthCollector pcieRxCol;
+  PcieTxBandwidthCollector pcieTxCol;
 
   // Debug generators (used only when --debug is passed)
   RandomWalk dbgCpu(0.0, 100.0, 10.0);
   RandomWalk dbgGpu(0.0, 100.0, 12.0);
   RandomWalk dbgDisk(0.0, 3000.0, 250.0);     // MB/s
-  RandomWalk dbgPcie(0.0, 64000.0, 4000.0);   // MB/s (placeholder)
+  RandomWalk dbgPcieRx(0.0, 32000.0, 2500.0);  // MB/s (placeholder)
+  RandomWalk dbgPcieTx(0.0, 32000.0, 2500.0);  // MB/s (placeholder)
   RandomWalk dbgRamPct(0.0, 100.0, 6.0);
   RandomWalk dbgVramPct(0.0, 100.0, 8.0);
   RandomWalk dbgGpuW(5.0, 350.0, 20.0);
@@ -845,13 +814,16 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   auto lastGpuTelQuery = std::chrono::steady_clock::now() - std::chrono::seconds(10);
 
   Timeline cpuTl(cfg.timelineSamples);
+  Timeline ramTl(cfg.timelineSamples);
+  Timeline vramTl(cfg.timelineSamples);
   std::vector<Timeline> gpuTls;
   gpuTls.reserve(gpuCount);
   for (unsigned int i = 0; i < gpuCount; ++i) {
     gpuTls.emplace_back(cfg.timelineSamples);
   }
   Timeline diskTl(cfg.timelineSamples);
-  Timeline pcieTl(cfg.timelineSamples);
+  Timeline pcieRxTl(cfg.timelineSamples);
+  Timeline pcieTxTl(cfg.timelineSamples);
 
   std::vector<std::unique_ptr<IBenchmark>> benches;
   benches.push_back(makePcieBandwidthBenchmark());
@@ -875,14 +847,20 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     // Ensure we can render a full-width scrolling graph without trailing empty columns.
     const std::size_t desiredSamples = std::max<std::size_t>(cfg.timelineSamples, static_cast<std::size_t>(std::max(0, cols)));
     ensureTimelineCapacity(cpuTl, desiredSamples);
+    ensureTimelineCapacity(ramTl, desiredSamples);
+    ensureTimelineCapacity(vramTl, desiredSamples);
     for (auto& tl : gpuTls) ensureTimelineCapacity(tl, desiredSamples);
     ensureTimelineCapacity(diskTl, desiredSamples);
-    ensureTimelineCapacity(pcieTl, desiredSamples);
+    ensureTimelineCapacity(pcieRxTl, desiredSamples);
+    ensureTimelineCapacity(pcieTxTl, desiredSamples);
 
     std::optional<Sample> cpu;
     std::optional<Sample> disk;
-    std::optional<Sample> pcie;
     std::optional<RamUsage> ram;
+    std::optional<Sample> ramPct;
+    std::optional<Sample> vramPct;
+    std::optional<Sample> pcieRx;
+    std::optional<Sample> pcieTx;
     std::vector<std::optional<Sample>> gpuSamples;
     gpuSamples.resize(gpuCount);
     std::vector<std::optional<GpuTelemetry>> gpuTel;
@@ -891,12 +869,14 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     if (debugMode) {
       cpu = Sample{dbgCpu.next(), "%", "debug"};
       disk = Sample{dbgDisk.next(), "MB/s", "debug"};
-      pcie = Sample{dbgPcie.next(), "MB/s", "debug"};
+      pcieRx = Sample{dbgPcieRx.next(), "MB/s", "debug"};
+      pcieTx = Sample{dbgPcieTx.next(), "MB/s", "debug"};
 
       const double totalRam = readRamTotalGiB().value_or(16.0);
-      const double ramPct = dbgRamPct.next();
-      const double usedRam = (ramPct / 100.0) * totalRam;
-      ram = RamUsage{usedRam, totalRam, ramPct};
+      const double ramPctV = dbgRamPct.next();
+      const double usedRam = (ramPctV / 100.0) * totalRam;
+      ram = RamUsage{usedRam, totalRam, ramPctV};
+      ramPct = Sample{ramPctV, "%", "debug"};
 
       // Per-GPU telemetry (debug): only GPU0.
       const double util = dbgGpu.next();
@@ -905,10 +885,11 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       GpuTelemetry gt;
       gt.utilPct = util;
       const double totalVram = 10.0;  // placeholder
-      const double vramPct = dbgVramPct.next();
-      const double usedVram = (vramPct / 100.0) * totalVram;
+      const double vramPctV = dbgVramPct.next();
+      const double usedVram = (vramPctV / 100.0) * totalVram;
       gt.vramUsedGiB = usedVram;
       gt.vramTotalGiB = totalVram;
+      vramPct = Sample{vramPctV, "%", "debug"};
       gt.watts = dbgGpuW.next();
       gt.tempC = dbgGpuTemp.next();
       std::string ps = "P8";
@@ -920,8 +901,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     } else {
       cpu = cpuCol.sample();
       disk = diskCol.sample();
-      pcie = pcieCol.sample();
       ram = readRamUsage();
+
+      pcieRx = pcieRxCol.sample();
+      pcieTx = pcieTxCol.sample();
 
       // GPU utilization: if NVML is available, use per-GPU telemetry; otherwise fall back
       // to the collector (may be unavailable).
@@ -949,23 +932,42 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           }
         }
       }
+
+      if (ram) {
+        ramPct = Sample{ram->usedPct, "%", "os"};
+      }
+
+      // Aggregate VRAM usage percentage across GPUs when available.
+      double sumUsed = 0.0;
+      double sumTotal = 0.0;
+      for (const auto& gt : gpuTel) {
+        if (!gt || !gt->vramUsedGiB || !gt->vramTotalGiB) continue;
+        sumUsed += *gt->vramUsedGiB;
+        sumTotal += *gt->vramTotalGiB;
+      }
+      if (sumTotal > 0.0) {
+        vramPct = Sample{(100.0 * sumUsed / sumTotal), "%", "nvml"};
+      }
     }
 
     // Always advance timelines so the graphs keep scrolling.
     cpuTl.push(cpu ? cpu->value : 0.0);
+    ramTl.push(ramPct ? ramPct->value : 0.0);
+    vramTl.push(vramPct ? vramPct->value : 0.0);
     for (unsigned int i = 0; i < gpuCount; ++i) {
       const auto& s = gpuSamples[static_cast<std::size_t>(i)];
       gpuTls[static_cast<std::size_t>(i)].push(s ? s->value : 0.0);
     }
     diskTl.push(disk ? disk->value : 0.0);
-    pcieTl.push(pcie ? pcie->value : 0.0);
+    pcieRxTl.push(pcieRx ? pcieRx->value : 0.0);
+    pcieTxTl.push(pcieTx ? pcieTx->value : 0.0);
 
     erase();
 
     if (screen == Screen::Timelines) {
       // Custom title bar: green labels, black value background.
-      drawTitleBarTimelines(cols, cpu, pcie, ram, gpuTel);
-      drawTimelines(rows, cols, cfg, hwCache.cpuName, hwCache.gpuName, cpu, gpuSamples, disk, pcie, cpuTl, gpuTls, diskTl, pcieTl);
+      drawTitleBarTimelines(cols, cpu, pcieRx, pcieTx, ram, gpuTel);
+      drawTimelines(rows, cols, cfg, hwCache.cpuName, hwCache.gpuName, cpu, ramPct, vramPct, gpuSamples, disk, pcieRx, pcieTx, cpuTl, ramTl, vramTl, gpuTls, diskTl, pcieRxTl, pcieTxTl);
     } else if (screen == Screen::Help) {
       drawHeader(cols, "AI-Z - Help");
       drawHelp(rows, cols);
