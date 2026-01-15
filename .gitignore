@@ -1,5 +1,36 @@
-*.pyc
-__pychache__/*
-dist/*
-build/*
-ai_z.egg-info/*
+# CMake
+/build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+Testing/
+CTestTestfile.cmake
+*_autogen/
+
+# Generated
+/generated/
+
+# Compilers
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.pdb
+*.ilk
+*.dSYM/
+
+# IDEs/editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,4 @@
+#pragma once
+
+#define AIZ_VERSION "@PROJECT_VERSION@"
+#define AIZ_WEBSITE "https://www.ai-z.org"

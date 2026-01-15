@@ -1,21 +1,66 @@
+# ai-z
 
-![screenhsot](http://www.ai-z.org/assets/screenshot01.png)
+C++ TUI app for performance timelines (CPU/GPU/Disk/PCIe) and benchmarks.
 
-### Install and usage
+Current platform support:
+- Linux: ncurses TUI
+- Windows: minimal console UI (press `q` to quit)
+- macOS: planned (not implemented yet)
+
+## Build
+
+### Linux
+
+```bash
+sudo apt-get install -y build-essential cmake libncurses-dev
+cmake -S . -B build
+cmake --build build -j
+./build/ai-z
 ```
-git clone https://github.com/ai-z/ai-z.git
-cd ai-z
-pip3 install -r requirements.txt
-python3 -m aiz.aiz
-```
-Alternatively Using pip:
-```
-pip3 install ai-z
-ai-z
+
+### Windows
+
+Prereqs:
+- Visual Studio 2022 (or Build Tools) with C++ workload
+- CMake (usually bundled with Visual Studio)
+
+PowerShell:
+
+```powershell
+cmake -S . -B build
+cmake --build build --config Release
+./build/Release/ai-z.exe
 ```
 
+## Debug
 
-### Known Issues
+Run with synthetic/fake timelines (useful for debugging the timeline renderer):
 
-* AMD GPUs name will be displayed as ‘cardX’
-* PCIE bandwith usage graph on NVDIA cards is not correct
+```bash
+./build/ai-z --debug
+```
+
+On Windows:
+
+```powershell
+./build/Release/ai-z.exe --debug
+```
+
+## Keys
+- `F1` or `H`: Help
+- `F2` or `W`: Hardware info
+- `F3` or `B`: Benchmarks
+- `F4` or `C`: Config display
+- `F10` or `Q`: Quit
+
+Windows console UI:
+- `q`: Quit
+
+## Config
+
+Config is stored at `~/.config/ai-z/config.ini` (or `$XDG_CONFIG_HOME/ai-z/config.ini`).
+
+Keys:
+- `showCpu`, `showGpu`, `showDisk`, `showPcie` (true/false)
+- `refreshMs` (integer)
+- `timelineSamples` (integer)
