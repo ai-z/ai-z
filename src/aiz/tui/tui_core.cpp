@@ -635,7 +635,6 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
 
   // Header (Timelines overrides to show telemetry).
   fillLine(out, 0, L' ', Style::Header);
-  drawText(out, 0, 0, L" AI-Z ", Style::Header);
 
   // Footer
   if (out.height >= 2) {
@@ -667,6 +666,7 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
     footer += widenAscii(std::to_string(state.tick));
     footer += L"  ";
 
+    footer += L"AI-Z  ";
     footer += L"F1 Help  F2 Hardware  F3 Bench  F4 Config  F5 Timelines  F10 Quit";
     drawText(out, 0, y, footer, Style::FooterKey);
   }
@@ -690,7 +690,7 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
     return L"";
   };
 
-  drawText(out, 0, bodyTop, std::wstring(L"AI-Z - ") + titleFor(state.screen), Style::Section);
+  drawText(out, 0, bodyTop, titleFor(state.screen), Style::Section);
 
   switch (state.screen) {
     case Screen::Timelines:

@@ -7,6 +7,7 @@ namespace aiz {
 
 struct NvmlTelemetry {
   double gpuUtilPct = 0.0;     // 0..100
+  double memUtilPct = 0.0;     // 0..100 (memory controller utilization)
   double memUsedGiB = 0.0;
   double memTotalGiB = 0.0;
   double powerWatts = 0.0;

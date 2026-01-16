@@ -68,6 +68,7 @@ Config Config::load() {
 
     if (key == "showCpu") cfg.showCpu = parseBool(val, cfg.showCpu);
     else if (key == "showGpu") cfg.showGpu = parseBool(val, cfg.showGpu);
+    else if (key == "showGpuMem") cfg.showGpuMem = parseBool(val, cfg.showGpuMem);
     else if (key == "showDisk") cfg.showDisk = parseBool(val, cfg.showDisk);
     else if (key == "showPcie") {
       // Backward compat: old single toggle controls both.
@@ -94,6 +95,7 @@ void Config::save() const {
   out << "# ai-z config\n";
   out << "showCpu=" << (showCpu ? "true" : "false") << "\n";
   out << "showGpu=" << (showGpu ? "true" : "false") << "\n";
+  out << "showGpuMem=" << (showGpuMem ? "true" : "false") << "\n";
   out << "showDisk=" << (showDisk ? "true" : "false") << "\n";
   out << "showPcieRx=" << (showPcieRx ? "true" : "false") << "\n";
   out << "showPcieTx=" << (showPcieTx ? "true" : "false") << "\n";

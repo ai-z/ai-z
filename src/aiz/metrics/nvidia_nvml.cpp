@@ -164,6 +164,7 @@ static std::optional<NvmlTelemetry> readNvmlTelemetryWithSession(nvmlDevice_t de
 
   NvmlTelemetry t;
   t.gpuUtilPct = static_cast<double>(util.gpu);
+  t.memUtilPct = static_cast<double>(util.memory);
   t.memUsedGiB = bytesToGiB(mem.used);
   t.memTotalGiB = bytesToGiB(mem.total);
   t.powerWatts = static_cast<double>(mw) / 1000.0;
@@ -230,6 +231,7 @@ std::optional<NvmlTelemetry> readNvmlTelemetry() {
 
   NvmlTelemetry agg;
   double maxUtil = 0.0;
+  double maxMemUtil = 0.0;
   double sumUsed = 0.0;
   double sumTotal = 0.0;
   double sumPower = 0.0;
@@ -244,6 +246,7 @@ std::optional<NvmlTelemetry> readNvmlTelemetry() {
     if (!t) continue;
 
     maxUtil = std::max(maxUtil, t->gpuUtilPct);
+    maxMemUtil = std::max(maxMemUtil, t->memUtilPct);
     sumUsed += t->memUsedGiB;
     sumTotal += t->memTotalGiB;
     sumPower += t->powerWatts;
@@ -260,6 +263,7 @@ std::optional<NvmlTelemetry> readNvmlTelemetry() {
   }
 
   agg.gpuUtilPct = maxUtil;
+  agg.memUtilPct = maxMemUtil;
   agg.memUsedGiB = sumUsed;
   agg.memTotalGiB = sumTotal;
   agg.powerWatts = sumPower;

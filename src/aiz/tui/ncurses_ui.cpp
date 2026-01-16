@@ -5,6 +5,7 @@
 #include <aiz/metrics/cpu_usage.h>
 #include <aiz/metrics/disk_bandwidth.h>
 #include <aiz/metrics/gpu_usage.h>
+#include <aiz/metrics/gpu_memory_util.h>
 #include <aiz/metrics/nvidia_nvml.h>
 #include <aiz/metrics/pcie_bandwidth.h>
 #include <aiz/metrics/ram_usage.h>
@@ -166,6 +167,8 @@ static void drawFooter(int rows, int cols, Screen screen) {
 
   // Format: [F-key block][space][Label]
   // Also supports letter shortcuts: H/W/B/C/Q.
+  addPlain("AI-Z  ");
+
   addKeyBlock(" F1 ");
   addPlain(" ");
   addLabelWithHot("Help", 'H');
@@ -387,16 +390,9 @@ static void drawTitleBarTimelines(int cols,
     addPlain(row, x, " " + value + " ");
   };
 
-  // AI-Z prefix block stays green.
-  if (colors) attron(COLOR_PAIR(3) | A_BOLD);
-  mvaddnstr(0, 0, " AI-Z ", cols);
-  if (colors) attroff(COLOR_PAIR(3) | A_BOLD);
-  x0 = 6;
-  addPlain(0, x0, " ");
-
-  // Row 1 aligns under the metrics area after the AI-Z block.
+  // Start metrics at column 0 (no AI-Z title block in header).
+  x0 = 0;
   x1 = 0;
-  addPlain(1, x1, std::string(7, ' '));
 
   // CPU
   addGreenLabel(0, x0, "CPU");
@@ -516,6 +512,7 @@ static void drawTimelines(
     const std::optional<Sample>& cpu,
     const std::optional<Sample>& ram,
     const std::optional<Sample>& vram,
+    const std::optional<Sample>& gpuMemUtil,
     const std::vector<std::optional<Sample>>& gpus,
     const std::optional<Sample>& disk,
     const std::optional<Sample>& pcieRx,
@@ -523,6 +520,7 @@ static void drawTimelines(
     const Timeline& cpuTl,
     const Timeline& ramTl,
     const Timeline& vramTl,
+    const Timeline& gpuMemUtilTl,
     const std::vector<Timeline>& gpuTls,
     const Timeline& diskTl,
     const Timeline& pcieRxTl,
@@ -542,6 +540,9 @@ static void drawTimelines(
   // Memory timelines are currently always shown when telemetry is available (no config toggles yet).
   panels.push_back(Panel{"RAM", cfg.showRam, &ram, &ramTl, 100.0, std::string{}});
   panels.push_back(Panel{"VRAM", cfg.showVram, &vram, &vramTl, 100.0, std::string{}});
+
+  // GPU memory controller utilization (NVML util.memory). This is a percentage, not bandwidth.
+  panels.push_back(Panel{"MemCtrl", cfg.showGpuMem, &gpuMemUtil, &gpuMemUtilTl, 100.0, gpuDevice});
 
   if (cfg.showGpu) {
     const std::size_t n = std::min(gpus.size(), gpuTls.size());
@@ -742,6 +743,7 @@ static void drawConfig(int rows, int cols, int selected, const Config& cfg) {
   const Item items[] = {
       {"Show CPU usage", cfg.showCpu},
       {"Show GPU usage", cfg.showGpu},
+      {"Show GPU memory util", cfg.showGpuMem},
       {"Show Disk bandwidth", cfg.showDisk},
       {"Show PCIe RX", cfg.showPcieRx},
       {"Show PCIe TX", cfg.showPcieTx},
@@ -906,6 +908,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
   CpuUsageCollector cpuCol;
   GpuUsageCollector gpuCol;
+  GpuMemoryUtilCollector gpuMemUtilCol;
   DiskBandwidthCollector diskCol;
   PcieBandwidthCollector pcieCol;
   PcieRxBandwidthCollector pcieRxCol;
@@ -936,6 +939,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   Timeline cpuTl(cfg.timelineSamples);
   Timeline ramTl(cfg.timelineSamples);
   Timeline vramTl(cfg.timelineSamples);
+  Timeline gpuMemUtilTl(cfg.timelineSamples);
   std::vector<Timeline> gpuTls;
   gpuTls.reserve(gpuCount);
   for (unsigned int i = 0; i < gpuCount; ++i) {
@@ -969,6 +973,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     ensureTimelineCapacity(cpuTl, desiredSamples);
     ensureTimelineCapacity(ramTl, desiredSamples);
     ensureTimelineCapacity(vramTl, desiredSamples);
+    ensureTimelineCapacity(gpuMemUtilTl, desiredSamples);
     for (auto& tl : gpuTls) ensureTimelineCapacity(tl, desiredSamples);
     ensureTimelineCapacity(diskTl, desiredSamples);
     ensureTimelineCapacity(pcieRxTl, desiredSamples);
@@ -979,6 +984,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     std::optional<RamUsage> ram;
     std::optional<Sample> ramPct;
     std::optional<Sample> vramPct;
+    std::optional<Sample> gpuMemUtil;
     std::optional<Sample> pcieRx;
     std::optional<Sample> pcieTx;
     std::vector<std::optional<Sample>> gpuSamples;
@@ -1002,6 +1008,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       const double util = dbgGpu.next();
       gpuSamples[0] = Sample{util, "%", "debug"};
 
+      gpuMemUtil = Sample{util, "%", "debug"};
+
       GpuTelemetry gt;
       gt.utilPct = util;
       const double totalVram = 10.0;  // placeholder
@@ -1022,6 +1030,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       cpu = cpuCol.sample();
       disk = diskCol.sample();
       ram = readRamUsage();
+
+      gpuMemUtil = gpuMemUtilCol.sample();
 
       pcieRx = pcieRxCol.sample();
       pcieTx = pcieTxCol.sample();
@@ -1074,6 +1084,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     cpuTl.push(cpu ? cpu->value : 0.0);
     ramTl.push(ramPct ? ramPct->value : 0.0);
     vramTl.push(vramPct ? vramPct->value : 0.0);
+    gpuMemUtilTl.push(gpuMemUtil ? gpuMemUtil->value : 0.0);
     for (unsigned int i = 0; i < gpuCount; ++i) {
       const auto& s = gpuSamples[static_cast<std::size_t>(i)];
       gpuTls[static_cast<std::size_t>(i)].push(s ? s->value : 0.0);
@@ -1087,7 +1098,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     if (screen == Screen::Timelines) {
       // Custom title bar: green labels, black value background.
       drawTitleBarTimelines(cols, cpu, pcieRx, pcieTx, ram, gpuTel);
-      drawTimelines(rows, cols, cfg, hwCache.cpuName, hwCache.gpuName, cpu, ramPct, vramPct, gpuSamples, disk, pcieRx, pcieTx, cpuTl, ramTl, vramTl, gpuTls, diskTl, pcieRxTl, pcieTxTl);
+      drawTimelines(rows, cols, cfg, hwCache.cpuName, hwCache.gpuName, cpu, ramPct, vramPct, gpuMemUtil, gpuSamples, disk, pcieRx, pcieTx, cpuTl, ramTl, vramTl, gpuMemUtilTl, gpuTls, diskTl, pcieRxTl, pcieTxTl);
     } else if (screen == Screen::Help) {
       drawHeader(cols, "AI-Z - Help");
       drawHelp(rows, cols);
@@ -1156,16 +1167,17 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           }
         } else if (screen == Screen::Config) {
           if (ch == KEY_UP) configSelected = std::max(0, configSelected - 1);
-          else if (ch == KEY_DOWN) configSelected = std::min(6, configSelected + 1);
+          else if (ch == KEY_DOWN) configSelected = std::min(7, configSelected + 1);
           else if (ch == ' ') {
             switch (configSelected) {
               case 0: cfg.showCpu = !cfg.showCpu; break;
               case 1: cfg.showGpu = !cfg.showGpu; break;
-              case 2: cfg.showDisk = !cfg.showDisk; break;
-              case 3: cfg.showPcieRx = !cfg.showPcieRx; break;
-              case 4: cfg.showPcieTx = !cfg.showPcieTx; break;
-              case 5: cfg.showRam = !cfg.showRam; break;
-              case 6: cfg.showVram = !cfg.showVram; break;
+              case 2: cfg.showGpuMem = !cfg.showGpuMem; break;
+              case 3: cfg.showDisk = !cfg.showDisk; break;
+              case 4: cfg.showPcieRx = !cfg.showPcieRx; break;
+              case 5: cfg.showPcieTx = !cfg.showPcieTx; break;
+              case 6: cfg.showRam = !cfg.showRam; break;
+              case 7: cfg.showVram = !cfg.showVram; break;
             }
           } else if (ch == 's') {
             cfg.save();

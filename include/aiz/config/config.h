@@ -13,6 +13,7 @@ struct Config {
   // Display toggles
   bool showCpu = true;
   bool showGpu = true;
+  bool showGpuMem = true;
   bool showDisk = true;
   bool showPcieRx = true;
   bool showPcieTx = true;
