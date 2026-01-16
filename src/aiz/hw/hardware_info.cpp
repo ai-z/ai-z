@@ -127,6 +127,8 @@ HardwareInfo HardwareInfo::probe() {
 #include <sstream>
 #include <string>
 
+#include <aiz/metrics/nvidia_nvml.h>
+
 namespace aiz {
 
 static std::string trim(std::string s) {
@@ -256,6 +258,13 @@ static std::vector<std::string> probePerGpuLinesNvidia() {
     }
     if (a.empty() || b.empty() || mib == 0) continue;
 
+    unsigned int gpuIndex = 0;
+    try {
+      gpuIndex = static_cast<unsigned int>(std::stoul(a));
+    } catch (...) {
+      continue;
+    }
+
     {
       std::ostringstream l;
       l << "GPU" << a << ": " << b;
@@ -264,6 +273,14 @@ static std::vector<std::string> probePerGpuLinesNvidia() {
     {
       std::ostringstream l;
       l << indent << "VRAM: " << fmtGFromMiB(mib);
+      lines.push_back(l.str());
+    }
+
+    if (const auto link = readNvmlPcieLinkForGpu(gpuIndex)) {
+      std::ostringstream l;
+      l.setf(std::ios::fixed);
+      l.precision(1);
+      l << indent << "PCIe: " << link->width << "x@" << static_cast<double>(link->generation);
       lines.push_back(l.str());
     }
   }

@@ -21,6 +21,13 @@ struct NvmlPcieThroughput {
   double txMBps = 0.0;
 };
 
+struct NvmlPcieLink {
+  // PCIe link width is lanes (e.g. 16 for x16).
+  unsigned int width = 0;
+  // PCIe generation as an integer (e.g. 4 for Gen4).
+  unsigned int generation = 0;
+};
+
 // Returns the number of NVML-visible GPUs.
 // Returns nullopt if NVML isn't present/usable.
 std::optional<unsigned int> nvmlGpuCount();
@@ -42,6 +49,10 @@ std::optional<NvmlTelemetry> readNvmlTelemetry();
 // Reads PCIe throughput (RX/TX) for a specific GPU via NVML.
 // Returns nullopt if NVML isn't present/usable or the driver doesn't expose the counter.
 std::optional<NvmlPcieThroughput> readNvmlPcieThroughputForGpu(unsigned int index);
+
+// Reads PCIe link information (current link width + generation) for a specific GPU via NVML.
+// Returns nullopt if NVML isn't present/usable or the driver doesn't expose the fields.
+std::optional<NvmlPcieLink> readNvmlPcieLinkForGpu(unsigned int index);
 
 // Reads aggregated PCIe throughput (RX/TX) across all NVML-visible GPUs.
 // Aggregation rules:

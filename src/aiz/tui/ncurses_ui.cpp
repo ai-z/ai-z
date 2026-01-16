@@ -128,7 +128,7 @@ static void ensureTimelineCapacity(Timeline& tl, std::size_t desiredCapacity) {
   tl = std::move(resized);
 }
 
-static void drawFooter(int rows, int cols, Screen screen) {
+static void drawFooter(int rows, int cols, Screen screen, std::uint32_t refreshMs) {
   (void)screen;
   const int y = rows - 1;
   int x = 0;
@@ -170,6 +170,11 @@ static void drawFooter(int rows, int cols, Screen screen) {
   // Format: [F-key block][space][Label]
   // Also supports letter shortcuts: H/W/B/C/Q.
   addPlain("AI-Z  ");
+
+  addKeyBlock(" +/- ");
+  addPlain(" Speed ");
+  addPlain(std::to_string(refreshMs));
+  addPlain("ms  ");
 
   addKeyBlock(" F1 ");
   addPlain(" ");
@@ -238,6 +243,8 @@ struct GpuTelemetry {
   std::optional<double> watts;
   std::optional<double> tempC;
   std::string pstate;
+  std::optional<unsigned int> pcieLinkWidth;
+  std::optional<unsigned int> pcieLinkGen;
 };
 
 static std::string trim(std::string s) {
@@ -299,16 +306,27 @@ static std::optional<GpuTelemetry> readNvidiaGpuTelemetry() {
 }
 
 static std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index) {
+  GpuTelemetry t;
+  bool any = false;
+
   if (const auto nv = readNvmlTelemetryForGpu(index)) {
-    GpuTelemetry t;
     t.utilPct = nv->gpuUtilPct;
     t.vramUsedGiB = nv->memUsedGiB;
     t.vramTotalGiB = nv->memTotalGiB;
     t.watts = nv->powerWatts;
     t.tempC = nv->tempC;
     t.pstate = nv->pstate;
-    return t;
+    any = true;
   }
+
+  // Query PCIe link info independently: telemetry calls can fail while link queries still work.
+  if (const auto link = readNvmlPcieLinkForGpu(index)) {
+    t.pcieLinkWidth = link->width;
+    t.pcieLinkGen = link->generation;
+    any = true;
+  }
+
+  if (any) return t;
 
   // Fallback only supports first GPU (nvidia-smi has no multi-GPU loop here).
   if (index == 0) return readNvidiaGpuTelemetry();
@@ -397,8 +415,9 @@ static int drawTitleBarTimelines(int cols,
   if (ram) {
     ramStr = fmt1(ram->usedGiB) + "/" + fmt1(ram->totalGiB) + "G(" + fmt0(ram->usedPct) + "%)";
   }
-  const std::string diskStr = fmtSampleOrDash(diskRead, showDiskRead) + "/" + fmtSampleOrDash(diskWrite, showDiskWrite);
-  const std::string netStr = fmtSampleOrDash(netRx, showNetRx) + "/" + fmtSampleOrDash(netTx, showNetTx);
+  // Header is independent of timeline toggles: show values when available.
+  const std::string diskStr = fmtSampleOrDash(diskRead, true) + "/" + fmtSampleOrDash(diskWrite, true);
+  const std::string netStr = fmtSampleOrDash(netRx, true) + "/" + fmtSampleOrDash(netTx, true);
 
   // Line 1: CPU: RAM: DISKr/W: Net R/T:
   {
@@ -409,10 +428,10 @@ static int drawTitleBarTimelines(int cols,
     addLabel(0, x, "RAM:");
     addValueField(0, x, ramStr, 18, Align::Left);
 
-    addLabel(0, x, "DISKr/W:");
+    addLabel(0, x, "DISK R/W:");
     addValueField(0, x, diskStr, 24, Align::Left);
 
-    addLabel(0, x, "Net R/T:");
+    addLabel(0, x, "NET R/T:");
     addValueField(0, x, netStr, 24, Align::Left);
   }
 
@@ -425,7 +444,7 @@ static int drawTitleBarTimelines(int cols,
     addLabel(row, x, "GPU " + std::to_string(i) + ":");
 
     const std::string usageStr = (gt && gt->utilPct) ? (fmt0(*gt->utilPct) + "%") : std::string("--");
-    addLabel(row, x, "usage:");
+    addLabel(row, x, "USAGE");
     addValueField(row, x, usageStr, 4, Align::Right);
 
     std::string vramStr = "--";
@@ -435,24 +454,31 @@ static int drawTitleBarTimelines(int cols,
       const double pct = total > 0.0 ? (100.0 * used / total) : 0.0;
       vramStr = fmt1(used) + "/" + fmt1(total) + "G(" + fmt0(pct) + "%)";
     }
-    addLabel(row, x, "vram:");
+    addLabel(row, x, "VRAM:");
     addValueField(row, x, vramStr, 18, Align::Left);
 
     const std::string wattsStr = (gt && gt->watts) ? (fmt0(*gt->watts) + "W") : std::string("--");
-    addLabel(row, x, "w:");
+    addLabel(row, x, "W:");
     addValueField(row, x, wattsStr, 5, Align::Right);
 
     const std::string tempStr = (gt && gt->tempC) ? (fmt0(*gt->tempC) + "C") : std::string("--");
-    addLabel(row, x, "t:");
+    addLabel(row, x, "T:");
     addValueField(row, x, tempStr, 4, Align::Right);
 
     const std::string powerStr = (gt && !gt->pstate.empty()) ? gt->pstate : std::string("--");
-    addLabel(row, x, "power:");
+    addLabel(row, x, "POWER:");
     addValueField(row, x, powerStr, 4, Align::Left);
+
+    std::string linkStr = "--";
+    if (gt && gt->pcieLinkWidth && gt->pcieLinkGen) {
+      linkStr = std::to_string(*gt->pcieLinkWidth) + "x@" + fmt1(static_cast<double>(*gt->pcieLinkGen));
+    }
+    addLabel(row, x, "LINK:");
+    addValueField(row, x, linkStr, 9, Align::Left);
 
     const std::string pcieTStr = pcieTx ? (fmt0(pcieTx->value) + pcieTx->unit) : std::string("--");
     const std::string pcieRStr = pcieRx ? (fmt0(pcieRx->value) + pcieRx->unit) : std::string("--");
-    addLabel(row, x, "pcie T/R:");
+    addLabel(row, x, "PCIE T/R:");
     addValueField(row, x, pcieTStr + "/" + pcieRStr, 22, Align::Left);
   }
 
@@ -924,7 +950,6 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   cbreak();
   noecho();
   keypad(stdscr, TRUE);
-  nodelay(stdscr, TRUE);
   curs_set(0);
 
   if (has_colors()) {
@@ -1014,6 +1039,25 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   std::vector<std::string> hwLines = hwCache.toLines();
 
   bool running = true;
+
+  constexpr std::uint32_t kRefreshMinMs = 50;
+  constexpr std::uint32_t kRefreshMaxMs = 5000;
+
+  auto adjustRefreshMs = [&](bool faster) {
+    const std::uint32_t cur = cfg.refreshMs;
+    const std::uint32_t step = std::max<std::uint32_t>(10u, cur / 10u);
+
+    std::uint64_t next = cur;
+    if (faster) {
+      next = (cur > step) ? (static_cast<std::uint64_t>(cur) - step) : 0ull;
+    } else {
+      next = static_cast<std::uint64_t>(cur) + step;
+    }
+
+    next = std::clamp<std::uint64_t>(next, kRefreshMinMs, kRefreshMaxMs);
+    cfg.refreshMs = static_cast<std::uint32_t>(next);
+  };
+
   while (running) {
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
@@ -1053,10 +1097,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     if (debugMode) {
       cpu = Sample{dbgCpu.next(), "%", "debug"};
       // Keep disk labels empty in debug so titles don't show "(debug)".
-      if (cfg.showDiskRead) diskRead = Sample{dbgDiskR.next(), "MB/s", ""};
-      if (cfg.showDiskWrite) diskWrite = Sample{dbgDiskW.next(), "MB/s", ""};
-      if (cfg.showNetRx) netRx = Sample{dbgNetRx.next(), "MB/s", ""};
-      if (cfg.showNetTx) netTx = Sample{dbgNetTx.next(), "MB/s", ""};
+      diskRead = Sample{dbgDiskR.next(), "MB/s", ""};
+      diskWrite = Sample{dbgDiskW.next(), "MB/s", ""};
+      netRx = Sample{dbgNetRx.next(), "MB/s", ""};
+      netTx = Sample{dbgNetTx.next(), "MB/s", ""};
       pcieRx = Sample{dbgPcieRx.next(), "MB/s", "debug"};
       pcieTx = Sample{dbgPcieTx.next(), "MB/s", "debug"};
 
@@ -1087,13 +1131,19 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       else if (util > 50.0) ps = "P2";
       else if (util > 20.0) ps = "P5";
       gt.pstate = ps;
+
+      // Even in debug mode, show real PCIe link info when NVML is available.
+      if (const auto link = readNvmlPcieLinkForGpu(0)) {
+        gt.pcieLinkWidth = link->width;
+        gt.pcieLinkGen = link->generation;
+      }
       gpuTel[0] = gt;
     } else {
       cpu = cpuCol.sample();
-      if (cfg.showDiskRead) diskRead = diskReadCol.sample();
-      if (cfg.showDiskWrite) diskWrite = diskWriteCol.sample();
-      if (cfg.showNetRx) netRx = netRxCol.sample();
-      if (cfg.showNetTx) netTx = netTxCol.sample();
+      diskRead = diskReadCol.sample();
+      diskWrite = diskWriteCol.sample();
+      netRx = netRxCol.sample();
+      netTx = netTxCol.sample();
       ram = readRamUsage();
 
       gpuMemUtil = gpuMemUtilCol.sample();
@@ -1182,9 +1232,11 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       drawHardware(rows, cols, hwLines);
     }
 
-    drawFooter(rows, cols, screen);
+    drawFooter(rows, cols, screen, cfg.refreshMs);
     refresh();
 
+    // Wait up to refreshMs for input; wake immediately on keypress.
+    timeout(static_cast<int>(cfg.refreshMs));
     const int ch = getch();
     if (ch != ERR) {
       // Function keys (htop-style)
@@ -1208,6 +1260,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       else if (ch == 'b' || ch == 'B') screen = Screen::Benchmarks;
       else if (ch == 'c' || ch == 'C') screen = Screen::Config;
       else if (ch == 'q' || ch == 'Q') running = false;
+
+      // Sampling / scroll speed
+      else if (ch == '+' || ch == '=') adjustRefreshMs(true);
+      else if (ch == '-' || ch == '_') adjustRefreshMs(false);
 
       else if (ch == 27) screen = Screen::Timelines;  // ESC
       else {
@@ -1261,8 +1317,6 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
         }
       }
     }
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(cfg.refreshMs));
   }
 
   endwin();

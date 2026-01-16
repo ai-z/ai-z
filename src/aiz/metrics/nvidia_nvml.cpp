@@ -42,6 +42,8 @@ using nvmlDeviceGetPowerUsage_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /
 using nvmlDeviceGetTemperature_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int /*sensor*/, unsigned int* /*temp*/);
 using nvmlDeviceGetPowerState_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*pstate*/);
 using nvmlDeviceGetPcieThroughput_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int /*counter*/, unsigned int* /*valueKBps*/);
+using nvmlDeviceGetCurrPcieLinkGeneration_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*gen*/);
+using nvmlDeviceGetCurrPcieLinkWidth_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*width*/);
 
 struct NvmlApi {
 #if defined(_WIN32)
@@ -59,6 +61,8 @@ struct NvmlApi {
   nvmlDeviceGetTemperature_t nvmlDeviceGetTemperature = nullptr;
   nvmlDeviceGetPowerState_t nvmlDeviceGetPowerState = nullptr;
   nvmlDeviceGetPcieThroughput_t nvmlDeviceGetPcieThroughput = nullptr;
+  nvmlDeviceGetCurrPcieLinkGeneration_t nvmlDeviceGetCurrPcieLinkGeneration = nullptr;
+  nvmlDeviceGetCurrPcieLinkWidth_t nvmlDeviceGetCurrPcieLinkWidth = nullptr;
 
   bool ok() const {
     return lib && nvmlInit_v2 && nvmlShutdown && nvmlDeviceGetCount_v2 && nvmlDeviceGetHandleByIndex_v2 &&
@@ -106,6 +110,12 @@ static NvmlApi& api() {
   a.nvmlDeviceGetTemperature = reinterpret_cast<nvmlDeviceGetTemperature_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetTemperature"));
   a.nvmlDeviceGetPowerState = reinterpret_cast<nvmlDeviceGetPowerState_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPowerState"));
   a.nvmlDeviceGetPcieThroughput = reinterpret_cast<nvmlDeviceGetPcieThroughput_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPcieThroughput"));
+
+    // Optional (not required for a.ok()).
+    a.nvmlDeviceGetCurrPcieLinkGeneration = reinterpret_cast<nvmlDeviceGetCurrPcieLinkGeneration_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetCurrPcieLinkGeneration"));
+    a.nvmlDeviceGetCurrPcieLinkWidth = reinterpret_cast<nvmlDeviceGetCurrPcieLinkWidth_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetCurrPcieLinkWidth"));
 
   if (!a.ok()) {
     // Keep lib open; just mark unusable.
@@ -186,6 +196,23 @@ static std::optional<NvmlPcieThroughput> readNvmlPcieThroughputWithSession(nvmlD
   t.rxMBps = static_cast<double>(rxKBps) / 1024.0;
   t.txMBps = static_cast<double>(txKBps) / 1024.0;
   return t;
+}
+
+static std::optional<NvmlPcieLink> readNvmlPcieLinkWithSession(nvmlDevice_t dev, NvmlApi& a) {
+  if (!a.nvmlDeviceGetCurrPcieLinkGeneration || !a.nvmlDeviceGetCurrPcieLinkWidth) return std::nullopt;
+
+  unsigned int gen = 0;
+  unsigned int width = 0;
+
+  if (a.nvmlDeviceGetCurrPcieLinkGeneration(dev, &gen) != NVML_SUCCESS) return std::nullopt;
+  if (a.nvmlDeviceGetCurrPcieLinkWidth(dev, &width) != NVML_SUCCESS) return std::nullopt;
+
+  if (gen == 0 || width == 0) return std::nullopt;
+
+  NvmlPcieLink l;
+  l.generation = gen;
+  l.width = width;
+  return l;
 }
 
 }  // namespace
@@ -286,6 +313,22 @@ std::optional<NvmlPcieThroughput> readNvmlPcieThroughputForGpu(unsigned int inde
   nvmlDevice_t dev{};
   if (a.nvmlDeviceGetHandleByIndex_v2(index, &dev) != NVML_SUCCESS) return std::nullopt;
   return readNvmlPcieThroughputWithSession(dev, a);
+}
+
+std::optional<NvmlPcieLink> readNvmlPcieLinkForGpu(unsigned int index) {
+  NvmlApi& a = api();
+  if (!a.ok()) return std::nullopt;
+
+  NvmlSession sess;
+  if (!sess.inited) return std::nullopt;
+
+  unsigned int count = 0;
+  if (a.nvmlDeviceGetCount_v2(&count) != NVML_SUCCESS) return std::nullopt;
+  if (count == 0 || index >= count) return std::nullopt;
+
+  nvmlDevice_t dev{};
+  if (a.nvmlDeviceGetHandleByIndex_v2(index, &dev) != NVML_SUCCESS) return std::nullopt;
+  return readNvmlPcieLinkWithSession(dev, a);
 }
 
 std::optional<NvmlPcieThroughput> readNvmlPcieThroughput() {
