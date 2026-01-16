@@ -7,6 +7,7 @@
 #include <aiz/metrics/network_bandwidth.h>
 #include <aiz/metrics/gpu_usage.h>
 #include <aiz/metrics/gpu_memory_util.h>
+#include <aiz/metrics/linux_gpu_sysfs.h>
 #include <aiz/metrics/nvidia_nvml.h>
 #include <aiz/metrics/pcie_bandwidth.h>
 #include <aiz/metrics/ram_usage.h>
@@ -245,6 +246,7 @@ struct GpuTelemetry {
   std::string pstate;
   std::optional<unsigned int> pcieLinkWidth;
   std::optional<unsigned int> pcieLinkGen;
+  std::string source;
 };
 
 static std::string trim(std::string s) {
@@ -299,6 +301,7 @@ static std::optional<GpuTelemetry> readNvidiaGpuTelemetry() {
     t.watts = std::stod(a);
     t.tempC = std::stod(b);
     t.pstate = c;
+    t.source = "nvidia-smi";
     return t;
   } catch (...) {
     return std::nullopt;
@@ -316,6 +319,7 @@ static std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index
     t.watts = nv->powerWatts;
     t.tempC = nv->tempC;
     t.pstate = nv->pstate;
+    t.source = "nvml";
     any = true;
   }
 
@@ -327,6 +331,18 @@ static std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index
   }
 
   if (any) return t;
+
+  // AMD/Intel via Linux sysfs (best-effort).
+  if (const auto lt = readLinuxGpuTelemetry(index)) {
+    t.utilPct = lt->utilPct;
+    t.vramUsedGiB = lt->vramUsedGiB;
+    t.vramTotalGiB = lt->vramTotalGiB;
+    t.watts = lt->watts;
+    t.tempC = lt->tempC;
+    t.pstate = lt->pstate;
+    t.source = lt->source;
+    return t;
+  }
 
   // Fallback only supports first GPU (nvidia-smi has no multi-GPU loop here).
   if (index == 0) return readNvidiaGpuTelemetry();
@@ -1002,6 +1018,9 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   if (!debugMode) {
     if (const auto n = nvmlGpuCount(); n && *n > 0) {
       gpuCount = *n;
+    } else {
+      const unsigned int nSys = linuxGpuCount();
+      if (nSys > 0) gpuCount = nSys;
     }
   }
 
@@ -1241,6 +1260,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       const bool hasNvml = (nvmlGpuCount().value_or(0) > 0);
 
       if (!hasNvml) {
+        // Legacy fallback (kept for compatibility): single aggregated sample.
         gpuSamples[0] = gpuCol.sample();
       }
 
@@ -1254,13 +1274,12 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       }
       gpuTel = cachedGpuTel;
 
-      if (hasNvml) {
-        for (unsigned int i = 0; i < gpuCount; ++i) {
-          const auto& gt = gpuTel[static_cast<std::size_t>(i)];
-          if (gt && gt->utilPct) {
-            gpuSamples[static_cast<std::size_t>(i)] = Sample{*gt->utilPct, "%", "nvml"};
-          }
-        }
+      // Prefer per-GPU telemetry when available (NVML or sysfs).
+      for (unsigned int i = 0; i < gpuCount; ++i) {
+        const auto& gt = gpuTel[static_cast<std::size_t>(i)];
+        if (!gt || !gt->utilPct) continue;
+        const std::string label = !gt->source.empty() ? gt->source : (hasNvml ? std::string("nvml") : std::string("sysfs"));
+        gpuSamples[static_cast<std::size_t>(i)] = Sample{*gt->utilPct, "%", label};
       }
 
       if (ram) {
@@ -1276,7 +1295,17 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
         sumTotal += *gt->vramTotalGiB;
       }
       if (sumTotal > 0.0) {
-        vramPct = Sample{(100.0 * sumUsed / sumTotal), "%", "nvml"};
+        std::string label;
+        for (const auto& gt : gpuTel) {
+          if (!gt || !gt->vramUsedGiB || !gt->vramTotalGiB) continue;
+          if (label.empty() && !gt->source.empty()) label = gt->source;
+          else if (!gt->source.empty() && gt->source != label) {
+            label = "gpu";
+            break;
+          }
+        }
+        if (label.empty()) label = hasNvml ? std::string("nvml") : std::string("sysfs");
+        vramPct = Sample{(100.0 * sumUsed / sumTotal), "%", label};
       }
     }
 

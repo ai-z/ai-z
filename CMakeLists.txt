@@ -31,6 +31,7 @@ add_executable(ai-z
   src/aiz/metrics/cpu_usage.cpp
   src/aiz/metrics/disk_bandwidth.cpp
   src/aiz/metrics/network_bandwidth.cpp
+  src/aiz/metrics/linux_gpu_sysfs.cpp
   src/aiz/metrics/gpu_memory_util.cpp
   src/aiz/metrics/timeline.cpp
   src/aiz/metrics/nvidia_nvml.cpp
