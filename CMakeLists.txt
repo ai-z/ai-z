@@ -5,6 +5,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# CUDA is enabled conditionally; keep its dialect compatible with older CMake.
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
 option(AI_Z_ENABLE_NVML "Enable NVIDIA NVML backend" ON)
 option(AI_Z_ENABLE_CUDA "Enable CUDA benchmarks/backends" ON)
 option(AI_Z_ENABLE_HIP "Enable HIP benchmarks/backends" OFF)
@@ -73,7 +77,12 @@ if (AI_Z_ENABLE_CUDA)
     message(WARNING "AI_Z_ENABLE_CUDA=ON but CUDAToolkit not found; disabling CUDA backend. Configure with -DAI_Z_ENABLE_CUDA=OFF to silence.")
     set(AI_Z_ENABLE_CUDA OFF CACHE BOOL "Enable CUDA benchmarks/backends" FORCE)
   else()
+    enable_language(CUDA)
+    # Avoid empty CUDA_ARCHITECTURES warnings. "native" can map to compute_native,
+    # which older NVCC versions don't accept; use a conservative default set.
+    set_property(TARGET ai-z PROPERTY CUDA_ARCHITECTURES 70 75 80 86)
     target_sources(ai-z PRIVATE src/aiz/bench/pcie_bandwidth_cuda.cpp)
+    target_sources(ai-z PRIVATE src/aiz/bench/gpu_compute_cuda.cu)
     target_link_libraries(ai-z PRIVATE CUDA::cudart)
   endif()
 endif()

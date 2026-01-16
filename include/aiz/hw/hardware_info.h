@@ -9,6 +9,7 @@ struct HardwareInfo {
   std::string osPretty;
   std::string kernelVersion;
   std::string cpuName;
+  std::string cpuInstructions;
   std::string ramSummary;
   std::string gpuName;
   std::string gpuDriver;

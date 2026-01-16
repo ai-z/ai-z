@@ -662,49 +662,44 @@ static void drawBenchmarks(
     int cols,
     int headerRows,
     int selected,
-    const std::vector<std::unique_ptr<IBenchmark>>& benches,
-    const std::vector<std::string>& benchResults,
-    const std::string& lastResult) {
+    const std::vector<std::string>& rowTitles,
+    const std::vector<bool>& rowIsHeader,
+    const std::vector<std::unique_ptr<IBenchmark>>& rowBenches,
+    const std::vector<std::string>& rowResults) {
   const bool colors = has_colors() != 0;
   int y = headerRows;
 
-  // Two-column layout: left = benchmark names, right = results.
-  // Keep results in their own column rather than directly under the benchmark title.
-  std::size_t maxNameLen = 0;
-  for (const auto& b : benches) {
-    if (!b) continue;
-    std::string n = b->name();
-    if (!b->isAvailable()) n += " [unavailable]";
-    maxNameLen = std::max(maxNameLen, n.size());
-  }
-  // Value column starts after the name column, but clamp so it doesn't drift too far right.
-  const int minValueCol = 24;
-  const int maxValueCol = std::max(0, cols / 2);
-  const int valueCol = std::min(cols - 1, std::max(minValueCol, std::min(maxValueCol, static_cast<int>(maxNameLen) + 4)));
+  auto placeholderForName = [&](const std::string& n) -> std::string {
+    if (n.find("PCIe") != std::string::npos || n.find("PCI") != std::string::npos) return "-- GB/s";
+    if (n.find("FP") != std::string::npos || n.find("FLOPS") != std::string::npos) return "-- GFLOPS";
+    if (n.find("INT") != std::string::npos) return "-- GOPS";
+    return "--";
+  };
 
-  // Inside the results column, align "label: value" pairs.
-  std::size_t maxResultLabelLen = 0;
-  for (const auto& r : benchResults) {
-    std::size_t start = 0;
-    while (start <= r.size()) {
-      const std::size_t end = r.find('\n', start);
-      const std::string line = (end == std::string::npos) ? r.substr(start) : r.substr(start, end - start);
-      const std::size_t sep = line.find(": ");
-      if (sep != std::string::npos) maxResultLabelLen = std::max(maxResultLabelLen, sep);  // label only
-      if (end == std::string::npos) break;
-      start = end + 1;
-    }
-  }
-  maxResultLabelLen = std::min<std::size_t>(maxResultLabelLen, 8);
-  constexpr int kResultIndent = 4;  // indent inside the results column
-  const int labelCol = std::min(cols - 1, valueCol + kResultIndent);
-  const int valCol = std::min(cols - 1, labelCol + static_cast<int>(maxResultLabelLen) + 2);
+  auto resultTextForRow = [&](int row) -> std::string {
+    if (row < 0 || row >= static_cast<int>(rowResults.size())) return "--";
+    const auto& s = rowResults[static_cast<std::size_t>(row)];
+    if (!s.empty()) return s;
+    return placeholderForName(rowTitles[static_cast<std::size_t>(row)]);
+  };
 
   // Special entry: run all.
   {
-    const std::string line = (selected == 0 ? "> " : "  ") + std::string("Run all benchmarks");
+    // Spacer between the header bar and the first action.
+    if (y < rows - 2) {
+      mvhline(y, 0, ' ', cols);
+      ++y;
+    }
+
+    const std::string prefix = (selected == 0 ? "> " : "  ");
+    const std::string label = "Run all benchmarks";
     mvhline(y, 0, ' ', cols);
-    mvaddnstr(y, 0, line.c_str(), cols);
+    mvaddnstr(y, 0, prefix.c_str(), cols);
+    if (colors) attron(COLOR_PAIR(6) | A_BOLD);
+    if (static_cast<int>(prefix.size()) < cols) {
+      mvaddnstr(y, static_cast<int>(prefix.size()), label.c_str(), cols - static_cast<int>(prefix.size()));
+    }
+    if (colors) attroff(COLOR_PAIR(6) | A_BOLD);
     ++y;
     // Blank spacer line between "run all" and individual benches.
     if (y < rows - 2) {
@@ -713,64 +708,69 @@ static void drawBenchmarks(
     }
   }
 
-  for (int i = 0; i < static_cast<int>(benches.size()); ++i) {
-    const int rowIndex = i + 1;  // shifted by "run all"
-    const auto& b = benches[static_cast<std::size_t>(i)];
+  for (int row = 0; row < static_cast<int>(rowTitles.size()); ++row) {
+    const int rowIndex = row + 1;  // shifted by "run all"
+    const bool isHeader = rowIsHeader[static_cast<std::size_t>(row)];
+    const auto& b = rowBenches[static_cast<std::size_t>(row)];
     mvhline(y, 0, ' ', cols);
 
-    const std::string prefix = (rowIndex == selected ? "> " : "  ");
-    const std::string name = b ? b->name() : std::string("(null)");
-    const bool avail = b && b->isAvailable();
-    const std::string suffix = (b && !avail) ? " [unavailable]" : std::string{};
+    const std::string prefix = (!isHeader && rowIndex == selected) ? "> " : "  ";
+    const std::string name = rowTitles[static_cast<std::size_t>(row)];
+    const bool avail = (!isHeader && b && b->isAvailable());
 
-    // Left column: benchmark name.
     mvaddnstr(y, 0, prefix.c_str(), cols);
-    if (colors && avail) attron(COLOR_PAIR(4) | A_BOLD);
-    mvaddnstr(y, static_cast<int>(prefix.size()), name.c_str(), std::max(0, cols - static_cast<int>(prefix.size())));
-    if (colors && avail) attroff(COLOR_PAIR(4) | A_BOLD);
-    if (!suffix.empty()) {
-      const int sx = static_cast<int>(prefix.size() + name.size());
-      if (sx < cols) mvaddnstr(y, sx, suffix.c_str(), cols - sx);
+
+    // Headers: just a section title line.
+    if (isHeader) {
+      if (colors) attron(COLOR_PAIR(4) | A_BOLD);
+      mvaddnstr(y, static_cast<int>(prefix.size()), name.c_str(), std::max(0, cols - static_cast<int>(prefix.size())));
+      if (colors) attroff(COLOR_PAIR(4) | A_BOLD);
+      ++y;
+      continue;
     }
 
-    // Right column: results.
-    if (i >= 0 && i < static_cast<int>(benchResults.size()) && !benchResults[static_cast<std::size_t>(i)].empty()) {
-      std::string r = benchResults[static_cast<std::size_t>(i)];
-      std::size_t start = 0;
-      int ry = y;
-      while (start <= r.size() && ry < rows - 2) {
+    // Benchmark rows: show "NAME: value" on a single line.
+    std::string r;
+    if (b && !b->isAvailable()) {
+      r = "unavailable";
+    } else {
+      r = resultTextForRow(row);
+    }
+
+    const std::size_t end0 = r.find('\n');
+    const std::string firstLine = (end0 == std::string::npos) ? r : r.substr(0, end0);
+    constexpr int kMetricIndent = 4;
+    const std::string indent(kMetricIndent, ' ');
+    const std::string namePart = indent + name;
+    const std::string valuePart = ": " + firstLine;
+
+    // Draw name (styled) and value (default) separately so values stay white.
+    int x = static_cast<int>(prefix.size());
+    if (colors && avail) attron(COLOR_PAIR(4) | A_BOLD);
+    if (x < cols) mvaddnstr(y, x, namePart.c_str(), cols - x);
+    if (colors && avail) attroff(COLOR_PAIR(4) | A_BOLD);
+    x += static_cast<int>(namePart.size());
+    if (x < cols) mvaddnstr(y, x, valuePart.c_str(), cols - x);
+    ++y;
+
+    // If the result has extra lines (errors/details), show them underneath indented.
+    if (end0 != std::string::npos) {
+      std::size_t start = end0 + 1;
+      while (start <= r.size() && y < rows - 2) {
         const std::size_t end = r.find('\n', start);
-        const std::string line = (end == std::string::npos) ? r.substr(start) : r.substr(start, end - start);
-
-        if (ry != y) {
-          mvhline(ry, 0, ' ', cols);
-        }
-
-        const std::size_t sep = line.find(": ");
-        if (sep != std::string::npos) {
-          const std::string label = line.substr(0, sep + 1);
-          const std::string val = line.substr(sep + 2);
-          if (labelCol < cols) mvaddnstr(ry, labelCol, label.c_str(), cols - labelCol);
-          if (valCol < cols) mvaddnstr(ry, valCol, val.c_str(), cols - valCol);
-        } else {
-          if (labelCol < cols) mvaddnstr(ry, labelCol, line.c_str(), cols - labelCol);
-        }
-
+        const std::string extra = (end == std::string::npos) ? r.substr(start) : r.substr(start, end - start);
+        mvhline(y, 0, ' ', cols);
+        const int ix = static_cast<int>(prefix.size()) + 2;
+        if (ix < cols) mvaddnstr(y, ix, extra.c_str(), cols - ix);
+        ++y;
         if (end == std::string::npos) break;
         start = end + 1;
-        ++ry;
       }
-      y = ry;
     }
-
-    ++y;
   }
 
   mvhline(rows - 3, 0, ' ', cols);
   mvaddnstr(rows - 3, 0, "Enter: run   Esc: back", cols);
-
-  mvhline(rows - 2, 0, ' ', cols);
-  mvaddnstr(rows - 2, 0, lastResult.c_str(), cols);
 }
 
 static void drawConfig(int rows, int cols, int selected, const Config& cfg) {
@@ -965,6 +965,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     init_pair(4, COLOR_CYAN, -1);
     // Pair 5: usage values in section titles (light green).
     init_pair(5, COLOR_GREEN, -1);
+    // Pair 6: warning / emphasis (light red).
+    init_pair(6, COLOR_RED, -1);
   }
 
   Screen screen = Screen::Timelines;
@@ -1024,19 +1026,102 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   Timeline pcieRxTl(cfg.timelineSamples);
   Timeline pcieTxTl(cfg.timelineSamples);
 
-  std::vector<std::unique_ptr<IBenchmark>> benches;
-  benches.push_back(makePcieBandwidthBenchmark());
-  benches.push_back(makeFlopsBenchmark());
-  benches.push_back(makeTorchMatmulBenchmark());
-
-  int benchSelected = 0;
-  int configSelected = 0;
-  std::string lastBenchResult;
-  std::vector<std::string> benchResults;
-  benchResults.resize(benches.size());
-
   HardwareInfo hwCache = HardwareInfo::probe();
   std::vector<std::string> hwLines = hwCache.toLines();
+
+  auto parseGpuNames = [](const HardwareInfo& hw, unsigned int gpuCount) {
+    std::vector<std::string> names;
+    names.resize(gpuCount);
+    for (unsigned int i = 0; i < gpuCount; ++i) names[i] = "GPU" + std::to_string(i);
+    for (const auto& l : hw.perGpuLines) {
+      // Format: "GPU0: <name>".
+      if (l.rfind("GPU", 0) != 0) continue;
+      const std::size_t sep = l.find(": ");
+      if (sep == std::string::npos) continue;
+      const std::string left = l.substr(0, sep);
+      const std::string right = l.substr(sep + 2);
+      if (left.size() < 4) continue;
+      try {
+        const unsigned int idx = static_cast<unsigned int>(std::stoul(left.substr(3)));
+        if (idx < names.size() && !right.empty()) names[idx] = right;
+      } catch (...) {
+        continue;
+      }
+    }
+    return names;
+  };
+
+  std::vector<std::string> benchRowTitles;
+  std::vector<bool> benchRowIsHeader;
+  std::vector<std::unique_ptr<IBenchmark>> benchRowBenches;
+  std::vector<std::string> benchRowResults;
+
+  auto rebuildBenchRows = [&]() {
+    benchRowTitles.clear();
+    benchRowIsHeader.clear();
+    benchRowBenches.clear();
+    benchRowResults.clear();
+
+    const std::vector<std::string> gpuNames = parseGpuNames(hwCache, gpuCount);
+
+    auto addHeader = [&](const std::string& title) {
+      benchRowTitles.push_back(title);
+      benchRowIsHeader.push_back(true);
+      benchRowBenches.push_back(nullptr);
+      benchRowResults.emplace_back();
+    };
+
+    auto addBench = [&](std::unique_ptr<IBenchmark> b) {
+      const std::string title = b ? b->name() : std::string("(null)");
+      benchRowTitles.push_back(title);
+      benchRowIsHeader.push_back(false);
+      benchRowBenches.push_back(std::move(b));
+      benchRowResults.emplace_back();
+    };
+
+    for (unsigned int gi = 0; gi < gpuCount; ++gi) {
+      addHeader("GPU" + std::to_string(gi) + " - " + gpuNames[static_cast<std::size_t>(gi)]);
+      addBench(makeGpuPcieRxBenchmark(gi));
+      addBench(makeGpuPcieTxBenchmark(gi));
+      addBench(makeGpuFp16Benchmark(gi));
+      addBench(makeGpuFp32Benchmark(gi));
+      addBench(makeGpuFp64Benchmark(gi));
+      addBench(makeGpuInt4Benchmark(gi));
+      addBench(makeGpuInt8Benchmark(gi));
+    }
+
+    addHeader("CPU0 - " + (hwCache.cpuName.empty() ? std::string("unknown") : hwCache.cpuName));
+    addBench(makeCpuFp16FlopsBenchmark());
+    addBench(makeCpuFp32FlopsBenchmark());
+  };
+
+  rebuildBenchRows();
+
+  auto isSelectableBenchRow = [&](int selectedRow) {
+    if (selectedRow <= 0) return true;  // 0 = run all
+    const int row = selectedRow - 1;
+    if (row < 0 || row >= static_cast<int>(benchRowIsHeader.size())) return false;
+    return !benchRowIsHeader[static_cast<std::size_t>(row)];
+  };
+
+  auto clampBenchSelected = [&](int sel) {
+    const int maxSel = static_cast<int>(benchRowTitles.size());
+    sel = std::clamp(sel, 0, maxSel);
+    if (isSelectableBenchRow(sel)) return sel;
+
+    // Find nearest selectable row (prefer downward).
+    for (int d = 1; d <= maxSel; ++d) {
+      const int down = sel + d;
+      if (down <= maxSel && isSelectableBenchRow(down)) return down;
+      const int up = sel - d;
+      if (up >= 0 && isSelectableBenchRow(up)) return up;
+    }
+    return 0;
+  };
+
+  int benchSelected = clampBenchSelected(0);
+  int configSelected = 0;
+  std::string lastBenchResult;
 
   bool running = true;
 
@@ -1223,7 +1308,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     } else if (screen == Screen::Benchmarks) {
       // Show the same basic metrics header as the main screen.
       const int headerRows = drawTitleBarTimelines(cols, cpu, cfg.showDiskRead, cfg.showDiskWrite, diskRead, diskWrite, cfg.showNetRx, cfg.showNetTx, netRx, netTx, pcieRx, pcieTx, ram, gpuTel);
-      drawBenchmarks(rows, cols, headerRows, benchSelected, benches, benchResults, lastBenchResult);
+      drawBenchmarks(rows, cols, headerRows, benchSelected, benchRowTitles, benchRowIsHeader, benchRowBenches, benchRowResults);
     } else if (screen == Screen::Config) {
       drawHeader(cols, "AI-Z - Config");
       drawConfig(rows, cols, configSelected, cfg);
@@ -1244,6 +1329,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       else if (ch == KEY_F(2)) {
         hwCache = HardwareInfo::probe();
         hwLines = hwCache.toLines();
+        rebuildBenchRows();
+        benchSelected = clampBenchSelected(benchSelected);
         screen = Screen::Hardware;
       }
       else if (ch == KEY_F(3)) screen = Screen::Benchmarks;
@@ -1255,6 +1342,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       else if (ch == 'w' || ch == 'W') {
         hwCache = HardwareInfo::probe();
         hwLines = hwCache.toLines();
+        rebuildBenchRows();
+        benchSelected = clampBenchSelected(benchSelected);
         screen = Screen::Hardware;
       }
       else if (ch == 'b' || ch == 'B') screen = Screen::Benchmarks;
@@ -1268,25 +1357,29 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       else if (ch == 27) screen = Screen::Timelines;  // ESC
       else {
         if (screen == Screen::Benchmarks) {
-          const int maxSel = static_cast<int>(benches.size());  // +1 for "run all" (index 0)
-          if (ch == KEY_UP) benchSelected = std::max(0, benchSelected - 1);
-          else if (ch == KEY_DOWN) benchSelected = std::min(maxSel, benchSelected + 1);
+          if (ch == KEY_UP) benchSelected = clampBenchSelected(benchSelected - 1);
+          else if (ch == KEY_DOWN) benchSelected = clampBenchSelected(benchSelected + 1);
           else if (ch == '\n' || ch == KEY_ENTER) {
             if (benchSelected == 0) {
               // Run all benchmarks.
               lastBenchResult = "Running all...";
-              for (std::size_t i = 0; i < benches.size(); ++i) {
-                auto& b = benches[i];
+              for (std::size_t row = 0; row < benchRowBenches.size(); ++row) {
+                if (benchRowIsHeader[row]) continue;
+                auto& b = benchRowBenches[row];
                 const BenchResult r = b->run();
-                benchResults[i] = r.ok ? r.summary : ("FAIL: " + r.summary);
+                benchRowResults[row] = r.ok ? r.summary : ("FAIL: " + r.summary);
               }
               lastBenchResult = "Done.";
             } else {
-              const int benchIndex = benchSelected - 1;
-              auto& b = benches[static_cast<std::size_t>(benchIndex)];
-              const BenchResult r = b->run();
-              benchResults[static_cast<std::size_t>(benchIndex)] = r.ok ? r.summary : ("FAIL: " + r.summary);
-              lastBenchResult = r.ok ? ("OK: " + r.summary) : ("FAIL: " + r.summary);
+              const int row = benchSelected - 1;
+              if (row >= 0 && row < static_cast<int>(benchRowBenches.size()) && !benchRowIsHeader[static_cast<std::size_t>(row)]) {
+                auto& b = benchRowBenches[static_cast<std::size_t>(row)];
+                const BenchResult r = b->run();
+                benchRowResults[static_cast<std::size_t>(row)] = r.ok ? r.summary : ("FAIL: " + r.summary);
+                lastBenchResult = r.ok ? ("OK: " + r.summary) : ("FAIL: " + r.summary);
+              } else {
+                lastBenchResult = "(not runnable)";
+              }
             }
           }
         } else if (screen == Screen::Config) {
@@ -1313,6 +1406,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           if (ch == 'r') {
             hwCache = HardwareInfo::probe();
             hwLines = hwCache.toLines();
+            rebuildBenchRows();
+            benchSelected = clampBenchSelected(benchSelected);
           }
         }
       }

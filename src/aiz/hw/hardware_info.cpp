@@ -3,6 +3,7 @@
 #if defined(_WIN32)
 
 #include <array>
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -63,6 +64,7 @@ std::vector<std::string> HardwareInfo::toLines() const {
       "OS: " + (osPretty.empty() ? std::string("unknown") : osPretty),
       "Kernel: " + (kernelVersion.empty() ? std::string("unknown") : kernelVersion),
       "CPU: " + (cpuName.empty() ? std::string("unknown") : cpuName),
+      "CPU Instructions: " + (cpuInstructions.empty() ? std::string("unknown") : cpuInstructions),
       "RAM: " + (ramSummary.empty() ? std::string("unknown") : ramSummary),
       // If we have per-GPU lines, the single GPU line is redundant.
       hasPerGpu ? std::string() : ("GPU: " + (gpuName.empty() ? std::string("unknown") : gpuName)),
@@ -98,6 +100,7 @@ HardwareInfo HardwareInfo::probe() {
   } else {
     info.cpuName = "unknown";
   }
+  info.cpuInstructions = "unknown";
   info.ramSummary = "unknown";
   info.gpuName = "unknown";
   info.gpuDriver = "unknown";
@@ -117,6 +120,7 @@ HardwareInfo HardwareInfo::probe() {
 #else
 
 #include <array>
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -124,6 +128,7 @@ HardwareInfo HardwareInfo::probe() {
 #include <fstream>
 #include <iomanip>
 #include <optional>
+#include <unordered_set>
 #include <sstream>
 #include <string>
 
@@ -380,6 +385,98 @@ static std::string probeCpuName() {
   return "unknown";
 }
 
+static std::string joinWith(const std::vector<std::string>& parts, const char* sep) {
+  if (parts.empty()) return std::string();
+  std::ostringstream oss;
+  for (std::size_t i = 0; i < parts.size(); ++i) {
+    if (i) oss << sep;
+    oss << parts[i];
+  }
+  return oss.str();
+}
+
+static std::vector<std::string> splitWs(const std::string& s) {
+  std::istringstream iss(s);
+  std::vector<std::string> out;
+  std::string tok;
+  while (iss >> tok) out.push_back(tok);
+  return out;
+}
+
+static std::string probeCpuInstructions() {
+  // Linux exposes supported ISA extensions via /proc/cpuinfo.
+  // x86: "flags\t: ..."; ARM: "Features\t: ...".
+  auto flagsLine = readFirstMatch("/proc/cpuinfo", "flags\t\t: ");
+  if (!flagsLine) flagsLine = readFirstMatch("/proc/cpuinfo", "flags\t: ");
+  if (!flagsLine) flagsLine = readFirstMatch("/proc/cpuinfo", "Features\t: ");
+  if (!flagsLine) return "unknown";
+
+  const std::vector<std::string> tokens = splitWs(*flagsLine);
+  if (tokens.empty()) return "unknown";
+
+  std::unordered_set<std::string> has;
+  has.reserve(tokens.size());
+  for (const auto& t : tokens) has.insert(t);
+
+  struct Flag {
+    const char* token;
+    const char* label;
+  };
+
+  // Curated set of common ISA extensions; keep it short so it fits typical terminal widths.
+  const Flag kFlags[] = {
+      // x86 / x86_64
+      {"mmx", "MMX"},
+      {"sse", "SSE"},
+      {"sse2", "SSE2"},
+      {"sse3", "SSE3"},
+      {"ssse3", "SSSE3"},
+      {"sse4_1", "SSE4.1"},
+      {"sse4_2", "SSE4.2"},
+      {"popcnt", "POPCNT"},
+      {"aes", "AES"},
+      {"pclmulqdq", "PCLMUL"},
+      {"fma", "FMA"},
+      {"f16c", "F16C"},
+      {"avx", "AVX"},
+      {"avx2", "AVX2"},
+      {"bmi1", "BMI1"},
+      {"bmi2", "BMI2"},
+      {"avx512f", "AVX-512F"},
+      {"avx512bw", "AVX-512BW"},
+      {"avx512dq", "AVX-512DQ"},
+      {"avx512vl", "AVX-512VL"},
+      {"avx512cd", "AVX-512CD"},
+      {"avx512vnni", "AVX-512VNNI"},
+      // ARM (AArch64 typically)
+      {"neon", "NEON"},
+      {"asimd", "NEON"},
+      {"fp", "FP"},
+      {"asimdhp", "FP16"},
+      {"crc32", "CRC32"},
+      {"sha1", "SHA1"},
+      {"sha2", "SHA2"},
+      {"sha3", "SHA3"},
+      {"sm3", "SM3"},
+      {"sm4", "SM4"},
+      {"sve", "SVE"},
+      {"sve2", "SVE2"},
+  };
+
+  std::vector<std::string> out;
+  out.reserve(sizeof(kFlags) / sizeof(kFlags[0]));
+
+  for (const auto& f : kFlags) {
+    if (has.find(f.token) != has.end()) {
+      // Avoid duplicate labels (e.g. neon + asimd).
+      if (out.empty() || out.back() != f.label) out.push_back(f.label);
+    }
+  }
+
+  if (out.empty()) return "unknown";
+  return joinWith(out, " ");
+}
+
 static std::string probeRamSummary() {
   // Always provide total RAM from /proc/meminfo.
   std::ifstream in("/proc/meminfo");
@@ -490,6 +587,7 @@ std::vector<std::string> HardwareInfo::toLines() const {
       "OS: " + (osPretty.empty() ? std::string("unknown") : osPretty),
       "Kernel: " + (kernelVersion.empty() ? std::string("unknown") : kernelVersion),
       "CPU: " + (cpuName.empty() ? std::string("unknown") : cpuName),
+      "CPU Instructions: " + (cpuInstructions.empty() ? std::string("unknown") : cpuInstructions),
       "RAM: " + (ramSummary.empty() ? std::string("unknown") : ramSummary),
       hasPerGpu ? std::string() : ("GPU: " + (gpuName.empty() ? std::string("unknown") : gpuName)),
       "GPU Driver: " + (gpuDriver.empty() ? std::string("unknown") : gpuDriver),
@@ -518,6 +616,7 @@ HardwareInfo HardwareInfo::probe() {
   info.osPretty = readOsPrettyName().value_or("unknown");
   info.kernelVersion = probeKernelVersion();
   info.cpuName = probeCpuName();
+  info.cpuInstructions = probeCpuInstructions();
   info.ramSummary = probeRamSummary();
   info.gpuName = probeGpuName();
   info.gpuDriver = probeGpuDriver();

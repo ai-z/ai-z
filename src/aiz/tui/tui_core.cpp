@@ -114,6 +114,18 @@ static std::wstring widenAscii(const std::string& s) {
   return w;
 }
 
+static std::string placeholderForBenchmarkName(const std::string& n) {
+  // Keep this heuristic simple: reserve the typical multi-line shapes so the UI
+  // is expanded even before any runs.
+  if (n.find("PCIe") != std::string::npos || n.find("PCI") != std::string::npos) {
+    return "GPU0: --\nRX: --\nTX: --";
+  }
+  if (n.find("Floating") != std::string::npos || n.find("FLOPS") != std::string::npos) {
+    return "FLOPS: --";
+  }
+  return "--";
+}
+
 static std::string fmt0(double v) {
   char buf[64]{};
   std::snprintf(buf, sizeof(buf), "%.0f", v);
@@ -581,7 +593,14 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
 
   // Inside results column, align "label: value" pairs.
   std::size_t maxLabelLen = 0;
-  for (const auto& r : state.benchResults) {
+  for (int i = 0; i < static_cast<int>(state.benches.size()); ++i) {
+    std::string r;
+    if (i >= 0 && i < static_cast<int>(state.benchResults.size()) && !state.benchResults[static_cast<std::size_t>(i)].empty()) {
+      r = state.benchResults[static_cast<std::size_t>(i)];
+    } else {
+      const std::string n = state.benches[static_cast<std::size_t>(i)] ? state.benches[static_cast<std::size_t>(i)]->name() : std::string{};
+      r = placeholderForBenchmarkName(n);
+    }
     std::size_t start = 0;
     while (start <= r.size()) {
       const std::size_t end = r.find('\n', start);
@@ -599,10 +618,16 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
 
   // Special entry: run all.
   {
+    // Spacer between header and the first action.
+    if (y < out.height - 2) {
+      drawBodyLine(out, y, L"", Style::Value);
+      ++y;
+    }
+
     std::wstring line = (state.benchmarksSel == 0 ? L"> " : L"  ");
     line += L"Run all benchmarks";
     if (y < out.height - 2) {
-      drawBodyLine(out, y, line, Style::Value);
+      drawBodyLine(out, y, line, Style::Warning);
       ++y;
     }
 
@@ -638,22 +663,29 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
         drawText(out, sx, y, widenAscii(suffix), Style::Value);
       }
 
-      // Right column: results.
-      if (i >= 0 && i < static_cast<int>(state.benchResults.size()) && !state.benchResults[static_cast<std::size_t>(i)].empty()) {
-        std::string r = state.benchResults[static_cast<std::size_t>(i)];
+      // Right column: results are rendered on the line(s) below the benchmark name
+      // so the entry is expanded even before running.
+      const int resultTop = y + 1;
+      if (resultTop < out.height - 2) {
+        std::string r;
+        if (i >= 0 && i < static_cast<int>(state.benchResults.size()) && !state.benchResults[static_cast<std::size_t>(i)].empty()) {
+          r = state.benchResults[static_cast<std::size_t>(i)];
+        } else {
+          r = placeholderForBenchmarkName(name);
+        }
+
         std::size_t start = 0;
-        int ry = y;
+        int ry = resultTop;
         while (start <= r.size() && ry < out.height - 2) {
           const std::size_t end = r.find('\n', start);
           const std::string line = (end == std::string::npos) ? r.substr(start) : r.substr(start, end - start);
 
-          if (ry != y) {
+            // Clear line.
             for (int x = 0; x < out.width; ++x) {
               auto& c = out.at(x, ry);
               c.ch = L' ';
               c.style = static_cast<std::uint16_t>(Style::Default);
             }
-          }
 
           const std::size_t sep = line.find(": ");
           if (sep != std::string::npos) {
@@ -678,9 +710,6 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
 
   if (out.height >= 4) {
     drawBodyLine(out, out.height - 3, L"Enter: run   Esc: back", Style::FooterKey);
-  }
-  if (out.height >= 3) {
-    drawBodyLine(out, out.height - 2, widenAscii(state.lastBenchResult), Style::Value);
   }
 }
 

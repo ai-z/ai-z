@@ -217,9 +217,95 @@ public:
   }
 };
 
+class PcieBandwidthCudaOneDir final : public IBenchmark {
+public:
+  enum class Dir { Rx, Tx };
+
+  PcieBandwidthCudaOneDir(unsigned int gpuIndex, Dir dir)
+      : gpuIndex_(gpuIndex), dir_(dir) {}
+
+  std::string name() const override {
+    return (dir_ == Dir::Rx) ? "PCIe RX" : "PCIe TX";
+  }
+
+  bool isAvailable() const override {
+    int n = 0;
+    const cudaError_t e = cudaGetDeviceCount(&n);
+    return (e == cudaSuccess) && (n > 0) && (gpuIndex_ < static_cast<unsigned int>(n));
+  }
+
+  BenchResult run() override {
+    int deviceCount = 0;
+    cudaError_t e = cudaGetDeviceCount(&deviceCount);
+    if (e != cudaSuccess) return failCuda("cudaGetDeviceCount", e);
+    if (deviceCount <= 0) return BenchResult{false, "No CUDA devices found."};
+    if (gpuIndex_ >= static_cast<unsigned int>(deviceCount)) return BenchResult{false, "Invalid GPU index."};
+
+    constexpr std::size_t bytes = 256ull * 1024ull * 1024ull;
+    constexpr int warmupIters = 2;
+    constexpr int iters = 10;
+
+    e = cudaSetDevice(static_cast<int>(gpuIndex_));
+    if (e != cudaSuccess) return failCuda("cudaSetDevice", e);
+
+    void* host = nullptr;
+    e = cudaMallocHost(&host, bytes);
+    if (e != cudaSuccess) return failCuda("cudaMallocHost", e);
+
+    void* dev = nullptr;
+    e = cudaMalloc(&dev, bytes);
+    if (e != cudaSuccess) {
+      cudaFreeHost(host);
+      return failCuda("cudaMalloc", e);
+    }
+
+    cudaStream_t stream{};
+    e = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+    if (e != cudaSuccess) {
+      cudaFree(dev);
+      cudaFreeHost(host);
+      return failCuda("cudaStreamCreateWithFlags", e);
+    }
+
+    std::string err;
+    std::optional<double> gbps;
+    if (dir_ == Dir::Rx) {
+      // RX: host -> device (GPU receives).
+      gbps = measureMemcpyGBps(stream, dev, host, bytes, cudaMemcpyHostToDevice, iters, warmupIters, err);
+    } else {
+      // TX: device -> host (GPU sends).
+      gbps = measureMemcpyGBps(stream, host, dev, bytes, cudaMemcpyDeviceToHost, iters, warmupIters, err);
+    }
+
+    cudaStreamDestroy(stream);
+    cudaFree(dev);
+    cudaFreeHost(host);
+
+    if (!gbps) return BenchResult{false, err.empty() ? std::string("transfer failed") : err};
+
+    std::ostringstream out;
+    out.setf(std::ios::fixed);
+    out.precision(2);
+    out << *gbps << " GB/s";
+    return BenchResult{true, out.str()};
+  }
+
+private:
+  unsigned int gpuIndex_ = 0;
+  Dir dir_ = Dir::Rx;
+};
+
 }  // namespace
 
 std::unique_ptr<IBenchmark> makePcieBandwidthBenchmarkCuda() { return std::make_unique<PcieBandwidthCuda>(); }
+
+std::unique_ptr<IBenchmark> makePcieBandwidthRxBenchmarkCuda(unsigned int gpuIndex) {
+  return std::make_unique<PcieBandwidthCudaOneDir>(gpuIndex, PcieBandwidthCudaOneDir::Dir::Rx);
+}
+
+std::unique_ptr<IBenchmark> makePcieBandwidthTxBenchmarkCuda(unsigned int gpuIndex) {
+  return std::make_unique<PcieBandwidthCudaOneDir>(gpuIndex, PcieBandwidthCudaOneDir::Dir::Tx);
+}
 
 }  // namespace aiz
 
