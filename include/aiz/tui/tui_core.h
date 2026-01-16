@@ -70,6 +70,10 @@ struct TuiState {
   Timeline ramTl{240};
   Timeline vramTl{240};
   Timeline diskTl{240};
+  Timeline diskReadTl{240};
+  Timeline diskWriteTl{240};
+  Timeline netRxTl{240};
+  Timeline netTxTl{240};
   Timeline pcieRxTl{240};
   Timeline pcieTxTl{240};
 

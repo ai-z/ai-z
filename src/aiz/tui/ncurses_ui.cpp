@@ -4,6 +4,7 @@
 #include <aiz/hw/hardware_info.h>
 #include <aiz/metrics/cpu_usage.h>
 #include <aiz/metrics/disk_bandwidth.h>
+#include <aiz/metrics/network_bandwidth.h>
 #include <aiz/metrics/gpu_usage.h>
 #include <aiz/metrics/gpu_memory_util.h>
 #include <aiz/metrics/nvidia_nvml.h>
@@ -19,6 +20,7 @@
 #include <chrono>
 #include <cmath>
 #include <cctype>
+#include <cstring>
 #include <cstdio>
 #include <fstream>
 #include <limits>
@@ -329,47 +331,47 @@ static std::string fmt0(double v) {
   return oss.str();
 }
 
-static std::string makeTitleBar(const std::optional<Sample>& cpu,
-                                const std::optional<Sample>& gpu,
-                                const std::optional<Sample>& pcie,
-                                const std::optional<RamUsage>& ram,
-                                const std::optional<VramUsage>& vram) {
-  std::string cpuStr = "CPU --";
-  if (cpu) cpuStr = "CPU " + fmt0(cpu->value) + "%";
-
-  std::string ramStr = "RAM --";
-  if (ram) {
-    ramStr = "RAM " + fmt1(ram->usedGiB) + "/" + fmt1(ram->totalGiB) + "G(" + fmt0(ram->usedPct) + "%)";
-  }
-
-  std::string gpuStr = "GPU --";
-  if (gpu) gpuStr = "GPU " + fmt0(gpu->value) + "%";
-
-  std::string vramStr = "VRAM --";
-  if (vram) {
-    vramStr = "VRAM " + fmt1(vram->usedGiB) + "/" + fmt1(vram->totalGiB) + "G(" + fmt0(vram->usedPct) + "%)";
-  }
-
-  std::string pcieStr = "PCIe --";
-  if (pcie) {
-    // Example unit may be MB/s.
-    pcieStr = "PCIe " + fmt0(pcie->value) + pcie->unit;
-  }
-
-  return "AI-Z  " + cpuStr + "  " + ramStr + "  " + vramStr + "  " + gpuStr + "  " + pcieStr;
-}
-
-static void drawTitleBarTimelines(int cols,
+static int drawTitleBarTimelines(int cols,
                                   const std::optional<Sample>& cpu,
+                                  bool showDiskRead,
+                                  bool showDiskWrite,
+                                  const std::optional<Sample>& diskRead,
+                                  const std::optional<Sample>& diskWrite,
+                                  bool showNetRx,
+                                  bool showNetTx,
+                                  const std::optional<Sample>& netRx,
+                                  const std::optional<Sample>& netTx,
                                   const std::optional<Sample>& pcieRx,
                                   const std::optional<Sample>& pcieTx,
                                   const std::optional<RamUsage>& ram,
                                   const std::vector<std::optional<GpuTelemetry>>& gpus) {
   const bool colors = has_colors() != 0;
-  mvhline(0, 0, ' ', cols);
-  mvhline(1, 0, ' ', cols);
-  int x0 = 0;
-  int x1 = 0;
+  const int headerRows = 1 + static_cast<int>(gpus.size());
+
+  for (int row = 0; row < headerRows; ++row) {
+    mvhline(row, 0, ' ', cols);
+  }
+
+  enum class Align {
+    Left,
+    Right,
+  };
+
+  auto fit = [](std::string s, std::size_t w, Align a) {
+    if (s.size() > w) s.resize(w);
+    if (s.size() < w) {
+      const std::size_t pad = w - s.size();
+      if (a == Align::Right) s = std::string(pad, ' ') + s;
+      else s += std::string(pad, ' ');
+    }
+    return s;
+  };
+
+  auto fmtSampleOrDash = [&](const std::optional<Sample>& s, bool enabled) {
+    if (!enabled) return std::string("--");
+    if (!s) return std::string("--");
+    return fmt1(s->value) + s->unit;
+  };
 
   auto addPlain = [&](int row, int& x, const std::string& s) {
     if (x >= cols) return;
@@ -377,90 +379,84 @@ static void drawTitleBarTimelines(int cols,
     x += static_cast<int>(s.size());
   };
 
-  auto addGreenLabel = [&](int row, int& x, const std::string& label) {
+  auto addLabel = [&](int row, int& x, const std::string& labelWithColon) {
     if (x >= cols) return;
-    const std::string block = " " + label + " ";
-    if (colors) attron(COLOR_PAIR(3) | A_BOLD);
-    mvaddnstr(row, x, block.c_str(), cols - x);
-    if (colors) attroff(COLOR_PAIR(3) | A_BOLD);
-    x += static_cast<int>(block.size());
+    if (colors) attron(COLOR_PAIR(4) | A_BOLD);
+    addPlain(row, x, labelWithColon);
+    if (colors) attroff(COLOR_PAIR(4) | A_BOLD);
+    addPlain(row, x, " ");
   };
 
-  auto addValue = [&](int row, int& x, const std::string& value) {
-    addPlain(row, x, " " + value + " ");
+  auto addValueField = [&](int row, int& x, const std::string& value, std::size_t width, Align align) {
+    addPlain(row, x, fit(value, width, align));
+    addPlain(row, x, "  ");
   };
 
-  // Start metrics at column 0 (no AI-Z title block in header).
-  x0 = 0;
-  x1 = 0;
-
-  // CPU
-  addGreenLabel(0, x0, "CPU");
-  addValue(0, x0, cpu ? (fmt0(cpu->value) + "%") : std::string("--"));
-
-  // RAM
-  addGreenLabel(0, x0, "RAM");
+  const std::string cpuStr = cpu ? (fmt0(cpu->value) + "%") : std::string("--");
+  std::string ramStr = "--";
   if (ram) {
-    addValue(0, x0, fmt1(ram->usedGiB) + "/" + fmt1(ram->totalGiB) + "G(" + fmt0(ram->usedPct) + "%)");
-  } else {
-    addValue(0, x0, "--");
+    ramStr = fmt1(ram->usedGiB) + "/" + fmt1(ram->totalGiB) + "G(" + fmt0(ram->usedPct) + "%)";
+  }
+  const std::string diskStr = fmtSampleOrDash(diskRead, showDiskRead) + "/" + fmtSampleOrDash(diskWrite, showDiskWrite);
+  const std::string netStr = fmtSampleOrDash(netRx, showNetRx) + "/" + fmtSampleOrDash(netTx, showNetTx);
+
+  // Line 1: CPU: RAM: DISKr/W: Net R/T:
+  {
+    int x = 0;
+    addLabel(0, x, "CPU:");
+    addValueField(0, x, cpuStr, 4, Align::Right);
+
+    addLabel(0, x, "RAM:");
+    addValueField(0, x, ramStr, 18, Align::Left);
+
+    addLabel(0, x, "DISKr/W:");
+    addValueField(0, x, diskStr, 24, Align::Left);
+
+    addLabel(0, x, "Net R/T:");
+    addValueField(0, x, netStr, 24, Align::Left);
   }
 
-  // Per-GPU utilization + VRAM
+  // Lines 2..N: one line per GPU present
   for (std::size_t i = 0; i < gpus.size(); ++i) {
     const auto& gt = gpus[i];
-    const std::string gi = "G" + std::to_string(i);
-    const std::string vi = "V" + std::to_string(i);
+    const int row = static_cast<int>(1 + i);
+    int x = 0;
 
-    addGreenLabel(0, x0, gi);
-    if (gt && gt->utilPct) addValue(0, x0, fmt0(*gt->utilPct) + "%");
-    else addValue(0, x0, "--");
+    addLabel(row, x, "GPU " + std::to_string(i) + ":");
 
-    addGreenLabel(0, x0, vi);
+    const std::string usageStr = (gt && gt->utilPct) ? (fmt0(*gt->utilPct) + "%") : std::string("--");
+    addLabel(row, x, "usage:");
+    addValueField(row, x, usageStr, 4, Align::Right);
+
+    std::string vramStr = "--";
     if (gt && gt->vramUsedGiB && gt->vramTotalGiB) {
       const double used = *gt->vramUsedGiB;
       const double total = *gt->vramTotalGiB;
       const double pct = total > 0.0 ? (100.0 * used / total) : 0.0;
-      addValue(0, x0, fmt1(used) + "/" + fmt1(total) + "G(" + fmt0(pct) + "%)");
-    } else {
-      addValue(0, x0, "--");
+      vramStr = fmt1(used) + "/" + fmt1(total) + "G(" + fmt0(pct) + "%)";
     }
+    addLabel(row, x, "vram:");
+    addValueField(row, x, vramStr, 18, Align::Left);
+
+    const std::string wattsStr = (gt && gt->watts) ? (fmt0(*gt->watts) + "W") : std::string("--");
+    addLabel(row, x, "w:");
+    addValueField(row, x, wattsStr, 5, Align::Right);
+
+    const std::string tempStr = (gt && gt->tempC) ? (fmt0(*gt->tempC) + "C") : std::string("--");
+    addLabel(row, x, "t:");
+    addValueField(row, x, tempStr, 4, Align::Right);
+
+    const std::string powerStr = (gt && !gt->pstate.empty()) ? gt->pstate : std::string("--");
+    addLabel(row, x, "power:");
+    addValueField(row, x, powerStr, 4, Align::Left);
+
+    const std::string pcieTStr = pcieTx ? (fmt0(pcieTx->value) + pcieTx->unit) : std::string("--");
+    const std::string pcieRStr = pcieRx ? (fmt0(pcieRx->value) + pcieRx->unit) : std::string("--");
+    addLabel(row, x, "pcie T/R:");
+    addValueField(row, x, pcieTStr + "/" + pcieRStr, 22, Align::Left);
   }
 
-  // PCIe RX/TX
-  addGreenLabel(0, x0, "PCIeRX");
-  if (pcieRx) {
-    addValue(0, x0, fmt0(pcieRx->value) + pcieRx->unit);
-  } else {
-    addValue(0, x0, "--");
-  }
-
-  addGreenLabel(0, x0, "PCIeTX");
-  if (pcieTx) {
-    addValue(0, x0, fmt0(pcieTx->value) + pcieTx->unit);
-  } else {
-    addValue(0, x0, "--");
-  }
-
-  // Row 1: per-GPU power/thermals/state
-  for (std::size_t i = 0; i < gpus.size(); ++i) {
-    const auto& gt = gpus[i];
-    const std::string wi = "W" + std::to_string(i);
-    const std::string ti = "T" + std::to_string(i);
-    const std::string pi = "P" + std::to_string(i);
-
-    addGreenLabel(1, x1, wi);
-    if (gt && gt->watts) addValue(1, x1, fmt0(*gt->watts) + "W");
-    else addValue(1, x1, "--");
-
-    addGreenLabel(1, x1, ti);
-    if (gt && gt->tempC) addValue(1, x1, fmt0(*gt->tempC) + "C");
-    else addValue(1, x1, "--");
-
-    addGreenLabel(1, x1, pi);
-    if (gt && !gt->pstate.empty()) addValue(1, x1, gt->pstate);
-    else addValue(1, x1, "--");
-  }
+  return headerRows;
 }
 
 static void drawSectionTitleLine(int y, int cols, const std::string& title) {
@@ -506,6 +502,7 @@ static void drawSectionTitleLine(int y, int cols, const std::string& title) {
 static void drawTimelines(
     int rows,
     int cols,
+    int headerRows,
     const Config& cfg,
   const std::string& cpuDevice,
   const std::string& gpuDevice,
@@ -515,6 +512,10 @@ static void drawTimelines(
     const std::optional<Sample>& gpuMemUtil,
     const std::vector<std::optional<Sample>>& gpus,
     const std::optional<Sample>& disk,
+    const std::optional<Sample>& diskRead,
+    const std::optional<Sample>& diskWrite,
+    const std::optional<Sample>& netRx,
+    const std::optional<Sample>& netTx,
     const std::optional<Sample>& pcieRx,
     const std::optional<Sample>& pcieTx,
     const Timeline& cpuTl,
@@ -523,6 +524,10 @@ static void drawTimelines(
     const Timeline& gpuMemUtilTl,
     const std::vector<Timeline>& gpuTls,
     const Timeline& diskTl,
+    const Timeline& diskReadTl,
+    const Timeline& diskWriteTl,
+    const Timeline& netRxTl,
+    const Timeline& netTxTl,
     const Timeline& pcieRxTl,
     const Timeline& pcieTxTl) {
   struct Panel {
@@ -554,7 +559,10 @@ static void drawTimelines(
     }
   }
 
-  panels.push_back(Panel{"Disk", cfg.showDisk, &disk, &diskTl, 5000.0, std::string{}});
+  panels.push_back(Panel{"DiskR", cfg.showDiskRead, &diskRead, &diskReadTl, 5000.0, std::string{}});
+  panels.push_back(Panel{"DiskW", cfg.showDiskWrite, &diskWrite, &diskWriteTl, 5000.0, std::string{}});
+  panels.push_back(Panel{"NetRX", cfg.showNetRx, &netRx, &netRxTl, 5000.0, std::string{}});
+  panels.push_back(Panel{"NetTX", cfg.showNetTx, &netTx, &netTxTl, 5000.0, std::string{}});
   // PCIe samples are in MB/s (from NVML).
   panels.push_back(Panel{"PCIe RX", cfg.showPcieRx, &pcieRx, &pcieRxTl, 32'000.0, std::string{}});
   panels.push_back(Panel{"PCIe TX", cfg.showPcieTx, &pcieTx, &pcieTxTl, 32'000.0, std::string{}});
@@ -564,12 +572,12 @@ static void drawTimelines(
       panels.end());
 
   if (panels.empty()) {
-    mvaddnstr(2, 0, "No timelines enabled. Use Config (F4 / C) to enable.", cols);
+    mvaddnstr(headerRows, 0, "No timelines enabled. Use Config (F4 / C) to enable.", cols);
     return;
   }
 
   // Start immediately under the header bar.
-  const int top = 2;
+  const int top = headerRows;
   const int bottomReserved = 1;  // footer
   const int usable = std::max(0, (rows - bottomReserved) - top);
   const int gap = 0;
@@ -596,7 +604,7 @@ static void drawTimelines(
     std::string title = p.name;
     if (!p.device.empty()) {
       title += " (" + p.device + ")";
-    } else if (p.name == "Disk") {
+    } else if (p.name == "Disk" || p.name == "DiskR" || p.name == "DiskW") {
       if (p.sample->has_value() && !(*p.sample)->label.empty()) {
         title += " (" + (*p.sample)->label + ")";
       }
@@ -626,12 +634,13 @@ static void drawTimelines(
 static void drawBenchmarks(
     int rows,
     int cols,
+    int headerRows,
     int selected,
     const std::vector<std::unique_ptr<IBenchmark>>& benches,
     const std::vector<std::string>& benchResults,
     const std::string& lastResult) {
   const bool colors = has_colors() != 0;
-  int y = 2;
+  int y = headerRows;
 
   // Two-column layout: left = benchmark names, right = results.
   // Keep results in their own column rather than directly under the benchmark title.
@@ -741,25 +750,54 @@ static void drawBenchmarks(
 static void drawConfig(int rows, int cols, int selected, const Config& cfg) {
   struct Item { const char* label; bool value; };
   const Item items[] = {
-      {"Show CPU usage", cfg.showCpu},
-      {"Show GPU usage", cfg.showGpu},
-      {"Show GPU memory util", cfg.showGpuMem},
-      {"Show Disk bandwidth", cfg.showDisk},
-      {"Show PCIe RX", cfg.showPcieRx},
-      {"Show PCIe TX", cfg.showPcieTx},
-      {"Show RAM usage", cfg.showRam},
-      {"Show VRAM usage", cfg.showVram},
+      {"CPU usage", cfg.showCpu},
+      {"GPU usage", cfg.showGpu},
+      {"GPU memory util", cfg.showGpuMem},
+      {"Disk read", cfg.showDiskRead},
+      {"Disk write", cfg.showDiskWrite},
+      {"Net RX", cfg.showNetRx},
+      {"Net TX", cfg.showNetTx},
+      {"PCIe RX", cfg.showPcieRx},
+      {"PCIe TX", cfg.showPcieTx},
+      {"RAM usage", cfg.showRam},
+      {"VRAM usage", cfg.showVram},
   };
 
+  const bool colors = has_colors() != 0;
+
+  // Section header
   int y = 2;
+  mvhline(y, 0, ' ', cols);
+  if (colors) attron(COLOR_PAIR(4) | A_BOLD);
+  mvaddnstr(y, 0, "Timelines", cols);
+  if (colors) attroff(COLOR_PAIR(4) | A_BOLD);
+  ++y;
+
+  std::size_t maxLabelLen = 0;
+  for (const auto& it : items) {
+    maxLabelLen = std::max(maxLabelLen, std::strlen(it.label));
+  }
+
+  const int prefixW = 2;  // "> " or "  "
+  const int colonCol = prefixW + static_cast<int>(maxLabelLen);
+  const int valueCol = colonCol + 2;  // ": "
+
   constexpr int kCount = static_cast<int>(sizeof(items) / sizeof(items[0]));
   for (int i = 0; i < kCount; ++i) {
-    std::string line = (i == selected ? "> " : "  ");
-    line += items[i].label;
-    line += ": ";
-    line += items[i].value ? "ON" : "OFF";
     mvhline(y, 0, ' ', cols);
-    mvaddnstr(y, 0, line.c_str(), cols);
+    const char* prefix = (i == selected ? "> " : "  ");
+    if (0 < cols) mvaddnstr(y, 0, prefix, cols);
+    if (prefixW < cols) mvaddnstr(y, prefixW, items[i].label, cols - prefixW);
+
+    // Pad label area so the ':' aligns.
+    const int labelEnd = prefixW + static_cast<int>(std::strlen(items[i].label));
+    for (int x = labelEnd; x < colonCol && x < cols; ++x) {
+      mvaddch(y, x, ' ');
+    }
+
+    if (colonCol < cols) mvaddch(y, colonCol, ':');
+    if (colonCol + 1 < cols) mvaddch(y, colonCol + 1, ' ');
+    if (valueCol < cols) mvaddnstr(y, valueCol, (items[i].value ? "ON" : "OFF"), cols - valueCol);
     ++y;
   }
   mvhline(rows - 3, 0, ' ', cols);
@@ -910,6 +948,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   GpuUsageCollector gpuCol;
   GpuMemoryUtilCollector gpuMemUtilCol;
   DiskBandwidthCollector diskCol;
+  DiskBandwidthCollector diskReadCol(DiskBandwidthMode::Read);
+  DiskBandwidthCollector diskWriteCol(DiskBandwidthMode::Write);
+  NetworkBandwidthCollector netRxCol(NetworkBandwidthMode::Rx);
+  NetworkBandwidthCollector netTxCol(NetworkBandwidthMode::Tx);
   PcieBandwidthCollector pcieCol;
   PcieRxBandwidthCollector pcieRxCol;
   PcieTxBandwidthCollector pcieTxCol;
@@ -918,6 +960,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   RandomWalk dbgCpu(0.0, 100.0, 10.0);
   RandomWalk dbgGpu(0.0, 100.0, 12.0);
   RandomWalk dbgDisk(0.0, 3000.0, 250.0);     // MB/s
+  RandomWalk dbgDiskR(0.0, 3000.0, 250.0);    // MB/s
+  RandomWalk dbgDiskW(0.0, 3000.0, 250.0);    // MB/s
+  RandomWalk dbgNetRx(0.0, 5000.0, 350.0);    // MB/s
+  RandomWalk dbgNetTx(0.0, 5000.0, 350.0);    // MB/s
   RandomWalk dbgPcieRx(0.0, 32000.0, 2500.0);  // MB/s (placeholder)
   RandomWalk dbgPcieTx(0.0, 32000.0, 2500.0);  // MB/s (placeholder)
   RandomWalk dbgRamPct(0.0, 100.0, 6.0);
@@ -946,6 +992,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     gpuTls.emplace_back(cfg.timelineSamples);
   }
   Timeline diskTl(cfg.timelineSamples);
+  Timeline diskReadTl(cfg.timelineSamples);
+  Timeline diskWriteTl(cfg.timelineSamples);
+  Timeline netRxTl(cfg.timelineSamples);
+  Timeline netTxTl(cfg.timelineSamples);
   Timeline pcieRxTl(cfg.timelineSamples);
   Timeline pcieTxTl(cfg.timelineSamples);
 
@@ -976,11 +1026,19 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     ensureTimelineCapacity(gpuMemUtilTl, desiredSamples);
     for (auto& tl : gpuTls) ensureTimelineCapacity(tl, desiredSamples);
     ensureTimelineCapacity(diskTl, desiredSamples);
+    ensureTimelineCapacity(diskReadTl, desiredSamples);
+    ensureTimelineCapacity(diskWriteTl, desiredSamples);
+    ensureTimelineCapacity(netRxTl, desiredSamples);
+    ensureTimelineCapacity(netTxTl, desiredSamples);
     ensureTimelineCapacity(pcieRxTl, desiredSamples);
     ensureTimelineCapacity(pcieTxTl, desiredSamples);
 
     std::optional<Sample> cpu;
     std::optional<Sample> disk;
+    std::optional<Sample> diskRead;
+    std::optional<Sample> diskWrite;
+    std::optional<Sample> netRx;
+    std::optional<Sample> netTx;
     std::optional<RamUsage> ram;
     std::optional<Sample> ramPct;
     std::optional<Sample> vramPct;
@@ -994,7 +1052,11 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
     if (debugMode) {
       cpu = Sample{dbgCpu.next(), "%", "debug"};
-      disk = Sample{dbgDisk.next(), "MB/s", "debug"};
+      // Keep disk labels empty in debug so titles don't show "(debug)".
+      if (cfg.showDiskRead) diskRead = Sample{dbgDiskR.next(), "MB/s", ""};
+      if (cfg.showDiskWrite) diskWrite = Sample{dbgDiskW.next(), "MB/s", ""};
+      if (cfg.showNetRx) netRx = Sample{dbgNetRx.next(), "MB/s", ""};
+      if (cfg.showNetTx) netTx = Sample{dbgNetTx.next(), "MB/s", ""};
       pcieRx = Sample{dbgPcieRx.next(), "MB/s", "debug"};
       pcieTx = Sample{dbgPcieTx.next(), "MB/s", "debug"};
 
@@ -1028,7 +1090,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       gpuTel[0] = gt;
     } else {
       cpu = cpuCol.sample();
-      disk = diskCol.sample();
+      if (cfg.showDiskRead) diskRead = diskReadCol.sample();
+      if (cfg.showDiskWrite) diskWrite = diskWriteCol.sample();
+      if (cfg.showNetRx) netRx = netRxCol.sample();
+      if (cfg.showNetTx) netTx = netTxCol.sample();
       ram = readRamUsage();
 
       gpuMemUtil = gpuMemUtilCol.sample();
@@ -1089,7 +1154,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       const auto& s = gpuSamples[static_cast<std::size_t>(i)];
       gpuTls[static_cast<std::size_t>(i)].push(s ? s->value : 0.0);
     }
-    diskTl.push(disk ? disk->value : 0.0);
+    diskReadTl.push(diskRead ? diskRead->value : 0.0);
+    diskWriteTl.push(diskWrite ? diskWrite->value : 0.0);
+    netRxTl.push(netRx ? netRx->value : 0.0);
+    netTxTl.push(netTx ? netTx->value : 0.0);
     pcieRxTl.push(pcieRx ? pcieRx->value : 0.0);
     pcieTxTl.push(pcieTx ? pcieTx->value : 0.0);
 
@@ -1097,15 +1165,15 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
     if (screen == Screen::Timelines) {
       // Custom title bar: green labels, black value background.
-      drawTitleBarTimelines(cols, cpu, pcieRx, pcieTx, ram, gpuTel);
-      drawTimelines(rows, cols, cfg, hwCache.cpuName, hwCache.gpuName, cpu, ramPct, vramPct, gpuMemUtil, gpuSamples, disk, pcieRx, pcieTx, cpuTl, ramTl, vramTl, gpuMemUtilTl, gpuTls, diskTl, pcieRxTl, pcieTxTl);
+      const int headerRows = drawTitleBarTimelines(cols, cpu, cfg.showDiskRead, cfg.showDiskWrite, diskRead, diskWrite, cfg.showNetRx, cfg.showNetTx, netRx, netTx, pcieRx, pcieTx, ram, gpuTel);
+      drawTimelines(rows, cols, headerRows, cfg, hwCache.cpuName, hwCache.gpuName, cpu, ramPct, vramPct, gpuMemUtil, gpuSamples, disk, diskRead, diskWrite, netRx, netTx, pcieRx, pcieTx, cpuTl, ramTl, vramTl, gpuMemUtilTl, gpuTls, diskTl, diskReadTl, diskWriteTl, netRxTl, netTxTl, pcieRxTl, pcieTxTl);
     } else if (screen == Screen::Help) {
       drawHeader(cols, "AI-Z - Help");
       drawHelp(rows, cols);
     } else if (screen == Screen::Benchmarks) {
       // Show the same basic metrics header as the main screen.
-      drawTitleBarTimelines(cols, cpu, pcieRx, pcieTx, ram, gpuTel);
-      drawBenchmarks(rows, cols, benchSelected, benches, benchResults, lastBenchResult);
+      const int headerRows = drawTitleBarTimelines(cols, cpu, cfg.showDiskRead, cfg.showDiskWrite, diskRead, diskWrite, cfg.showNetRx, cfg.showNetTx, netRx, netTx, pcieRx, pcieTx, ram, gpuTel);
+      drawBenchmarks(rows, cols, headerRows, benchSelected, benches, benchResults, lastBenchResult);
     } else if (screen == Screen::Config) {
       drawHeader(cols, "AI-Z - Config");
       drawConfig(rows, cols, configSelected, cfg);
@@ -1167,17 +1235,20 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           }
         } else if (screen == Screen::Config) {
           if (ch == KEY_UP) configSelected = std::max(0, configSelected - 1);
-          else if (ch == KEY_DOWN) configSelected = std::min(7, configSelected + 1);
+          else if (ch == KEY_DOWN) configSelected = std::min(10, configSelected + 1);
           else if (ch == ' ') {
             switch (configSelected) {
               case 0: cfg.showCpu = !cfg.showCpu; break;
               case 1: cfg.showGpu = !cfg.showGpu; break;
               case 2: cfg.showGpuMem = !cfg.showGpuMem; break;
-              case 3: cfg.showDisk = !cfg.showDisk; break;
-              case 4: cfg.showPcieRx = !cfg.showPcieRx; break;
-              case 5: cfg.showPcieTx = !cfg.showPcieTx; break;
-              case 6: cfg.showRam = !cfg.showRam; break;
-              case 7: cfg.showVram = !cfg.showVram; break;
+              case 3: cfg.showDiskRead = !cfg.showDiskRead; break;
+              case 4: cfg.showDiskWrite = !cfg.showDiskWrite; break;
+              case 5: cfg.showNetRx = !cfg.showNetRx; break;
+              case 6: cfg.showNetTx = !cfg.showNetTx; break;
+              case 7: cfg.showPcieRx = !cfg.showPcieRx; break;
+              case 8: cfg.showPcieTx = !cfg.showPcieTx; break;
+              case 9: cfg.showRam = !cfg.showRam; break;
+              case 10: cfg.showVram = !cfg.showVram; break;
             }
           } else if (ch == 's') {
             cfg.save();

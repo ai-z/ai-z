@@ -10,6 +10,10 @@ namespace aiz {
 struct TelemetrySnapshot {
   std::optional<Sample> cpu;
   std::optional<Sample> disk;
+  std::optional<Sample> diskRead;
+  std::optional<Sample> diskWrite;
+  std::optional<Sample> netRx;
+  std::optional<Sample> netTx;
   std::optional<Sample> gpu;
   std::optional<Sample> pcieRx;
   std::optional<Sample> pcieTx;

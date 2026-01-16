@@ -10,6 +10,8 @@
 
 namespace aiz {
 
+constexpr int kConfigItemCount = 10;
+
 void Frame::resize(int w, int h) {
   width = std::max(0, w);
   height = std::max(0, h);
@@ -90,7 +92,7 @@ void applyCommand(TuiState& state, const Config& /*cfg*/, Command cmd) {
 
   if (state.screen == Screen::Config) {
     if (cmd == Command::Up) state.configSel = std::max(0, state.configSel - 1);
-    if (cmd == Command::Down) state.configSel = std::min(6, state.configSel + 1);
+    if (cmd == Command::Down) state.configSel = std::min(kConfigItemCount - 1, state.configSel + 1);
     return;
   }
 }
@@ -254,17 +256,52 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   title += !state.latest.ramText.empty() ? state.latest.ramText : std::string("--");
   title += "  ";
 
+  if (cfg.showDiskRead) {
+    title += "DiskR ";
+    if (state.latest.diskRead) {
+      title += fmt1(state.latest.diskRead->value);
+      title += state.latest.diskRead->unit;
+    } else {
+      title += "--";
+    }
+    title += "  ";
+  }
+
+  if (cfg.showDiskWrite) {
+    title += "DiskW ";
+    if (state.latest.diskWrite) {
+      title += fmt1(state.latest.diskWrite->value);
+      title += state.latest.diskWrite->unit;
+    } else {
+      title += "--";
+    }
+    title += "  ";
+  }
+
+  if (cfg.showNetRx) {
+    title += "NetRX ";
+    if (state.latest.netRx) {
+      title += fmt1(state.latest.netRx->value);
+      title += state.latest.netRx->unit;
+    } else {
+      title += "--";
+    }
+    title += "  ";
+  }
+
+  if (cfg.showNetTx) {
+    title += "NetTX ";
+    if (state.latest.netTx) {
+      title += fmt1(state.latest.netTx->value);
+      title += state.latest.netTx->unit;
+    } else {
+      title += "--";
+    }
+    title += "  ";
+  }
+
   title += "VRAM ";
   title += state.latest.vramPct ? (fmt0(state.latest.vramPct->value) + "%") : std::string("--");
-  title += "  ";
-
-  title += "Disk ";
-  if (state.latest.disk) {
-    title += fmt1(state.latest.disk->value);
-    title += state.latest.disk->unit;
-  } else {
-    title += "--";
-  }
   title += "  ";
 
   title += "PCIeRX ";
@@ -311,7 +348,12 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   panels.push_back(Panel{"CPU", cfg.showCpu, &state.latest.cpu, &state.cpuTl, nullptr, 100.0, false});
   panels.push_back(Panel{"RAM", cfg.showRam, &state.latest.ramPct, &state.ramTl, nullptr, 100.0, false});
   panels.push_back(Panel{"VRAM", cfg.showVram, &state.latest.vramPct, &state.vramTl, nullptr, 100.0, false});
-  panels.push_back(Panel{"Disk", cfg.showDisk, &state.latest.disk, &state.diskTl, nullptr, 5000.0, false});
+
+  panels.push_back(Panel{"DiskR", cfg.showDiskRead, &state.latest.diskRead, &state.diskReadTl, nullptr, 5000.0, false});
+  panels.push_back(Panel{"DiskW", cfg.showDiskWrite, &state.latest.diskWrite, &state.diskWriteTl, nullptr, 5000.0, false});
+
+  panels.push_back(Panel{"NetRX", cfg.showNetRx, &state.latest.netRx, &state.netRxTl, nullptr, 5000.0, false});
+  panels.push_back(Panel{"NetTX", cfg.showNetTx, &state.latest.netTx, &state.netTxTl, nullptr, 5000.0, false});
   // PCIe samples are in MB/s (from NVML). Render RX and TX as two stacked mini-graphs.
   panels.push_back(Panel{"PCIe (RX/TX)", (cfg.showPcieRx || cfg.showPcieTx), &state.latest.pcieRx, &state.pcieRxTl, &state.pcieTxTl, 32'000.0, true});
 
@@ -405,7 +447,7 @@ static void renderHelp(Frame& out, int bodyTop) {
       "",
       "Description:",
       "  C++ TUI for performance timelines and benchmarks.",
-      "  Timelines: CPU, RAM, VRAM, GPU, Disk bandwidth, PCIe RX/TX.",
+      "  Timelines: CPU, RAM, VRAM, GPU, Disk read/write, Net RX/TX, PCIe RX/TX.",
       "",
       "Guide:",
       "  - Timelines are vertical bars that scroll over time.",
@@ -439,20 +481,35 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
     bool value;
   };
   const Item items[] = {
-      {L"Show CPU usage", cfg.showCpu},
-      {L"Show GPU usage", cfg.showGpu},
-      {L"Show Disk bandwidth", cfg.showDisk},
-      {L"Show PCIe RX", cfg.showPcieRx},
-      {L"Show PCIe TX", cfg.showPcieTx},
-      {L"Show RAM usage", cfg.showRam},
-      {L"Show VRAM usage", cfg.showVram},
+      {L"CPU usage", cfg.showCpu},
+      {L"GPU usage", cfg.showGpu},
+      {L"Disk read", cfg.showDiskRead},
+      {L"Disk write", cfg.showDiskWrite},
+      {L"Net RX", cfg.showNetRx},
+      {L"Net TX", cfg.showNetTx},
+      {L"PCIe RX", cfg.showPcieRx},
+      {L"PCIe TX", cfg.showPcieTx},
+      {L"RAM usage", cfg.showRam},
+      {L"VRAM usage", cfg.showVram},
   };
 
   int y = bodyTop + 1;
+  drawBodyLine(out, y, L"Timelines", Style::Section);
+  ++y;
+
+  std::size_t maxLabelLen = 0;
+  for (const auto& it : items) {
+    maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(it.label));
+  }
+
   constexpr int kCount = static_cast<int>(sizeof(items) / sizeof(items[0]));
+  static_assert(kCount == kConfigItemCount);
   for (int i = 0; i < kCount; ++i) {
     std::wstring line = (i == state.configSel ? L"> " : L"  ");
     line += items[i].label;
+    if (std::wcslen(items[i].label) < maxLabelLen) {
+      line.append(maxLabelLen - std::wcslen(items[i].label), L' ');
+    }
     line += L": ";
     line += (items[i].value ? L"ON" : L"OFF");
     if (y >= out.height - 2) break;

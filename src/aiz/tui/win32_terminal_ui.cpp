@@ -6,6 +6,7 @@
 
 #include <aiz/metrics/cpu_usage.h>
 #include <aiz/metrics/disk_bandwidth.h>
+#include <aiz/metrics/network_bandwidth.h>
 #include <aiz/metrics/nvidia_nvml.h>
 #include <aiz/metrics/pcie_bandwidth.h>
 #include <aiz/metrics/ram_usage.h>
@@ -456,6 +457,10 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
 
   CpuUsageCollector cpuCollector;
   DiskBandwidthCollector diskCollector;
+  DiskBandwidthCollector diskReadCollector(DiskBandwidthMode::Read);
+  DiskBandwidthCollector diskWriteCollector(DiskBandwidthMode::Write);
+  NetworkBandwidthCollector netRxCollector(NetworkBandwidthMode::Rx);
+  NetworkBandwidthCollector netTxCollector(NetworkBandwidthMode::Tx);
   PcieRxBandwidthCollector pcieRxCollector;
   PcieTxBandwidthCollector pcieTxCollector;
   const auto lastSampleAtInit = std::chrono::steady_clock::now();
@@ -496,18 +501,27 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
                       cfg.showGpu = !cfg.showGpu;
                       break;
                     case 2:
-                      cfg.showDisk = !cfg.showDisk;
+                      cfg.showDiskRead = !cfg.showDiskRead;
                       break;
                     case 3:
-                      cfg.showPcieRx = !cfg.showPcieRx;
+                      cfg.showDiskWrite = !cfg.showDiskWrite;
                       break;
                     case 4:
-                      cfg.showPcieTx = !cfg.showPcieTx;
+                      cfg.showNetRx = !cfg.showNetRx;
                       break;
                     case 5:
-                      cfg.showRam = !cfg.showRam;
+                      cfg.showNetTx = !cfg.showNetTx;
                       break;
                     case 6:
+                      cfg.showPcieRx = !cfg.showPcieRx;
+                      break;
+                    case 7:
+                      cfg.showPcieTx = !cfg.showPcieTx;
+                      break;
+                    case 8:
+                      cfg.showRam = !cfg.showRam;
+                      break;
+                    case 9:
                       cfg.showVram = !cfg.showVram;
                       break;
                     default:
@@ -556,7 +570,17 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
     // We keep this very simple for now; timelines graphs will use history later.
     ++state.tick;
     state.latest.cpu = cpuCollector.sample();
-    state.latest.disk = diskCollector.sample();
+
+    state.latest.disk.reset();
+    if (cfg.showDiskRead) state.latest.diskRead = diskReadCollector.sample();
+    else state.latest.diskRead.reset();
+    if (cfg.showDiskWrite) state.latest.diskWrite = diskWriteCollector.sample();
+    else state.latest.diskWrite.reset();
+
+    if (cfg.showNetRx) state.latest.netRx = netRxCollector.sample();
+    else state.latest.netRx.reset();
+    if (cfg.showNetTx) state.latest.netTx = netTxCollector.sample();
+    else state.latest.netTx.reset();
 
     // PCIe is best-effort (NVML-only right now).
     state.latest.pcieRx = pcieRxCollector.sample();
@@ -608,6 +632,26 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
         for (double v : state.diskTl.values()) resized.push(v);
         state.diskTl = std::move(resized);
       }
+      if (state.diskReadTl.capacity() < want) {
+        Timeline resized(want);
+        for (double v : state.diskReadTl.values()) resized.push(v);
+        state.diskReadTl = std::move(resized);
+      }
+      if (state.diskWriteTl.capacity() < want) {
+        Timeline resized(want);
+        for (double v : state.diskWriteTl.values()) resized.push(v);
+        state.diskWriteTl = std::move(resized);
+      }
+      if (state.netRxTl.capacity() < want) {
+        Timeline resized(want);
+        for (double v : state.netRxTl.values()) resized.push(v);
+        state.netRxTl = std::move(resized);
+      }
+      if (state.netTxTl.capacity() < want) {
+        Timeline resized(want);
+        for (double v : state.netTxTl.values()) resized.push(v);
+        state.netTxTl = std::move(resized);
+      }
       if (state.pcieRxTl.capacity() < want) {
         Timeline resized(want);
         for (double v : state.pcieRxTl.values()) resized.push(v);
@@ -625,6 +669,10 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
     if (state.latest.ramPct) state.ramTl.push(state.latest.ramPct->value);
     if (state.latest.vramPct) state.vramTl.push(state.latest.vramPct->value);
     if (state.latest.disk) state.diskTl.push(state.latest.disk->value);
+    if (state.latest.diskRead) state.diskReadTl.push(state.latest.diskRead->value);
+    if (state.latest.diskWrite) state.diskWriteTl.push(state.latest.diskWrite->value);
+    if (state.latest.netRx) state.netRxTl.push(state.latest.netRx->value);
+    if (state.latest.netTx) state.netTxTl.push(state.latest.netTx->value);
     if (state.latest.pcieRx) state.pcieRxTl.push(state.latest.pcieRx->value);
     if (state.latest.pcieTx) state.pcieTxTl.push(state.latest.pcieTx->value);
 

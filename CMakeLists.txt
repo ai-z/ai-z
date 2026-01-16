@@ -26,6 +26,7 @@ add_executable(ai-z
   src/aiz/hw/hardware_info.cpp
   src/aiz/metrics/cpu_usage.cpp
   src/aiz/metrics/disk_bandwidth.cpp
+  src/aiz/metrics/network_bandwidth.cpp
   src/aiz/metrics/gpu_memory_util.cpp
   src/aiz/metrics/timeline.cpp
   src/aiz/metrics/nvidia_nvml.cpp
@@ -44,7 +45,7 @@ if (WIN32)
     src/aiz/tui/win32_terminal_ui.cpp
     src/aiz/tui/tui_core.cpp
   )
-  target_link_libraries(ai-z PRIVATE pdh)
+  target_link_libraries(ai-z PRIVATE pdh iphlpapi)
 else()
   find_package(Curses REQUIRED)
   target_sources(ai-z PRIVATE

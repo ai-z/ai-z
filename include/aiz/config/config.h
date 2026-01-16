@@ -14,7 +14,12 @@ struct Config {
   bool showCpu = true;
   bool showGpu = true;
   bool showGpuMem = true;
+  // Backward-compat aggregate toggle (controls both read+write).
   bool showDisk = true;
+  bool showDiskRead = true;
+  bool showDiskWrite = true;
+  bool showNetRx = true;
+  bool showNetTx = true;
   bool showPcieRx = true;
   bool showPcieTx = true;
   bool showRam = true;

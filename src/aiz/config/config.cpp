@@ -69,7 +69,23 @@ Config Config::load() {
     if (key == "showCpu") cfg.showCpu = parseBool(val, cfg.showCpu);
     else if (key == "showGpu") cfg.showGpu = parseBool(val, cfg.showGpu);
     else if (key == "showGpuMem") cfg.showGpuMem = parseBool(val, cfg.showGpuMem);
-    else if (key == "showDisk") cfg.showDisk = parseBool(val, cfg.showDisk);
+    else if (key == "showDisk") {
+      // Backward compat: old single toggle controls both.
+      const bool v = parseBool(val, cfg.showDisk);
+      cfg.showDisk = v;
+      cfg.showDiskRead = v;
+      cfg.showDiskWrite = v;
+    }
+    else if (key == "showDiskRead") cfg.showDiskRead = parseBool(val, cfg.showDiskRead);
+    else if (key == "showDiskWrite") cfg.showDiskWrite = parseBool(val, cfg.showDiskWrite);
+    else if (key == "showNet") {
+      // Backward compat: single toggle controls both.
+      const bool v = parseBool(val, true);
+      cfg.showNetRx = v;
+      cfg.showNetTx = v;
+    }
+    else if (key == "showNetRx") cfg.showNetRx = parseBool(val, cfg.showNetRx);
+    else if (key == "showNetTx") cfg.showNetTx = parseBool(val, cfg.showNetTx);
     else if (key == "showPcie") {
       // Backward compat: old single toggle controls both.
       const bool v = parseBool(val, true);
@@ -96,7 +112,11 @@ void Config::save() const {
   out << "showCpu=" << (showCpu ? "true" : "false") << "\n";
   out << "showGpu=" << (showGpu ? "true" : "false") << "\n";
   out << "showGpuMem=" << (showGpuMem ? "true" : "false") << "\n";
-  out << "showDisk=" << (showDisk ? "true" : "false") << "\n";
+  // Prefer explicit per-direction toggles.
+  out << "showDiskRead=" << (showDiskRead ? "true" : "false") << "\n";
+  out << "showDiskWrite=" << (showDiskWrite ? "true" : "false") << "\n";
+  out << "showNetRx=" << (showNetRx ? "true" : "false") << "\n";
+  out << "showNetTx=" << (showNetTx ? "true" : "false") << "\n";
   out << "showPcieRx=" << (showPcieRx ? "true" : "false") << "\n";
   out << "showPcieTx=" << (showPcieTx ? "true" : "false") << "\n";
   out << "showRam=" << (showRam ? "true" : "false") << "\n";

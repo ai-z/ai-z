@@ -2,79 +2,102 @@
 
 #if defined(_WIN32)
 
-#ifndef NOMINMAX
-#  define NOMINMAX
-#endif
-
-#include <windows.h>
-
-#include <pdh.h>
 #include <pdhmsg.h>
 
-#include <cstdio>
 #include <string>
 
 namespace aiz {
 
-DiskBandwidthCollector::DiskBandwidthCollector(std::string devicePrefix) : devicePrefix_(std::move(devicePrefix)) {}
+DiskBandwidthCollector::DiskBandwidthCollector(std::string devicePrefix)
+    : DiskBandwidthCollector(DiskBandwidthMode::Total, std::move(devicePrefix)) {}
+
+DiskBandwidthCollector::DiskBandwidthCollector(DiskBandwidthMode mode, std::string devicePrefix)
+    : mode_(mode), devicePrefix_(std::move(devicePrefix)) {}
+
+DiskBandwidthCollector::~DiskBandwidthCollector() {
+  if (query_ != nullptr) {
+    PdhCloseQuery(query_);
+    query_ = nullptr;
+    counter_ = nullptr;
+  }
+}
+
+static const wchar_t* modeToPdhPath(DiskBandwidthMode mode) {
+  switch (mode) {
+    case DiskBandwidthMode::Read:
+      return L"\\PhysicalDisk(_Total)\\Disk Read Bytes/sec";
+    case DiskBandwidthMode::Write:
+      return L"\\PhysicalDisk(_Total)\\Disk Write Bytes/sec";
+    case DiskBandwidthMode::Total:
+    default:
+      return L"\\PhysicalDisk(_Total)\\Disk Bytes/sec";
+  }
+}
+
+static const wchar_t* modeToPdhFallbackPath(DiskBandwidthMode mode) {
+  switch (mode) {
+    case DiskBandwidthMode::Read:
+      return L"\\LogicalDisk(_Total)\\Disk Read Bytes/sec";
+    case DiskBandwidthMode::Write:
+      return L"\\LogicalDisk(_Total)\\Disk Write Bytes/sec";
+    case DiskBandwidthMode::Total:
+    default:
+      return L"\\LogicalDisk(_Total)\\Disk Bytes/sec";
+  }
+}
 
 std::optional<Sample> DiskBandwidthCollector::sample() {
-  static bool initialized = false;
-  static bool warmed = false;
-  static HQUERY query = nullptr;
-  static HCOUNTER counter = nullptr;
+  if (!initialized_) {
+    initialized_ = true;
 
-  if (!initialized) {
-    initialized = true;
-
-    const PDH_STATUS qs = PdhOpenQueryW(nullptr, 0, &query);
+    const PDH_STATUS qs = PdhOpenQueryW(nullptr, 0, &query_);
     if (qs != ERROR_SUCCESS) {
-      query = nullptr;
+      query_ = nullptr;
       return std::nullopt;
     }
 
     // Prefer total disk bytes/sec across all physical disks.
     // Notes:
     // - On some systems/locales/counter sets this may not exist; we fall back below.
-    const wchar_t* totalPath = L"\\PhysicalDisk(_Total)\\Disk Bytes/sec";
-    PDH_STATUS cs = PdhAddEnglishCounterW(query, totalPath, 0, &counter);
+    const wchar_t* totalPath = modeToPdhPath(mode_);
+    PDH_STATUS cs = PdhAddEnglishCounterW(query_, totalPath, 0, &counter_);
     if (cs != ERROR_SUCCESS) {
       // Fallback: LogicalDisk is often present.
-      const wchar_t* fallbackPath = L"\\LogicalDisk(_Total)\\Disk Bytes/sec";
-      cs = PdhAddEnglishCounterW(query, fallbackPath, 0, &counter);
+      const wchar_t* fallbackPath = modeToPdhFallbackPath(mode_);
+      cs = PdhAddEnglishCounterW(query_, fallbackPath, 0, &counter_);
     }
 
     if (cs != ERROR_SUCCESS) {
-      PdhCloseQuery(query);
-      query = nullptr;
-      counter = nullptr;
+      PdhCloseQuery(query_);
+      query_ = nullptr;
+      counter_ = nullptr;
       return std::nullopt;
     }
 
     // First collect is required to initialize the counter.
-    if (PdhCollectQueryData(query) != ERROR_SUCCESS) {
-      PdhCloseQuery(query);
-      query = nullptr;
-      counter = nullptr;
+    if (PdhCollectQueryData(query_) != ERROR_SUCCESS) {
+      PdhCloseQuery(query_);
+      query_ = nullptr;
+      counter_ = nullptr;
       return std::nullopt;
     }
 
-    warmed = false;
+    warmed_ = false;
     return Sample{0.0, "MB/s", "warming"};
   }
 
-  if (query == nullptr || counter == nullptr) {
+  if (query_ == nullptr || counter_ == nullptr) {
     return std::nullopt;
   }
 
-  const PDH_STATUS collectStatus = PdhCollectQueryData(query);
+  const PDH_STATUS collectStatus = PdhCollectQueryData(query_);
   if (collectStatus != ERROR_SUCCESS) {
     return std::nullopt;
   }
 
   PDH_FMT_COUNTERVALUE value;
   DWORD counterType = 0;
-  const PDH_STATUS fmtStatus = PdhGetFormattedCounterValue(counter, PDH_FMT_DOUBLE, &counterType, &value);
+  const PDH_STATUS fmtStatus = PdhGetFormattedCounterValue(counter_, PDH_FMT_DOUBLE, &counterType, &value);
   if (fmtStatus != ERROR_SUCCESS || value.CStatus != ERROR_SUCCESS) {
     return std::nullopt;
   }
@@ -83,8 +106,8 @@ std::optional<Sample> DiskBandwidthCollector::sample() {
   const double bytesPerSec = value.doubleValue;
   const double mbps = bytesPerSec / (1024.0 * 1024.0);
 
-  if (!warmed) {
-    warmed = true;
+  if (!warmed_) {
+    warmed_ = true;
     return Sample{0.0, "MB/s", "warming"};
   }
 
@@ -102,16 +125,23 @@ std::optional<Sample> DiskBandwidthCollector::sample() {
 
 namespace aiz {
 
-DiskBandwidthCollector::DiskBandwidthCollector(std::string devicePrefix) : devicePrefix_(std::move(devicePrefix)) {}
+DiskBandwidthCollector::DiskBandwidthCollector(std::string devicePrefix)
+    : DiskBandwidthCollector(DiskBandwidthMode::Total, std::move(devicePrefix)) {}
 
-static bool readDiskBytesTotal(const std::string& devicePrefix, std::uint64_t& bytesOut) {
+DiskBandwidthCollector::DiskBandwidthCollector(DiskBandwidthMode mode, std::string devicePrefix)
+    : mode_(mode), devicePrefix_(std::move(devicePrefix)) {}
+
+DiskBandwidthCollector::~DiskBandwidthCollector() = default;
+
+static bool readDiskSectorsTotals(const std::string& devicePrefix, std::uint64_t& readSectorsOut, std::uint64_t& writeSectorsOut) {
   // /proc/diskstats fields (Linux): reads completed, reads merged, sectors read, ms reading,
   // writes completed, writes merged, sectors written, ms writing, ...
   // We sum read+write sectors across matching devices.
   std::ifstream in("/proc/diskstats");
   if (!in.is_open()) return false;
 
-  std::uint64_t sectors = 0;
+  std::uint64_t readSectors = 0;
+  std::uint64_t writeSectors = 0;
   std::string line;
   while (std::getline(in, line)) {
     std::istringstream iss(line);
@@ -139,19 +169,38 @@ static bool readDiskBytesTotal(const std::string& devicePrefix, std::uint64_t& b
     iss >> readsCompleted >> readsMerged >> sectorsRead >> msReading;
     iss >> writesCompleted >> writesMerged >> sectorsWritten >> msWriting;
 
-    sectors += sectorsRead + sectorsWritten;
+    readSectors += sectorsRead;
+    writeSectors += sectorsWritten;
   }
 
-  // Assume 512-byte sectors (common for diskstats). This is a known limitation.
-  bytesOut = sectors * 512ULL;
+  readSectorsOut = readSectors;
+  writeSectorsOut = writeSectors;
   return true;
 }
 
 std::optional<Sample> DiskBandwidthCollector::sample() {
-  std::uint64_t bytesTotal = 0;
-  if (!readDiskBytesTotal(devicePrefix_, bytesTotal)) {
+  std::uint64_t readSectors = 0;
+  std::uint64_t writeSectors = 0;
+  if (!readDiskSectorsTotals(devicePrefix_, readSectors, writeSectors)) {
     return std::nullopt;
   }
+
+  std::uint64_t sectors = 0;
+  switch (mode_) {
+    case DiskBandwidthMode::Read:
+      sectors = readSectors;
+      break;
+    case DiskBandwidthMode::Write:
+      sectors = writeSectors;
+      break;
+    case DiskBandwidthMode::Total:
+    default:
+      sectors = readSectors + writeSectors;
+      break;
+  }
+
+  // Assume 512-byte sectors (common for diskstats). This is a known limitation.
+  const std::uint64_t bytesTotal = sectors * 512ULL;
 
   const auto now = std::chrono::steady_clock::now();
   if (!hasPrev_) {
