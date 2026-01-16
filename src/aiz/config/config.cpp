@@ -31,6 +31,26 @@ static bool parseBool(std::string v, bool fallback) {
   return fallback;
 }
 
+static TimelineAgg parseTimelineAgg(std::string v, TimelineAgg fallback) {
+  for (char& c : v) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  if (v == "max" || v == "peak" || v == "highest") return TimelineAgg::Max;
+  if (v == "avg" || v == "average" || v == "mean") return TimelineAgg::Avg;
+  return fallback;
+}
+
+static const char* timelineAggToString(TimelineAgg v) {
+  switch (v) {
+    case TimelineAgg::Max:
+      return "max";
+    case TimelineAgg::Avg:
+      return "avg";
+    default:
+      return "max";
+  }
+}
+
 Config Config::load() {
   Config cfg;
   std::ifstream in(configPath());
@@ -49,9 +69,19 @@ Config Config::load() {
     if (key == "showCpu") cfg.showCpu = parseBool(val, cfg.showCpu);
     else if (key == "showGpu") cfg.showGpu = parseBool(val, cfg.showGpu);
     else if (key == "showDisk") cfg.showDisk = parseBool(val, cfg.showDisk);
-    else if (key == "showPcie") cfg.showPcie = parseBool(val, cfg.showPcie);
+    else if (key == "showPcie") {
+      // Backward compat: old single toggle controls both.
+      const bool v = parseBool(val, true);
+      cfg.showPcieRx = v;
+      cfg.showPcieTx = v;
+    }
+    else if (key == "showPcieRx") cfg.showPcieRx = parseBool(val, cfg.showPcieRx);
+    else if (key == "showPcieTx") cfg.showPcieTx = parseBool(val, cfg.showPcieTx);
+    else if (key == "showRam") cfg.showRam = parseBool(val, cfg.showRam);
+    else if (key == "showVram") cfg.showVram = parseBool(val, cfg.showVram);
     else if (key == "refreshMs") cfg.refreshMs = static_cast<std::uint32_t>(std::stoul(val));
     else if (key == "timelineSamples") cfg.timelineSamples = static_cast<std::uint32_t>(std::stoul(val));
+    else if (key == "timelineAgg") cfg.timelineAgg = parseTimelineAgg(val, cfg.timelineAgg);
   }
   return cfg;
 }
@@ -65,9 +95,13 @@ void Config::save() const {
   out << "showCpu=" << (showCpu ? "true" : "false") << "\n";
   out << "showGpu=" << (showGpu ? "true" : "false") << "\n";
   out << "showDisk=" << (showDisk ? "true" : "false") << "\n";
-  out << "showPcie=" << (showPcie ? "true" : "false") << "\n";
+  out << "showPcieRx=" << (showPcieRx ? "true" : "false") << "\n";
+  out << "showPcieTx=" << (showPcieTx ? "true" : "false") << "\n";
+  out << "showRam=" << (showRam ? "true" : "false") << "\n";
+  out << "showVram=" << (showVram ? "true" : "false") << "\n";
   out << "refreshMs=" << refreshMs << "\n";
   out << "timelineSamples=" << timelineSamples << "\n";
+  out << "timelineAgg=" << timelineAggToString(timelineAgg) << "\n";
 }
 
 }  // namespace aiz

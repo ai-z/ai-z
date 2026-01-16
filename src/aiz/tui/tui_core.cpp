@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 namespace aiz {
 
@@ -89,7 +90,7 @@ void applyCommand(TuiState& state, const Config& /*cfg*/, Command cmd) {
 
   if (state.screen == Screen::Config) {
     if (cmd == Command::Up) state.configSel = std::max(0, state.configSel - 1);
-    if (cmd == Command::Down) state.configSel = std::min(3, state.configSel + 1);
+    if (cmd == Command::Down) state.configSel = std::min(6, state.configSel + 1);
     return;
   }
 }
@@ -145,7 +146,15 @@ static void drawSectionTitleLine(Frame& out, int y, const std::string& title) {
   }
 }
 
-static void drawScrollingBars(Frame& out, int topY, int leftX, int height, int width, const Timeline& tl, double maxV) {
+static void drawScrollingBars(
+    Frame& out,
+    int topY,
+    int leftX,
+    int height,
+    int width,
+    const Timeline& tl,
+    double maxV,
+    TimelineAgg agg) {
   if (height <= 0 || width <= 0) return;
 
   const auto vals = tl.values();
@@ -167,17 +176,54 @@ static void drawScrollingBars(Frame& out, int topY, int leftX, int height, int w
 
   if (available <= 0 || maxV <= 0.0) return;
 
-  const int count = std::min(colsToDraw, available);
-  const int startIdx = std::max(0, available - count);
-  const int xOffset = colsToDraw - count;
+  // If we have more samples than columns, downsample into buckets.
+  const int cols = colsToDraw;
+  const int count = std::min(cols, available);
+  const int xOffset = cols - count;
+
+  const bool needsBucketing = available > cols;
+  const int bucket = needsBucketing ? static_cast<int>((available + cols - 1) / cols) : 1;
 
   for (int i = 0; i < count; ++i) {
-    const int idx = startIdx + i;
     const int x = leftX + xOffset + i;
     if (x < 0 || x >= out.width) continue;
-    if (idx < 0 || idx >= available) continue;
 
-    double v = vals[static_cast<std::size_t>(idx)];
+    double v = 0.0;
+    if (!needsBucketing) {
+      // 1:1 mapping for the most recent samples.
+      const int startIdx = std::max(0, available - count);
+      const int idx = startIdx + i;
+      if (idx < 0 || idx >= available) continue;
+      v = vals[static_cast<std::size_t>(idx)];
+    } else {
+      // Map the full history into the available columns.
+      const int start = i * bucket;
+      const int end = std::min(available, start + bucket);
+      if (start >= end) continue;
+
+      if (agg == TimelineAgg::Avg) {
+        double sum = 0.0;
+        int n = 0;
+        for (int j = start; j < end; ++j) {
+          double s = vals[static_cast<std::size_t>(j)];
+          if (!std::isfinite(s)) continue;
+          sum += s;
+          ++n;
+        }
+        v = (n > 0) ? (sum / static_cast<double>(n)) : 0.0;
+      } else {
+        // Default: max in bucket (preserves spikes).
+        double maxBucket = -std::numeric_limits<double>::infinity();
+        for (int j = start; j < end; ++j) {
+          double s = vals[static_cast<std::size_t>(j)];
+          if (!std::isfinite(s)) continue;
+          maxBucket = std::max(maxBucket, s);
+        }
+        if (!std::isfinite(maxBucket)) maxBucket = 0.0;
+        v = maxBucket;
+      }
+    }
+
     if (!std::isfinite(v)) v = 0.0;
     v = std::clamp(v, 0.0, maxV);
 
@@ -252,18 +298,22 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   struct Panel {
     std::string name;
     bool enabled;
+    // Title line uses these.
     const std::optional<Sample>* sample;
+    // Graph rendering uses these (either a single TL, or two TLs for PCIe).
     const Timeline* tl;
+    const Timeline* tl2;
     double maxV;
+    bool twoLine = false;
   };
 
   std::vector<Panel> panels;
-  panels.push_back(Panel{"CPU", cfg.showCpu, &state.latest.cpu, &state.cpuTl, 100.0});
-  panels.push_back(Panel{"RAM", true, &state.latest.ramPct, &state.ramTl, 100.0});
-  panels.push_back(Panel{"VRAM", true, &state.latest.vramPct, &state.vramTl, 100.0});
-  panels.push_back(Panel{"Disk", cfg.showDisk, &state.latest.disk, &state.diskTl, 5000.0});
-  panels.push_back(Panel{"PCIe RX", cfg.showPcie, &state.latest.pcieRx, &state.pcieRxTl, 64'000.0});
-  panels.push_back(Panel{"PCIe TX", cfg.showPcie, &state.latest.pcieTx, &state.pcieTxTl, 64'000.0});
+  panels.push_back(Panel{"CPU", cfg.showCpu, &state.latest.cpu, &state.cpuTl, nullptr, 100.0, false});
+  panels.push_back(Panel{"RAM", cfg.showRam, &state.latest.ramPct, &state.ramTl, nullptr, 100.0, false});
+  panels.push_back(Panel{"VRAM", cfg.showVram, &state.latest.vramPct, &state.vramTl, nullptr, 100.0, false});
+  panels.push_back(Panel{"Disk", cfg.showDisk, &state.latest.disk, &state.diskTl, nullptr, 5000.0, false});
+  // PCIe samples are in MB/s (from NVML). Render RX and TX as two stacked mini-graphs.
+  panels.push_back(Panel{"PCIe (RX/TX)", (cfg.showPcieRx || cfg.showPcieTx), &state.latest.pcieRx, &state.pcieRxTl, &state.pcieTxTl, 32'000.0, true});
 
   panels.erase(
       std::remove_if(panels.begin(), panels.end(), [](const Panel& p) { return !p.enabled; }),
@@ -300,12 +350,48 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
       section += ": unavailable";
     }
 
-    drawSectionTitleLine(out, y, section);
+    // Special-case title for two-line PCIe: show both RX and TX values.
+    if (p.twoLine && p.tl && p.tl2) {
+      std::string pcieTitle = p.name;
+      pcieTitle += ": ";
+      if (cfg.showPcieRx && state.latest.pcieRx) {
+        pcieTitle += "RX ";
+        pcieTitle += fmt1(state.latest.pcieRx->value);
+        pcieTitle += " ";
+        pcieTitle += state.latest.pcieRx->unit;
+      } else {
+        pcieTitle += "RX --";
+      }
+      pcieTitle += "  ";
+      if (cfg.showPcieTx && state.latest.pcieTx) {
+        pcieTitle += "TX ";
+        pcieTitle += fmt1(state.latest.pcieTx->value);
+        pcieTitle += " ";
+        pcieTitle += state.latest.pcieTx->unit;
+      } else {
+        pcieTitle += "TX --";
+      }
+      drawSectionTitleLine(out, y, pcieTitle);
+    } else {
+      drawSectionTitleLine(out, y, section);
+    }
 
     const int graphTop = y + 1;
     const int graphH = std::max(0, height - 1);
     if (graphH > 0 && p.tl) {
-      drawScrollingBars(out, graphTop, 0, graphH, out.width, *p.tl, p.maxV);
+      if (p.twoLine && p.tl2 && graphH >= 2) {
+        // Split available height into two sub-graphs (top=RX, bottom=TX).
+        const int rxH = std::max(1, graphH / 2);
+        const int txH = std::max(1, graphH - rxH);
+        if (cfg.showPcieRx) {
+          drawScrollingBars(out, graphTop, 0, rxH, out.width, *p.tl, p.maxV, cfg.timelineAgg);
+        }
+        if (cfg.showPcieTx) {
+          drawScrollingBars(out, graphTop + rxH, 0, txH, out.width, *p.tl2, p.maxV, cfg.timelineAgg);
+        }
+      } else {
+        drawScrollingBars(out, graphTop, 0, graphH, out.width, *p.tl, p.maxV, cfg.timelineAgg);
+      }
     }
 
     y += height;
@@ -356,11 +442,15 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
       {L"Show CPU usage", cfg.showCpu},
       {L"Show GPU usage", cfg.showGpu},
       {L"Show Disk bandwidth", cfg.showDisk},
-      {L"Show PCIe bandwidth", cfg.showPcie},
+      {L"Show PCIe RX", cfg.showPcieRx},
+      {L"Show PCIe TX", cfg.showPcieTx},
+      {L"Show RAM usage", cfg.showRam},
+      {L"Show VRAM usage", cfg.showVram},
   };
 
   int y = bodyTop + 1;
-  for (int i = 0; i < 4; ++i) {
+  constexpr int kCount = static_cast<int>(sizeof(items) / sizeof(items[0]));
+  for (int i = 0; i < kCount; ++i) {
     std::wstring line = (i == state.configSel ? L"> " : L"  ");
     line += items[i].label;
     line += L": ";

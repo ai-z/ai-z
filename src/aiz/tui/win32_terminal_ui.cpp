@@ -499,7 +499,16 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
                       cfg.showDisk = !cfg.showDisk;
                       break;
                     case 3:
-                      cfg.showPcie = !cfg.showPcie;
+                      cfg.showPcieRx = !cfg.showPcieRx;
+                      break;
+                    case 4:
+                      cfg.showPcieTx = !cfg.showPcieTx;
+                      break;
+                    case 5:
+                      cfg.showRam = !cfg.showRam;
+                      break;
+                    case 6:
+                      cfg.showVram = !cfg.showVram;
                       break;
                     default:
                       break;

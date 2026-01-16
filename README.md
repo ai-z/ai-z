@@ -56,6 +56,16 @@ On Windows:
 ./build/Release/ai-z.exe --debug
 ```
 
+## Timelines
+
+Timeline graphs are rendered as vertical bars that scroll over time.
+
+When there are more stored samples than visible terminal columns, the renderer downsamples by taking the **maximum value in each bucket** ("max in bucket") so short spikes remain visible.
+
+You can change the aggregation mode via config:
+- `timelineAgg=max` (default)
+- `timelineAgg=avg`
+
 ## Keys
 - `F1` or `H`: Help
 - `F2` or `W`: Hardware info
@@ -71,6 +81,7 @@ Windows console UI:
 Config is stored at `~/.config/ai-z/config.ini` (or `$XDG_CONFIG_HOME/ai-z/config.ini`).
 
 Keys:
-- `showCpu`, `showGpu`, `showDisk`, `showPcie` (true/false)
+- `showCpu`, `showGpu`, `showDisk`, `showPcieRx`, `showPcieTx`, `showRam`, `showVram` (true/false)
 - `refreshMs` (integer)
 - `timelineSamples` (integer)
+- `timelineAgg` (`max` or `avg`)

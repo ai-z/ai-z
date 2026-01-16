@@ -20,6 +20,7 @@
 #include <cctype>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -34,7 +35,14 @@ namespace {
 
 enum class Screen { Timelines, Help, Benchmarks, Config, Hardware };
 
-static void drawScrollingBars(int topY, int leftX, int height, int width, const Timeline& tl, double maxV) {
+static void drawScrollingBars(
+    int topY,
+    int leftX,
+    int height,
+    int width,
+    const Timeline& tl,
+    double maxV,
+    TimelineAgg agg) {
   if (height <= 0 || width <= 0) return;
 
   const auto vals = tl.values();
@@ -46,21 +54,55 @@ static void drawScrollingBars(int topY, int leftX, int height, int width, const 
     mvhline(topY + r, leftX, ' ', colsToDraw);
   }
 
-  if (available <= 0) return;
+  if (available <= 0 || maxV <= 0.0) return;
 
-  // Draw last N samples across columns.
-  // If we have fewer samples than the terminal width, right-align the data so the newest samples
-  // end at the right edge (htop-style).
-  const int count = std::min(colsToDraw, available);
-  const int startIdx = std::max(0, available - count);
-  const int xOffset = colsToDraw - count;
+  const int cols = colsToDraw;
+  const int count = std::min(cols, available);
+  const int xOffset = cols - count;
+
+  const bool needsBucketing = available > cols;
+  const int bucket = needsBucketing ? static_cast<int>((available + cols - 1) / cols) : 1;
 
   for (int i = 0; i < count; ++i) {
-    const int idx = startIdx + i;
     const int x = xOffset + i;
-    if (idx < 0 || idx >= available) continue;
 
-    double v = vals[static_cast<std::size_t>(idx)];
+    double v = 0.0;
+    if (!needsBucketing) {
+      // Draw last N samples across columns.
+      // If we have fewer samples than the terminal width, right-align the data so the newest samples
+      // end at the right edge (htop-style).
+      const int startIdx = std::max(0, available - count);
+      const int idx = startIdx + i;
+      if (idx < 0 || idx >= available) continue;
+      v = vals[static_cast<std::size_t>(idx)];
+    } else {
+      // Map the full history into the available columns.
+      const int start = i * bucket;
+      const int end = std::min(available, start + bucket);
+      if (start >= end) continue;
+
+      if (agg == TimelineAgg::Avg) {
+        double sum = 0.0;
+        int n = 0;
+        for (int j = start; j < end; ++j) {
+          double s = vals[static_cast<std::size_t>(j)];
+          if (!std::isfinite(s)) continue;
+          sum += s;
+          ++n;
+        }
+        v = (n > 0) ? (sum / static_cast<double>(n)) : 0.0;
+      } else {
+        double maxBucket = -std::numeric_limits<double>::infinity();
+        for (int j = start; j < end; ++j) {
+          double s = vals[static_cast<std::size_t>(j)];
+          if (!std::isfinite(s)) continue;
+          maxBucket = std::max(maxBucket, s);
+        }
+        if (!std::isfinite(maxBucket)) maxBucket = 0.0;
+        v = maxBucket;
+      }
+    }
+
     if (!std::isfinite(v)) v = 0.0;
     v = std::clamp(v, 0.0, maxV);
 
@@ -498,8 +540,8 @@ static void drawTimelines(
   panels.push_back(Panel{"CPU", cfg.showCpu, &cpu, &cpuTl, 100.0, cpuDevice});
 
   // Memory timelines are currently always shown when telemetry is available (no config toggles yet).
-  panels.push_back(Panel{"RAM", true, &ram, &ramTl, 100.0, std::string{}});
-  panels.push_back(Panel{"VRAM", true, &vram, &vramTl, 100.0, std::string{}});
+  panels.push_back(Panel{"RAM", cfg.showRam, &ram, &ramTl, 100.0, std::string{}});
+  panels.push_back(Panel{"VRAM", cfg.showVram, &vram, &vramTl, 100.0, std::string{}});
 
   if (cfg.showGpu) {
     const std::size_t n = std::min(gpus.size(), gpuTls.size());
@@ -512,8 +554,9 @@ static void drawTimelines(
   }
 
   panels.push_back(Panel{"Disk", cfg.showDisk, &disk, &diskTl, 5000.0, std::string{}});
-  panels.push_back(Panel{"PCIe RX", cfg.showPcie, &pcieRx, &pcieRxTl, 64'000.0, std::string{}});
-  panels.push_back(Panel{"PCIe TX", cfg.showPcie, &pcieTx, &pcieTxTl, 64'000.0, std::string{}});
+  // PCIe samples are in MB/s (from NVML).
+  panels.push_back(Panel{"PCIe RX", cfg.showPcieRx, &pcieRx, &pcieRxTl, 32'000.0, std::string{}});
+  panels.push_back(Panel{"PCIe TX", cfg.showPcieTx, &pcieTx, &pcieTxTl, 32'000.0, std::string{}});
 
   panels.erase(
       std::remove_if(panels.begin(), panels.end(), [](const Panel& p) { return !p.enabled; }),
@@ -569,7 +612,7 @@ static void drawTimelines(
     const int graphTop = y + 1;
     const int graphH = std::max(0, height - 1);
     if (graphH > 0) {
-      drawScrollingBars(graphTop, 0, graphH, cols, *p.tl, p.maxV);
+      drawScrollingBars(graphTop, 0, graphH, cols, *p.tl, p.maxV, cfg.timelineAgg);
     }
 
     y += height;
@@ -700,11 +743,15 @@ static void drawConfig(int rows, int cols, int selected, const Config& cfg) {
       {"Show CPU usage", cfg.showCpu},
       {"Show GPU usage", cfg.showGpu},
       {"Show Disk bandwidth", cfg.showDisk},
-      {"Show PCIe bandwidth", cfg.showPcie},
+      {"Show PCIe RX", cfg.showPcieRx},
+      {"Show PCIe TX", cfg.showPcieTx},
+      {"Show RAM usage", cfg.showRam},
+      {"Show VRAM usage", cfg.showVram},
   };
 
   int y = 2;
-  for (int i = 0; i < 4; ++i) {
+  constexpr int kCount = static_cast<int>(sizeof(items) / sizeof(items[0]));
+  for (int i = 0; i < kCount; ++i) {
     std::string line = (i == selected ? "> " : "  ");
     line += items[i].label;
     line += ": ";
@@ -1109,13 +1156,16 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           }
         } else if (screen == Screen::Config) {
           if (ch == KEY_UP) configSelected = std::max(0, configSelected - 1);
-          else if (ch == KEY_DOWN) configSelected = std::min(3, configSelected + 1);
+          else if (ch == KEY_DOWN) configSelected = std::min(6, configSelected + 1);
           else if (ch == ' ') {
             switch (configSelected) {
               case 0: cfg.showCpu = !cfg.showCpu; break;
               case 1: cfg.showGpu = !cfg.showGpu; break;
               case 2: cfg.showDisk = !cfg.showDisk; break;
-              case 3: cfg.showPcie = !cfg.showPcie; break;
+              case 3: cfg.showPcieRx = !cfg.showPcieRx; break;
+              case 4: cfg.showPcieTx = !cfg.showPcieTx; break;
+              case 5: cfg.showRam = !cfg.showRam; break;
+              case 6: cfg.showVram = !cfg.showVram; break;
             }
           } else if (ch == 's') {
             cfg.save();
