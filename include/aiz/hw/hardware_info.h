@@ -22,7 +22,7 @@ struct HardwareInfo {
   std::string cudaVersion;
   std::string nvmlVersion;
   std::string rocmVersion;
-  std::string openglVersion;
+  std::string openclVersion;
   std::string vulkanVersion;
 
   // Preformatted for UI rendering.

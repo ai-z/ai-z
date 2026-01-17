@@ -1100,8 +1100,11 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
     for (unsigned int gi = 0; gi < gpuCount; ++gi) {
       addHeader("GPU" + std::to_string(gi) + " - " + gpuNames[static_cast<std::size_t>(gi)]);
-      addBench(makeGpuPcieRxBenchmark(gi));
-      addBench(makeGpuPcieTxBenchmark(gi));
+      addBench(makeGpuCudaPcieBandwidthBenchmark(gi));
+      addBench(makeGpuVulkanPcieBandwidthBenchmark(gi));
+      addBench(makeGpuOpenclPcieBandwidthBenchmark(gi));
+      addBench(makeGpuFp32BenchmarkVulkan(gi));
+      addBench(makeGpuFp32BenchmarkOpencl(gi));
       addBench(makeGpuFp16Benchmark(gi));
       addBench(makeGpuFp32Benchmark(gi));
       addBench(makeGpuFp64Benchmark(gi));

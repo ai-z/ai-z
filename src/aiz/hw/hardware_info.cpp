@@ -7,17 +7,47 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <cstddef>
 #include <optional>
+#include <sstream>
 #include <string>
+#include <vector>
 #include <windows.h>
 
 namespace aiz {
+
+static constexpr const char* kUnknown = "--";
 
 static std::string trim(std::string s) {
   auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
   while (!s.empty() && isSpace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
   while (!s.empty() && isSpace(static_cast<unsigned char>(s.back()))) s.pop_back();
   return s;
+}
+
+static std::string normalizeOpenCLPlatformVersion(std::string s) {
+  s = trim(std::move(s));
+  if (s.rfind("OpenCL ", 0) == 0) s = trim(s.substr(std::string("OpenCL ").size()));
+  if (s.empty()) return std::string(kUnknown);
+
+  // Common format: "<major>.<minor> <impl...>" (e.g. "3.0 CUDA 13.0.94").
+  // Make it explicit that the suffix is the implementation/driver string.
+  std::istringstream iss(s);
+  std::vector<std::string> parts;
+  std::string tok;
+  while (iss >> tok) parts.push_back(tok);
+
+  if (parts.empty()) return std::string(kUnknown);
+  if (parts.size() == 1) return parts[0];
+
+  std::ostringstream oss;
+  oss << parts[0] << " (";
+  for (std::size_t i = 1; i < parts.size(); ++i) {
+    if (i != 1) oss << ' ';
+    oss << parts[i];
+  }
+  oss << ')';
+  return oss.str();
 }
 
 static std::optional<std::string> runCommand(const std::string& cmd) {
@@ -43,14 +73,14 @@ static std::optional<std::string> runCommand(const std::string& cmd) {
 static std::string probeWindowsKernelVersion() {
   using RtlGetVersionFn = LONG(WINAPI*)(PRTL_OSVERSIONINFOW);
   HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-  if (!ntdll) return "unknown";
+  if (!ntdll) return kUnknown;
 
   auto rtlGetVersion = reinterpret_cast<RtlGetVersionFn>(GetProcAddress(ntdll, "RtlGetVersion"));
-  if (!rtlGetVersion) return "unknown";
+  if (!rtlGetVersion) return kUnknown;
 
   RTL_OSVERSIONINFOW ver{};
   ver.dwOSVersionInfoSize = sizeof(ver);
-  if (rtlGetVersion(&ver) != 0) return "unknown";
+  if (rtlGetVersion(&ver) != 0) return kUnknown;
 
   char buf[64]{};
   std::snprintf(buf, sizeof(buf), "%lu.%lu.%lu", static_cast<unsigned long>(ver.dwMajorVersion),
@@ -58,17 +88,72 @@ static std::string probeWindowsKernelVersion() {
   return std::string(buf);
 }
 
+static std::string probeOpenCLVersion() {
+  // Use OpenCL ICD loader if present.
+  // We intentionally avoid including OpenCL headers to keep the dependency optional.
+  using cl_int = int;
+  using cl_uint = unsigned int;
+  using cl_platform_id = void*;
+  constexpr cl_int CL_SUCCESS = 0;
+  constexpr cl_uint CL_PLATFORM_VERSION = 0x0901;
+
+  using clGetPlatformIDs_t = cl_int (*)(cl_uint, cl_platform_id*, cl_uint*);
+  using clGetPlatformInfo_t = cl_int (*)(cl_platform_id, cl_uint, std::size_t, void*, std::size_t*);
+
+  HMODULE lib = LoadLibraryA("OpenCL.dll");
+  if (!lib) return kUnknown;
+
+  auto clGetPlatformIDs = reinterpret_cast<clGetPlatformIDs_t>(GetProcAddress(lib, "clGetPlatformIDs"));
+  auto clGetPlatformInfo = reinterpret_cast<clGetPlatformInfo_t>(GetProcAddress(lib, "clGetPlatformInfo"));
+  if (!clGetPlatformIDs || !clGetPlatformInfo) {
+    FreeLibrary(lib);
+    return kUnknown;
+  }
+
+  cl_uint n = 0;
+  if (clGetPlatformIDs(0, nullptr, &n) != CL_SUCCESS || n == 0) {
+    FreeLibrary(lib);
+    return kUnknown;
+  }
+
+  // Read version string for the first platform.
+  cl_platform_id pid = nullptr;
+  if (clGetPlatformIDs(1, &pid, nullptr) != CL_SUCCESS || !pid) {
+    FreeLibrary(lib);
+    return kUnknown;
+  }
+
+  std::size_t size = 0;
+  if (clGetPlatformInfo(pid, CL_PLATFORM_VERSION, 0, nullptr, &size) != CL_SUCCESS || size == 0) {
+    FreeLibrary(lib);
+    return kUnknown;
+  }
+
+  std::string s;
+  s.resize(size);
+  if (clGetPlatformInfo(pid, CL_PLATFORM_VERSION, size, s.data(), nullptr) != CL_SUCCESS) {
+    FreeLibrary(lib);
+    return kUnknown;
+  }
+  FreeLibrary(lib);
+
+  // Trim at NUL and whitespace.
+  const auto nul = s.find('\0');
+  if (nul != std::string::npos) s.resize(nul);
+  return normalizeOpenCLPlatformVersion(std::move(s));
+}
+
 std::vector<std::string> HardwareInfo::toLines() const {
   const bool hasPerGpu = !perGpuLines.empty();
   std::vector<std::string> lines = {
-      "OS: " + (osPretty.empty() ? std::string("unknown") : osPretty),
-      "Kernel: " + (kernelVersion.empty() ? std::string("unknown") : kernelVersion),
-      "CPU: " + (cpuName.empty() ? std::string("unknown") : cpuName),
-      "CPU Instructions: " + (cpuInstructions.empty() ? std::string("unknown") : cpuInstructions),
-      "RAM: " + (ramSummary.empty() ? std::string("unknown") : ramSummary),
+      "OS: " + (osPretty.empty() ? std::string(kUnknown) : osPretty),
+      "Kernel: " + (kernelVersion.empty() ? std::string(kUnknown) : kernelVersion),
+      "CPU: " + (cpuName.empty() ? std::string(kUnknown) : cpuName),
+      "CPU Instructions: " + (cpuInstructions.empty() ? std::string(kUnknown) : cpuInstructions),
+      "RAM: " + (ramSummary.empty() ? std::string(kUnknown) : ramSummary),
       // If we have per-GPU lines, the single GPU line is redundant.
-      hasPerGpu ? std::string() : ("GPU: " + (gpuName.empty() ? std::string("unknown") : gpuName)),
-      "GPU Driver: " + (gpuDriver.empty() ? std::string("unknown") : gpuDriver),
+      hasPerGpu ? std::string() : ("GPU: " + (gpuName.empty() ? std::string(kUnknown) : gpuName)),
+      "GPU Driver: " + (gpuDriver.empty() ? std::string(kUnknown) : gpuDriver),
   };
 
   // Drop any empty placeholders (e.g., the omitted GPU line).
@@ -76,17 +161,17 @@ std::vector<std::string> HardwareInfo::toLines() const {
 
   for (const auto& l : perGpuLines) lines.push_back(l);
 
-    lines.insert(lines.end(), {
+  lines.insert(lines.end(), {
       // If we have per-GPU lines, VRAM is already shown per GPU.
-      hasPerGpu ? std::string() : ("VRAM: " + (vramSummary.empty() ? std::string("unknown") : vramSummary)),
-      "CUDA: " + (cudaVersion.empty() ? std::string("unknown") : cudaVersion),
-      "NVML: " + (nvmlVersion.empty() ? std::string("unknown") : nvmlVersion),
-      "ROCm: " + (rocmVersion.empty() ? std::string("unknown") : rocmVersion),
-      "OpenGL: " + (openglVersion.empty() ? std::string("unknown") : openglVersion),
-      "Vulkan: " + (vulkanVersion.empty() ? std::string("unknown") : vulkanVersion),
+      hasPerGpu ? std::string() : ("VRAM: " + (vramSummary.empty() ? std::string(kUnknown) : vramSummary)),
+      "CUDA: " + (cudaVersion.empty() ? std::string(kUnknown) : cudaVersion),
+      "NVML: " + (nvmlVersion.empty() ? std::string(kUnknown) : nvmlVersion),
+      "ROCm: " + (rocmVersion.empty() ? std::string(kUnknown) : rocmVersion),
+        "OpenCL: " + (openclVersion.empty() ? std::string(kUnknown) : openclVersion),
+      "Vulkan: " + (vulkanVersion.empty() ? std::string(kUnknown) : vulkanVersion),
   });
 
-    lines.erase(std::remove_if(lines.begin(), lines.end(), [](const std::string& s) { return s.empty(); }), lines.end());
+  lines.erase(std::remove_if(lines.begin(), lines.end(), [](const std::string& s) { return s.empty(); }), lines.end());
 
   return lines;
 }
@@ -98,20 +183,23 @@ HardwareInfo HardwareInfo::probe() {
   if (const char* cpu = std::getenv("PROCESSOR_IDENTIFIER")) {
     info.cpuName = cpu;
   } else {
-    info.cpuName = "unknown";
+    info.cpuName = kUnknown;
   }
-  info.cpuInstructions = "unknown";
-  info.ramSummary = "unknown";
-  info.gpuName = "unknown";
-  info.gpuDriver = "unknown";
-  info.vramSummary = "unknown";
+  info.cpuInstructions = kUnknown;
+  info.ramSummary = kUnknown;
+  info.gpuName = kUnknown;
+  info.gpuDriver = kUnknown;
+  info.vramSummary = kUnknown;
   info.cudaVersion = runCommand("nvidia-smi 2>nul | findstr /C:\"CUDA Version\"")
-                         .value_or("unknown");
+                         .value_or(kUnknown);
   info.nvmlVersion = runCommand("nvidia-smi -q 2>nul | findstr /C:\"NVML Version\"")
-                         .value_or("unknown");
-  info.rocmVersion = "unknown";
-  info.openglVersion = "unknown";
-  info.vulkanVersion = "unknown";
+                         .value_or(kUnknown);
+  info.rocmVersion = kUnknown;
+  info.openclVersion = probeOpenCLVersion();
+  // Best-effort: if vulkaninfo is installed, try to read the instance version.
+  info.vulkanVersion = runCommand(
+      "vulkaninfo --summary 2>nul | findstr /C:\"Vulkan Instance Version\"")
+          .value_or(kUnknown);
   return info;
 }
 
@@ -125,6 +213,7 @@ HardwareInfo HardwareInfo::probe() {
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstdint>
 #include <fstream>
 #include <iomanip>
 #include <optional>
@@ -132,15 +221,42 @@ HardwareInfo HardwareInfo::probe() {
 #include <sstream>
 #include <string>
 
+#include <dlfcn.h>
+
 #include <aiz/metrics/nvidia_nvml.h>
 
 namespace aiz {
+
+static constexpr const char* kUnknown = "--";
 
 static std::string trim(std::string s) {
   auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
   while (!s.empty() && isSpace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
   while (!s.empty() && isSpace(static_cast<unsigned char>(s.back()))) s.pop_back();
   return s;
+}
+
+static std::string normalizeOpenCLPlatformVersion(std::string s) {
+  s = trim(std::move(s));
+  if (s.rfind("OpenCL ", 0) == 0) s = trim(s.substr(std::string("OpenCL ").size()));
+  if (s.empty()) return std::string(kUnknown);
+
+  std::istringstream iss(s);
+  std::vector<std::string> parts;
+  std::string tok;
+  while (iss >> tok) parts.push_back(tok);
+
+  if (parts.empty()) return std::string(kUnknown);
+  if (parts.size() == 1) return parts[0];
+
+  std::ostringstream oss;
+  oss << parts[0] << " (";
+  for (std::size_t i = 1; i < parts.size(); ++i) {
+    if (i != 1) oss << ' ';
+    oss << parts[i];
+  }
+  oss << ')';
+  return oss.str();
 }
 
 static std::optional<std::string> readFirstMatch(const char* path, const std::string& prefix) {
@@ -294,27 +410,28 @@ static std::vector<std::string> probePerGpuLinesNvidia() {
 }
 
 static std::string probeKernelVersion() {
-  return runCommand("uname -r 2>/dev/null").value_or("unknown");
+  return runCommand("uname -r 2>/dev/null").value_or(kUnknown);
 }
 
 static std::string probeCudaVersion() {
   // nvidia-smi output usually contains "CUDA Version: X.Y".
   const auto v = runCommand(
       "nvidia-smi 2>/dev/null | grep -o 'CUDA Version: [0-9.]*' | head -n 1 | awk '{print $3}'");
-  return v.value_or("unknown");
+  return v.value_or(kUnknown);
 }
 
 static std::string probeNvmlVersion() {
+  if (auto v = readNvmlLibraryVersion()) return *v;
   const auto v = runCommand(
       "nvidia-smi -q 2>/dev/null | awk -F: '/NVML Version/{gsub(/^[ \\t]+/,\"\",$2); print $2; exit}'");
-  return v.value_or("unknown");
+  return v.value_or(kUnknown);
 }
 
 static std::string probeVramSummary() {
   // NVIDIA: sum memory.total across all GPUs (MiB).
   const auto out = runCommand(
       "nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null");
-  if (!out) return "unknown";
+  if (!out) return kUnknown;
 
   std::istringstream iss(*out);
   std::string line;
@@ -331,7 +448,7 @@ static std::string probeVramSummary() {
     ++gpus;
   }
 
-  if (gpus <= 0 || sumMiB == 0) return "unknown";
+  if (gpus <= 0 || sumMiB == 0) return kUnknown;
   if (gpus == 1) return fmtGiBFromMiB(sumMiB);
 
   std::ostringstream oss;
@@ -354,18 +471,108 @@ static std::string probeRocmVersion() {
   // Best-effort CLI fallbacks.
   if (auto v = runCommand("rocm-smi --version 2>/dev/null | head -n 1")) return *v;
   if (auto v = runCommand("rocminfo 2>/dev/null | head -n 1")) return *v;
-  return "unknown";
+  return kUnknown;
 }
 
-static std::string probeOpenGLVersion() {
-  // Requires mesa-utils (glxinfo). If absent, returns unknown.
-  const auto v = runCommand(
-      "glxinfo -B 2>/dev/null | awk -F: '/OpenGL version string/{gsub(/^[ \\t]+/,\"\",$2); print $2; exit}'");
-  return v.value_or("unknown");
+static std::string probeOpenCLVersion() {
+  // Prefer OpenCL ICD loader if present (no external tools needed).
+  // We avoid including OpenCL headers; use minimal ABI.
+  using cl_int = int;
+  using cl_uint = unsigned int;
+  using cl_platform_id = void*;
+  constexpr cl_int CL_SUCCESS = 0;
+  constexpr cl_uint CL_PLATFORM_VERSION = 0x0901;
+
+  using clGetPlatformIDs_t = cl_int (*)(cl_uint, cl_platform_id*, cl_uint*);
+  using clGetPlatformInfo_t = cl_int (*)(cl_platform_id, cl_uint, std::size_t, void*, std::size_t*);
+
+  void* lib = dlopen("libOpenCL.so.1", RTLD_LAZY);
+  if (!lib) lib = dlopen("libOpenCL.so", RTLD_LAZY);
+  if (lib) {
+    auto clGetPlatformIDs = reinterpret_cast<clGetPlatformIDs_t>(dlsym(lib, "clGetPlatformIDs"));
+    auto clGetPlatformInfo = reinterpret_cast<clGetPlatformInfo_t>(dlsym(lib, "clGetPlatformInfo"));
+    if (clGetPlatformIDs && clGetPlatformInfo) {
+      cl_uint n = 0;
+      if (clGetPlatformIDs(0, nullptr, &n) == CL_SUCCESS && n > 0) {
+        std::vector<cl_platform_id> ids;
+        ids.resize(n);
+        if (clGetPlatformIDs(n, ids.data(), nullptr) == CL_SUCCESS) {
+          std::unordered_set<std::string> versions;
+          for (cl_uint i = 0; i < n; ++i) {
+            std::size_t size = 0;
+            if (!ids[i]) continue;
+            if (clGetPlatformInfo(ids[i], CL_PLATFORM_VERSION, 0, nullptr, &size) != CL_SUCCESS || size == 0) continue;
+            std::string s;
+            s.resize(size);
+            if (clGetPlatformInfo(ids[i], CL_PLATFORM_VERSION, size, s.data(), nullptr) != CL_SUCCESS) continue;
+            const auto nul = s.find('\0');
+            if (nul != std::string::npos) s.resize(nul);
+            s = trim(s);
+            if (s.rfind("OpenCL ", 0) == 0) s = trim(s.substr(std::string("OpenCL ").size()));
+            if (!s.empty()) versions.insert(s);
+          }
+          dlclose(lib);
+          if (!versions.empty()) {
+            // Stable output: join in lexical order.
+            std::vector<std::string> v;
+            v.reserve(versions.size());
+            for (const auto& s : versions) v.push_back(s);
+            std::sort(v.begin(), v.end());
+            std::ostringstream oss;
+            for (std::size_t j = 0; j < v.size(); ++j) {
+              if (j) oss << " | ";
+              oss << normalizeOpenCLPlatformVersion(v[j]);
+            }
+            return oss.str();
+          }
+          return kUnknown;
+        }
+      }
+    }
+    dlclose(lib);
+  }
+
+  // Fallback: clinfo (if installed).
+  if (auto v = runCommand(
+          "clinfo -raw 2>/dev/null | awk -F: '/^Platform Version:/{gsub(/^[ \\t]+/,\"\",$2); print $2; exit}'")) {
+    return normalizeOpenCLPlatformVersion(*v);
+  }
+  if (auto v = runCommand(
+          "clinfo 2>/dev/null | awk -F: '/Platform Version/{gsub(/^[ \\t]+/,\"\",$2); print $2; exit}'")) {
+    return normalizeOpenCLPlatformVersion(*v);
+  }
+  return kUnknown;
+}
+
+static std::string fmtVulkanVersion(std::uint32_t v) {
+  const std::uint32_t major = (v >> 22) & 0x3ff;
+  const std::uint32_t minor = (v >> 12) & 0x3ff;
+  const std::uint32_t patch = v & 0xfff;
+  return std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(patch);
 }
 
 static std::string probeVulkanVersion() {
-  // Requires vulkan-tools (vulkaninfo). If absent, returns unknown.
+  // Prefer Vulkan loader API if present (no external tools needed).
+  // vkEnumerateInstanceVersion is available since Vulkan 1.1.
+  using VkResult = int;
+  constexpr VkResult VK_SUCCESS = 0;
+  using PFN_vkEnumerateInstanceVersion = VkResult (*)(std::uint32_t*);
+
+  void* lib = dlopen("libvulkan.so.1", RTLD_LAZY);
+  if (!lib) lib = dlopen("libvulkan.so", RTLD_LAZY);
+  if (lib) {
+    auto fn = reinterpret_cast<PFN_vkEnumerateInstanceVersion>(dlsym(lib, "vkEnumerateInstanceVersion"));
+    if (fn) {
+      std::uint32_t v = 0;
+      if (fn(&v) == VK_SUCCESS && v != 0) {
+        dlclose(lib);
+        return fmtVulkanVersion(v);
+      }
+    }
+    dlclose(lib);
+  }
+
+  // Fallback: vulkaninfo from vulkan-tools (if installed).
   if (auto v = runCommand(
           "vulkaninfo --summary 2>/dev/null | awk -F: '/Vulkan Instance Version/{gsub(/^[ \\t]+/,\"\",$2); print $2; exit}'")) {
     return *v;
@@ -374,7 +581,7 @@ static std::string probeVulkanVersion() {
           "vulkaninfo 2>/dev/null | awk -F: '/Vulkan Instance Version/{gsub(/^[ \\t]+/,\"\",$2); print $2; exit}'")) {
     return *v;
   }
-  return "unknown";
+  return kUnknown;
 }
 
 static std::string probeCpuName() {
@@ -382,7 +589,7 @@ static std::string probeCpuName() {
   if (v) return *v;
   v = readFirstMatch("/proc/cpuinfo", "Hardware\t: ");
   if (v) return *v;
-  return "unknown";
+  return kUnknown;
 }
 
 static std::string joinWith(const std::vector<std::string>& parts, const char* sep) {
@@ -409,10 +616,10 @@ static std::string probeCpuInstructions() {
   auto flagsLine = readFirstMatch("/proc/cpuinfo", "flags\t\t: ");
   if (!flagsLine) flagsLine = readFirstMatch("/proc/cpuinfo", "flags\t: ");
   if (!flagsLine) flagsLine = readFirstMatch("/proc/cpuinfo", "Features\t: ");
-  if (!flagsLine) return "unknown";
+  if (!flagsLine) return kUnknown;
 
   const std::vector<std::string> tokens = splitWs(*flagsLine);
-  if (tokens.empty()) return "unknown";
+  if (tokens.empty()) return kUnknown;
 
   std::unordered_set<std::string> has;
   has.reserve(tokens.size());
@@ -473,14 +680,14 @@ static std::string probeCpuInstructions() {
     }
   }
 
-  if (out.empty()) return "unknown";
+  if (out.empty()) return kUnknown;
   return joinWith(out, " ");
 }
 
 static std::string probeRamSummary() {
   // Always provide total RAM from /proc/meminfo.
   std::ifstream in("/proc/meminfo");
-  if (!in.is_open()) return "unknown";
+  if (!in.is_open()) return kUnknown;
 
   std::string line;
   std::uint64_t memTotalKb = 0;
@@ -504,7 +711,7 @@ static std::string probeRamSummary() {
   // Speed: take the max configured speed we find. Channels: try to infer from number of populated DIMMs.
   const auto dmi = runCommand("dmidecode -t memory 2>/dev/null");
   if (!dmi) {
-    oss << " (speed: unknown, channels: unknown)";
+    oss << " (speed: --, channels: --)";
     return oss.str();
   }
 
@@ -543,14 +750,14 @@ static std::string probeRamSummary() {
 
   oss << " (speed: ";
   if (speedsFound > 0) oss << maxMhz << " MT/s";
-  else oss << "unknown";
+  else oss << kUnknown;
 
   // Channels are not reliably inferable from dmidecode alone; provide a conservative hint.
   // If 2 DIMMs populated, it's often dual-channel, but not guaranteed.
   oss << ", channels: ";
   if (populatedDimms >= 2) oss << "likely >=2";
   else if (populatedDimms == 1) oss << "likely 1";
-  else oss << "unknown";
+  else oss << kUnknown;
 
   oss << ")";
   return oss.str();
@@ -564,7 +771,7 @@ static std::string probeGpuName() {
   // Fallback: lspci line for VGA/3D.
   if (auto l = runCommand("lspci 2>/dev/null | grep -E 'VGA|3D|Display' | head -n 1")) return *l;
 
-  return "unknown";
+  return kUnknown;
 }
 
 static std::string probeGpuDriver() {
@@ -578,42 +785,42 @@ static std::string probeGpuDriver() {
   if (auto v = runCommand("modinfo -F version i915 2>/dev/null | head -n 1")) return "i915 " + *v;
   if (auto v = runCommand("modinfo -F version xe 2>/dev/null | head -n 1")) return "xe " + *v;
 
-  return "unknown";
+  return kUnknown;
 }
 
 std::vector<std::string> HardwareInfo::toLines() const {
   const bool hasPerGpu = !perGpuLines.empty();
   std::vector<std::string> lines = {
-      "OS: " + (osPretty.empty() ? std::string("unknown") : osPretty),
-      "Kernel: " + (kernelVersion.empty() ? std::string("unknown") : kernelVersion),
-      "CPU: " + (cpuName.empty() ? std::string("unknown") : cpuName),
-      "CPU Instructions: " + (cpuInstructions.empty() ? std::string("unknown") : cpuInstructions),
-      "RAM: " + (ramSummary.empty() ? std::string("unknown") : ramSummary),
-      hasPerGpu ? std::string() : ("GPU: " + (gpuName.empty() ? std::string("unknown") : gpuName)),
-      "GPU Driver: " + (gpuDriver.empty() ? std::string("unknown") : gpuDriver),
+      "OS: " + (osPretty.empty() ? std::string(kUnknown) : osPretty),
+      "Kernel: " + (kernelVersion.empty() ? std::string(kUnknown) : kernelVersion),
+      "CPU: " + (cpuName.empty() ? std::string(kUnknown) : cpuName),
+      "CPU Instructions: " + (cpuInstructions.empty() ? std::string(kUnknown) : cpuInstructions),
+      "RAM: " + (ramSummary.empty() ? std::string(kUnknown) : ramSummary),
+      hasPerGpu ? std::string() : ("GPU: " + (gpuName.empty() ? std::string(kUnknown) : gpuName)),
+      "GPU Driver: " + (gpuDriver.empty() ? std::string(kUnknown) : gpuDriver),
   };
 
   lines.erase(std::remove_if(lines.begin(), lines.end(), [](const std::string& s) { return s.empty(); }), lines.end());
 
   for (const auto& l : perGpuLines) lines.push_back(l);
 
-    lines.insert(lines.end(), {
-      hasPerGpu ? std::string() : ("VRAM: " + (vramSummary.empty() ? std::string("unknown") : vramSummary)),
-      "CUDA: " + (cudaVersion.empty() ? std::string("unknown") : cudaVersion),
-      "NVML: " + (nvmlVersion.empty() ? std::string("unknown") : nvmlVersion),
-      "ROCm: " + (rocmVersion.empty() ? std::string("unknown") : rocmVersion),
-      "OpenGL: " + (openglVersion.empty() ? std::string("unknown") : openglVersion),
-      "Vulkan: " + (vulkanVersion.empty() ? std::string("unknown") : vulkanVersion),
+  lines.insert(lines.end(), {
+      hasPerGpu ? std::string() : ("VRAM: " + (vramSummary.empty() ? std::string(kUnknown) : vramSummary)),
+      "CUDA: " + (cudaVersion.empty() ? std::string(kUnknown) : cudaVersion),
+      "NVML: " + (nvmlVersion.empty() ? std::string(kUnknown) : nvmlVersion),
+      "ROCm: " + (rocmVersion.empty() ? std::string(kUnknown) : rocmVersion),
+        "OpenCL: " + (openclVersion.empty() ? std::string(kUnknown) : openclVersion),
+      "Vulkan: " + (vulkanVersion.empty() ? std::string(kUnknown) : vulkanVersion),
   });
 
-    lines.erase(std::remove_if(lines.begin(), lines.end(), [](const std::string& s) { return s.empty(); }), lines.end());
+  lines.erase(std::remove_if(lines.begin(), lines.end(), [](const std::string& s) { return s.empty(); }), lines.end());
 
   return lines;
 }
 
 HardwareInfo HardwareInfo::probe() {
   HardwareInfo info;
-  info.osPretty = readOsPrettyName().value_or("unknown");
+  info.osPretty = readOsPrettyName().value_or(kUnknown);
   info.kernelVersion = probeKernelVersion();
   info.cpuName = probeCpuName();
   info.cpuInstructions = probeCpuInstructions();
@@ -625,7 +832,7 @@ HardwareInfo HardwareInfo::probe() {
   info.cudaVersion = probeCudaVersion();
   info.nvmlVersion = probeNvmlVersion();
   info.rocmVersion = probeRocmVersion();
-  info.openglVersion = probeOpenGLVersion();
+  info.openclVersion = probeOpenCLVersion();
   info.vulkanVersion = probeVulkanVersion();
   return info;
 }

@@ -144,7 +144,7 @@ protected:
 class GpuFp32Bench final : public GpuComputeBenchBase {
 public:
   explicit GpuFp32Bench(unsigned int gpuIndex) : GpuComputeBenchBase(gpuIndex) {}
-  std::string name() const override { return "FP32"; }
+  std::string name() const override { return "CUDA FP32"; }
   bool isAvailable() const override {
     int n = 0;
     return (cudaGetDeviceCount(&n) == cudaSuccess) && (n > 0) && (gpuIndex_ < static_cast<unsigned int>(n));
@@ -220,7 +220,7 @@ public:
 class GpuFp64Bench final : public GpuComputeBenchBase {
 public:
   explicit GpuFp64Bench(unsigned int gpuIndex) : GpuComputeBenchBase(gpuIndex) {}
-  std::string name() const override { return "FP64"; }
+  std::string name() const override { return "CUDA FP64"; }
   bool isAvailable() const override {
     int n = 0;
     return (cudaGetDeviceCount(&n) == cudaSuccess) && (n > 0) && (gpuIndex_ < static_cast<unsigned int>(n));
@@ -295,7 +295,7 @@ public:
 class GpuFp16Bench final : public GpuComputeBenchBase {
 public:
   explicit GpuFp16Bench(unsigned int gpuIndex) : GpuComputeBenchBase(gpuIndex) {}
-  std::string name() const override { return "FP16"; }
+  std::string name() const override { return "CUDA FP16"; }
   bool isAvailable() const override {
     int n = 0;
     return (cudaGetDeviceCount(&n) == cudaSuccess) && (n > 0) && (gpuIndex_ < static_cast<unsigned int>(n));
@@ -372,7 +372,7 @@ public:
 class GpuInt8Bench final : public GpuComputeBenchBase {
 public:
   explicit GpuInt8Bench(unsigned int gpuIndex) : GpuComputeBenchBase(gpuIndex) {}
-  std::string name() const override { return "INT8"; }
+  std::string name() const override { return "CUDA INT8"; }
   bool isAvailable() const override {
     int n = 0;
     return (cudaGetDeviceCount(&n) == cudaSuccess) && (n > 0) && (gpuIndex_ < static_cast<unsigned int>(n));
@@ -446,7 +446,7 @@ public:
 class GpuInt4Bench final : public IBenchmark {
 public:
   explicit GpuInt4Bench(unsigned int gpuIndex) : gpuIndex_(gpuIndex) {}
-  std::string name() const override { return "INT4"; }
+  std::string name() const override { return "CUDA INT4"; }
   bool isAvailable() const override {
     int n = 0;
     return (cudaGetDeviceCount(&n) == cudaSuccess) && (n > 0) && (gpuIndex_ < static_cast<unsigned int>(n));

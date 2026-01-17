@@ -44,6 +44,8 @@ using nvmlDeviceGetPowerState_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /
 using nvmlDeviceGetPcieThroughput_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int /*counter*/, unsigned int* /*valueKBps*/);
 using nvmlDeviceGetCurrPcieLinkGeneration_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*gen*/);
 using nvmlDeviceGetCurrPcieLinkWidth_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*width*/);
+using nvmlSystemGetNVMLVersion_t = nvmlReturn_t (*)(char* /*version*/, unsigned int /*length*/);
+using nvmlSystemGetDriverVersion_t = nvmlReturn_t (*)(char* /*version*/, unsigned int /*length*/);
 
 struct NvmlApi {
 #if defined(_WIN32)
@@ -63,6 +65,8 @@ struct NvmlApi {
   nvmlDeviceGetPcieThroughput_t nvmlDeviceGetPcieThroughput = nullptr;
   nvmlDeviceGetCurrPcieLinkGeneration_t nvmlDeviceGetCurrPcieLinkGeneration = nullptr;
   nvmlDeviceGetCurrPcieLinkWidth_t nvmlDeviceGetCurrPcieLinkWidth = nullptr;
+  nvmlSystemGetNVMLVersion_t nvmlSystemGetNVMLVersion = nullptr;
+  nvmlSystemGetDriverVersion_t nvmlSystemGetDriverVersion = nullptr;
 
   bool ok() const {
     return lib && nvmlInit_v2 && nvmlShutdown && nvmlDeviceGetCount_v2 && nvmlDeviceGetHandleByIndex_v2 &&
@@ -110,6 +114,12 @@ static NvmlApi& api() {
   a.nvmlDeviceGetTemperature = reinterpret_cast<nvmlDeviceGetTemperature_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetTemperature"));
   a.nvmlDeviceGetPowerState = reinterpret_cast<nvmlDeviceGetPowerState_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPowerState"));
   a.nvmlDeviceGetPcieThroughput = reinterpret_cast<nvmlDeviceGetPcieThroughput_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPcieThroughput"));
+
+    // Optional system queries.
+    a.nvmlSystemGetNVMLVersion = reinterpret_cast<nvmlSystemGetNVMLVersion_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlSystemGetNVMLVersion"));
+    a.nvmlSystemGetDriverVersion = reinterpret_cast<nvmlSystemGetDriverVersion_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlSystemGetDriverVersion"));
 
     // Optional (not required for a.ok()).
     a.nvmlDeviceGetCurrPcieLinkGeneration = reinterpret_cast<nvmlDeviceGetCurrPcieLinkGeneration_t>(
@@ -216,6 +226,24 @@ static std::optional<NvmlPcieLink> readNvmlPcieLinkWithSession(nvmlDevice_t dev,
 }
 
 }  // namespace
+
+static std::optional<std::string> readNvmlSystemString(nvmlReturn_t (*fn)(char*, unsigned int)) {
+  if (!fn) return std::nullopt;
+
+  NvmlApi& a = api();
+  if (!a.ok()) return std::nullopt;
+
+  NvmlSession sess;
+  if (!sess.inited) return std::nullopt;
+
+  std::array<char, 128> buf{};
+  if (fn(buf.data(), static_cast<unsigned int>(buf.size())) != NVML_SUCCESS) return std::nullopt;
+  buf.back() = '\0';
+
+  const std::string s(buf.data());
+  if (s.empty()) return std::nullopt;
+  return s;
+}
 
 std::optional<unsigned int> nvmlGpuCount() {
   NvmlApi& a = api();
@@ -357,6 +385,16 @@ std::optional<NvmlPcieThroughput> readNvmlPcieThroughput() {
 
   if (!any) return std::nullopt;
   return agg;
+}
+
+std::optional<std::string> readNvmlLibraryVersion() {
+  NvmlApi& a = api();
+  return readNvmlSystemString(a.nvmlSystemGetNVMLVersion);
+}
+
+std::optional<std::string> readNvmlDriverVersion() {
+  NvmlApi& a = api();
+  return readNvmlSystemString(a.nvmlSystemGetDriverVersion);
 }
 
 }  // namespace aiz

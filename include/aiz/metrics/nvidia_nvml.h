@@ -60,4 +60,12 @@ std::optional<NvmlPcieLink> readNvmlPcieLinkForGpu(unsigned int index);
 // Returns nullopt if NVML isn't present/usable.
 std::optional<NvmlPcieThroughput> readNvmlPcieThroughput();
 
+// Reads the NVML library version string (e.g. "12.555.43").
+// Returns nullopt if NVML isn't present/usable or the symbol isn't available.
+std::optional<std::string> readNvmlLibraryVersion();
+
+// Reads the NVIDIA driver version string via NVML (e.g. "550.54.14").
+// Returns nullopt if NVML isn't present/usable or the symbol isn't available.
+std::optional<std::string> readNvmlDriverVersion();
+
 }  // namespace aiz

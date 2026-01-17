@@ -13,11 +13,23 @@ std::unique_ptr<IBenchmark> makePcieBandwidthBenchmarkCuda();
 std::unique_ptr<IBenchmark> makePcieBandwidthRxBenchmarkCuda(unsigned int gpuIndex);
 std::unique_ptr<IBenchmark> makePcieBandwidthTxBenchmarkCuda(unsigned int gpuIndex);
 
+std::unique_ptr<IBenchmark> makeGpuPcieBandwidthBenchmarkCuda(unsigned int gpuIndex);
+
 std::unique_ptr<IBenchmark> makeGpuFp16BenchmarkCuda(unsigned int gpuIndex);
 std::unique_ptr<IBenchmark> makeGpuFp32BenchmarkCuda(unsigned int gpuIndex);
 std::unique_ptr<IBenchmark> makeGpuFp64BenchmarkCuda(unsigned int gpuIndex);
 std::unique_ptr<IBenchmark> makeGpuInt4BenchmarkCuda(unsigned int gpuIndex);
 std::unique_ptr<IBenchmark> makeGpuInt8BenchmarkCuda(unsigned int gpuIndex);
+#endif
+
+#ifdef AI_Z_ENABLE_OPENCL
+std::unique_ptr<IBenchmark> makeGpuPcieBandwidthBenchmarkOpenclBackend(unsigned int gpuIndex);
+std::unique_ptr<IBenchmark> makeGpuFp32BenchmarkOpenclBackend(unsigned int gpuIndex);
+#endif
+
+#ifdef AI_Z_ENABLE_VULKAN
+std::unique_ptr<IBenchmark> makeGpuPcieBandwidthBenchmarkVulkanBackend(unsigned int gpuIndex);
+std::unique_ptr<IBenchmark> makeGpuFp32BenchmarkVulkanBackend(unsigned int gpuIndex);
 #endif
 
 namespace {
@@ -168,6 +180,33 @@ std::unique_ptr<IBenchmark> makeGpuPcieTxBenchmark(unsigned int gpuIndex) {
 #endif
 }
 
+std::unique_ptr<IBenchmark> makeGpuCudaPcieBandwidthBenchmark(unsigned int gpuIndex) {
+#ifdef AI_Z_ENABLE_CUDA
+  return makeGpuPcieBandwidthBenchmarkCuda(gpuIndex);
+#else
+  (void)gpuIndex;
+  return std::make_unique<UnavailableStub>("CUDA PCIe bandwidth", "Not built with CUDA backend. Reconfigure with -DAI_Z_ENABLE_CUDA=ON.");
+#endif
+}
+
+std::unique_ptr<IBenchmark> makeGpuVulkanPcieBandwidthBenchmark(unsigned int gpuIndex) {
+#ifdef AI_Z_ENABLE_VULKAN
+  return makeGpuPcieBandwidthBenchmarkVulkanBackend(gpuIndex);
+#else
+  (void)gpuIndex;
+  return std::make_unique<UnavailableStub>("Vulkan PCIe bandwidth", "Not built with Vulkan backend. Reconfigure with -DAI_Z_ENABLE_VULKAN=ON (and install Vulkan SDK/dev packages)." );
+#endif
+}
+
+std::unique_ptr<IBenchmark> makeGpuOpenclPcieBandwidthBenchmark(unsigned int gpuIndex) {
+#ifdef AI_Z_ENABLE_OPENCL
+  return makeGpuPcieBandwidthBenchmarkOpenclBackend(gpuIndex);
+#else
+  (void)gpuIndex;
+  return std::make_unique<UnavailableStub>("OpenCL PCIe bandwidth", "Not built with OpenCL backend. Reconfigure with -DAI_Z_ENABLE_OPENCL=ON (and install OpenCL ICD loader + headers)." );
+#endif
+}
+
 std::unique_ptr<IBenchmark> makeGpuFp16Benchmark(unsigned int gpuIndex) {
 #ifdef AI_Z_ENABLE_CUDA
   return makeGpuFp16BenchmarkCuda(gpuIndex);
@@ -183,6 +222,24 @@ std::unique_ptr<IBenchmark> makeGpuFp32Benchmark(unsigned int gpuIndex) {
 #else
   (void)gpuIndex;
   return std::make_unique<UnavailableStub>("FP32", "Not built with CUDA backend.");
+#endif
+}
+
+std::unique_ptr<IBenchmark> makeGpuFp32BenchmarkVulkan(unsigned int gpuIndex) {
+#ifdef AI_Z_ENABLE_VULKAN
+  return makeGpuFp32BenchmarkVulkanBackend(gpuIndex);
+#else
+  (void)gpuIndex;
+  return std::make_unique<UnavailableStub>("Vulkan FLOPS FP32", "Not built with Vulkan backend.");
+#endif
+}
+
+std::unique_ptr<IBenchmark> makeGpuFp32BenchmarkOpencl(unsigned int gpuIndex) {
+#ifdef AI_Z_ENABLE_OPENCL
+  return makeGpuFp32BenchmarkOpenclBackend(gpuIndex);
+#else
+  (void)gpuIndex;
+  return std::make_unique<UnavailableStub>("OpenCL FLOPS FP32", "Not built with OpenCL backend.");
 #endif
 }
 
