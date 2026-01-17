@@ -25,6 +25,8 @@ configure_file(
   @ONLY
 )
 
+include(CTest)
+
 add_executable(ai-z
   src/main.cpp
   src/aiz/app.cpp
@@ -179,4 +181,8 @@ target_compile_definitions(ai-z PRIVATE
 # Keep warnings reasonable for early scaffold.
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(ai-z PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if (BUILD_TESTING)
+  add_subdirectory(tests)
 endif()

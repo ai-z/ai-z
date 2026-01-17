@@ -90,6 +90,30 @@ cmake --build build --config Release
 ./build/Release/ai-z.exe
 ```
 
+## Testing
+
+Unit tests use Catch2 and are wired through CTest.
+
+Ubuntu/Debian prereqs:
+
+```bash
+sudo apt-get install -y catch2
+```
+
+Configure + build + run tests:
+
+```bash
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+```
+
+Notes:
+- By default the build does not fetch dependencies from the network.
+- If Catch2 is not installed, you can point CMake at a local Catch2 checkout:
+	`-DAI_Z_CATCH2_SOURCE_DIR=/path/to/Catch2`
+- Or explicitly allow FetchContent (requires network access): `-DAI_Z_FETCH_CATCH2=ON`
+
 ## Debug
 
 Run with synthetic/fake timelines (useful for debugging the timeline renderer):
