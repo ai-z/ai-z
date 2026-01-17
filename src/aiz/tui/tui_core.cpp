@@ -10,7 +10,7 @@
 
 namespace aiz {
 
-constexpr int kConfigItemCount = 10;
+constexpr int kConfigItemCount = 11;
 
 void Frame::resize(int w, int h) {
   width = std::max(0, w);
@@ -268,6 +268,28 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   title += !state.latest.ramText.empty() ? state.latest.ramText : std::string("--");
   title += "  ";
 
+  title += "VRAM ";
+  title += state.latest.vramPct ? (fmt0(state.latest.vramPct->value) + "%") : std::string("--");
+  title += "  ";
+
+  title += "PCIeRX ";
+  if (state.latest.pcieRx) {
+    title += fmt0(state.latest.pcieRx->value);
+    title += state.latest.pcieRx->unit;
+  } else {
+    title += "--";
+  }
+  title += "  ";
+
+  title += "PCIeTX ";
+  if (state.latest.pcieTx) {
+    title += fmt0(state.latest.pcieTx->value);
+    title += state.latest.pcieTx->unit;
+  } else {
+    title += "--";
+  }
+  title += "  ";
+
   if (cfg.showDiskRead) {
     title += "DiskR ";
     if (state.latest.diskRead) {
@@ -312,28 +334,6 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
     title += "  ";
   }
 
-  title += "VRAM ";
-  title += state.latest.vramPct ? (fmt0(state.latest.vramPct->value) + "%") : std::string("--");
-  title += "  ";
-
-  title += "PCIeRX ";
-  if (state.latest.pcieRx) {
-    title += fmt0(state.latest.pcieRx->value);
-    title += state.latest.pcieRx->unit;
-  } else {
-    title += "--";
-  }
-  title += "  ";
-
-  title += "PCIeTX ";
-  if (state.latest.pcieTx) {
-    title += fmt0(state.latest.pcieTx->value);
-    title += state.latest.pcieTx->unit;
-  } else {
-    title += "--";
-  }
-  title += "  ";
-
   title += "t=";
   title += std::to_string(state.tick);
 
@@ -361,13 +361,14 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   panels.push_back(Panel{"RAM", cfg.showRam, &state.latest.ramPct, &state.ramTl, nullptr, 100.0, false});
   panels.push_back(Panel{"VRAM", cfg.showVram, &state.latest.vramPct, &state.vramTl, nullptr, 100.0, false});
 
+  // PCIe before disk/network; disk and net last.
+  panels.push_back(Panel{"PCIe (RX/TX)", (cfg.showPcieRx || cfg.showPcieTx), &state.latest.pcieRx, &state.pcieRxTl, &state.pcieTxTl, 32'000.0, true});
+
   panels.push_back(Panel{"DiskR", cfg.showDiskRead, &state.latest.diskRead, &state.diskReadTl, nullptr, 5000.0, false});
   panels.push_back(Panel{"DiskW", cfg.showDiskWrite, &state.latest.diskWrite, &state.diskWriteTl, nullptr, 5000.0, false});
 
   panels.push_back(Panel{"NetRX", cfg.showNetRx, &state.latest.netRx, &state.netRxTl, nullptr, 5000.0, false});
   panels.push_back(Panel{"NetTX", cfg.showNetTx, &state.latest.netTx, &state.netTxTl, nullptr, 5000.0, false});
-  // PCIe samples are in MB/s (from NVML). Render RX and TX as two stacked mini-graphs.
-  panels.push_back(Panel{"PCIe (RX/TX)", (cfg.showPcieRx || cfg.showPcieTx), &state.latest.pcieRx, &state.pcieRxTl, &state.pcieTxTl, 32'000.0, true});
 
   panels.erase(
       std::remove_if(panels.begin(), panels.end(), [](const Panel& p) { return !p.enabled; }),
@@ -505,6 +506,10 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
       {L"VRAM usage", cfg.showVram},
   };
 
+  constexpr int kToggleCount = static_cast<int>(sizeof(items) / sizeof(items[0]));
+  constexpr int kActionReset = kToggleCount;
+  constexpr int kTotalCount = kToggleCount + 1;
+
   int y = bodyTop + 1;
   drawBodyLine(out, y, L"Timelines", Style::Section);
   ++y;
@@ -513,10 +518,13 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
   for (const auto& it : items) {
     maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(it.label));
   }
+  maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(L"Reset to defaults"));
+  maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(L"Samples per bucket (bars)"));
+  maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(L"Value color"));
+  maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(L"Metric name color"));
 
-  constexpr int kCount = static_cast<int>(sizeof(items) / sizeof(items[0]));
-  static_assert(kCount == kConfigItemCount);
-  for (int i = 0; i < kCount; ++i) {
+  static_assert(kTotalCount == kConfigItemCount);
+  for (int i = 0; i < kToggleCount; ++i) {
     std::wstring line = (i == state.configSel ? L"> " : L"  ");
     line += items[i].label;
     if (std::wcslen(items[i].label) < maxLabelLen) {
@@ -529,8 +537,52 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
     ++y;
   }
 
+  // Action row.
+  {
+    std::wstring line = (kActionReset == state.configSel ? L"> " : L"  ");
+    line += L"Reset to defaults";
+    if (std::wcslen(L"Reset to defaults") < maxLabelLen) {
+      line.append(maxLabelLen - std::wcslen(L"Reset to defaults"), L' ');
+    }
+    line += L": RESET";
+    if (y < out.height - 2) {
+      drawBodyLine(out, y, line, Style::Value);
+      ++y;
+    }
+  }
+
+  // Read-only misc info under Timelines.
+  auto drawReadonly = [&](const std::wstring& label, const std::wstring& value) {
+    if (y >= out.height - 2) return;
+    std::wstring line = L"  ";
+    line += label;
+    if (label.size() < maxLabelLen) line.append(maxLabelLen - label.size(), L' ');
+    line += L": ";
+    line += value;
+    drawBodyLine(out, y, line, Style::Value);
+    ++y;
+  };
+
+  if (y < out.height - 2) {
+    ++y;  // spacer
+  }
+  if (y < out.height - 2) {
+    drawBodyLine(out, y, L"Misc", Style::Section);
+    ++y;
+  }
+
+  const int safeW = std::max(1, out.width);
+  const std::uint32_t samples = cfg.timelineSamples;
+  const std::uint32_t bucket = (samples > static_cast<std::uint32_t>(safeW))
+      ? ((samples + static_cast<std::uint32_t>(safeW) - 1u) / static_cast<std::uint32_t>(safeW))
+      : 1u;
+
+  drawReadonly(L"Samples per bucket (bars)", std::to_wstring(bucket));
+  drawReadonly(L"Value color", L"white (default)");
+  drawReadonly(L"Metric name color", L"light blue (cyan)");
+
   if (out.height >= 3) {
-    drawBodyLine(out, out.height - 2, L"Space: toggle   s: save   Esc: back", Style::FooterKey);
+    drawBodyLine(out, out.height - 2, L"Space/Enter: toggle/activate   s: save   d: defaults   Esc: back", Style::FooterKey);
   }
 }
 

@@ -40,6 +40,7 @@ enum class Command {
   Activate,
   Toggle,
   Save,
+  Defaults,
   Refresh,
 };
 

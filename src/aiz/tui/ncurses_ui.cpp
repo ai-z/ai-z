@@ -129,6 +129,35 @@ static void ensureTimelineCapacity(Timeline& tl, std::size_t desiredCapacity) {
   tl = std::move(resized);
 }
 
+static std::vector<std::string> parseGpuNames(const HardwareInfo& hw, unsigned int gpuCount) {
+  std::vector<std::string> names;
+  names.resize(gpuCount);
+  for (unsigned int i = 0; i < gpuCount; ++i) names[i] = "GPU" + std::to_string(i);
+
+  // Fallback: if we only have a single GPU name (legacy field), use it for GPU0.
+  if (gpuCount > 0 && !hw.gpuName.empty() && hw.gpuName != "--") {
+    if (names[0] == "GPU0") names[0] = hw.gpuName;
+  }
+
+  for (const auto& l : hw.perGpuLines) {
+    // Format: "GPU0: <name>".
+    if (l.rfind("GPU", 0) != 0) continue;
+    const std::size_t sep = l.find(": ");
+    if (sep == std::string::npos) continue;
+    const std::string left = l.substr(0, sep);
+    const std::string right = l.substr(sep + 2);
+    if (left.size() < 4) continue;
+    try {
+      const unsigned int idx = static_cast<unsigned int>(std::stoul(left.substr(3)));
+      if (idx < names.size() && !right.empty()) names[idx] = right;
+    } catch (...) {
+      continue;
+    }
+  }
+
+  return names;
+}
+
 static void drawFooter(int rows, int cols, Screen screen, std::uint32_t refreshMs) {
   (void)screen;
   const int y = rows - 1;
@@ -547,7 +576,7 @@ static void drawTimelines(
     int headerRows,
     const Config& cfg,
   const std::string& cpuDevice,
-  const std::string& gpuDevice,
+  const std::vector<std::string>& gpuNames,
     const std::optional<Sample>& cpu,
     const std::optional<Sample>& ram,
     const std::optional<Sample>& vram,
@@ -581,33 +610,45 @@ static void drawTimelines(
     std::string device;
   };
 
+  auto gpuContext = [&](std::size_t index) -> std::string {
+    if (index >= gpuNames.size()) {
+      return "#" + std::to_string(index);
+    }
+    const std::string& n = gpuNames[index];
+    if (n.empty() || n == ("GPU" + std::to_string(index))) {
+      return "#" + std::to_string(index);
+    }
+    return n + " #" + std::to_string(index);
+  };
+
   std::vector<Panel> panels;
   panels.push_back(Panel{"CPU", cfg.showCpu, &cpu, &cpuTl, 100.0, cpuDevice});
 
-  // Memory timelines are currently always shown when telemetry is available (no config toggles yet).
+  // CPU/RAM first (when enabled).
   panels.push_back(Panel{"RAM", cfg.showRam, &ram, &ramTl, 100.0, std::string{}});
-  panels.push_back(Panel{"VRAM", cfg.showVram, &vram, &vramTl, 100.0, std::string{}});
 
-  // GPU memory controller utilization (NVML util.memory). This is a percentage, not bandwidth.
-  panels.push_back(Panel{"MemCtrl", cfg.showGpuMem, &gpuMemUtil, &gpuMemUtilTl, 100.0, gpuDevice});
-
+  // GPU usage before VRAM and MemCtrl.
   if (cfg.showGpu) {
     const std::size_t n = std::min(gpus.size(), gpuTls.size());
     for (std::size_t i = 0; i < n; ++i) {
-      const std::string name = "GPU" + std::to_string(i);
-      std::string dev = gpuDevice;
-      if (!dev.empty()) dev += " #" + std::to_string(i);
-      panels.push_back(Panel{name, true, &gpus[i], &gpuTls[i], 100.0, dev});
+      panels.push_back(Panel{"USAGE", true, &gpus[i], &gpuTls[i], 100.0, gpuContext(i)});
     }
   }
 
+  panels.push_back(Panel{"VRAM", cfg.showVram, &vram, &vramTl, 100.0, gpuContext(0)});
+
+  // GPU memory controller utilization (NVML util.memory). This is a percentage, not bandwidth.
+  panels.push_back(Panel{"MemCtrl", cfg.showGpuMem, &gpuMemUtil, &gpuMemUtilTl, 100.0, gpuContext(0)});
+
+  // PCIe before disk/network.
+  panels.push_back(Panel{"PCIe RX", cfg.showPcieRx, &pcieRx, &pcieRxTl, 32'000.0, gpuContext(0)});
+  panels.push_back(Panel{"PCIe TX", cfg.showPcieTx, &pcieTx, &pcieTxTl, 32'000.0, gpuContext(0)});
+
+  // Disk/network last.
   panels.push_back(Panel{"DiskR", cfg.showDiskRead, &diskRead, &diskReadTl, 5000.0, std::string{}});
   panels.push_back(Panel{"DiskW", cfg.showDiskWrite, &diskWrite, &diskWriteTl, 5000.0, std::string{}});
   panels.push_back(Panel{"NetRX", cfg.showNetRx, &netRx, &netRxTl, 5000.0, std::string{}});
   panels.push_back(Panel{"NetTX", cfg.showNetTx, &netTx, &netTxTl, 5000.0, std::string{}});
-  // PCIe samples are in MB/s (from NVML).
-  panels.push_back(Panel{"PCIe RX", cfg.showPcieRx, &pcieRx, &pcieRxTl, 32'000.0, std::string{}});
-  panels.push_back(Panel{"PCIe TX", cfg.showPcieTx, &pcieTx, &pcieTxTl, 32'000.0, std::string{}});
 
   panels.erase(
       std::remove_if(panels.begin(), panels.end(), [](const Panel& p) { return !p.enabled; }),
@@ -685,6 +726,14 @@ static void drawBenchmarks(
   const bool colors = has_colors() != 0;
   int y = headerRows;
 
+  std::size_t maxBenchNameLen = 0;
+  for (std::size_t i = 0; i < rowTitles.size() && i < rowIsHeader.size(); ++i) {
+    if (rowIsHeader[i]) continue;
+    maxBenchNameLen = std::max(maxBenchNameLen, rowTitles[i].size());
+  }
+
+  std::string lastHeaderKind;
+
   auto placeholderForName = [&](const std::string& n) -> std::string {
     if (n.find("PCIe") != std::string::npos || n.find("PCI") != std::string::npos) return "-- GB/s";
     if (n.find("FP") != std::string::npos || n.find("FLOPS") != std::string::npos) return "-- GFLOPS";
@@ -738,10 +787,19 @@ static void drawBenchmarks(
 
     // Headers: just a section title line.
     if (isHeader) {
+      const std::string kind = (name.rfind("GPU", 0) == 0) ? "GPU" : ((name.rfind("CPU", 0) == 0) ? "CPU" : "");
+      if (kind == "CPU" && lastHeaderKind == "GPU") {
+        if (y < rows - 2) {
+          mvhline(y, 0, ' ', cols);
+          ++y;
+          mvhline(y, 0, ' ', cols);
+        }
+      }
       if (colors) attron(COLOR_PAIR(4) | A_BOLD);
       mvaddnstr(y, static_cast<int>(prefix.size()), name.c_str(), std::max(0, cols - static_cast<int>(prefix.size())));
       if (colors) attroff(COLOR_PAIR(4) | A_BOLD);
       ++y;
+      if (!kind.empty()) lastHeaderKind = kind;
       continue;
     }
 
@@ -757,7 +815,9 @@ static void drawBenchmarks(
     const std::string firstLine = (end0 == std::string::npos) ? r : r.substr(0, end0);
     constexpr int kMetricIndent = 4;
     const std::string indent(kMetricIndent, ' ');
-    const std::string namePart = indent + name;
+    std::string namePart = indent + name;
+    const std::size_t targetLen = indent.size() + maxBenchNameLen;
+    if (namePart.size() < targetLen) namePart.append(targetLen - namePart.size(), ' ');
     const std::string valuePart = ": " + firstLine;
 
     // Draw name (styled) and value (default) separately so values stay white.
@@ -805,6 +865,9 @@ static void drawConfig(int rows, int cols, int selected, const Config& cfg) {
       {"VRAM usage", cfg.showVram},
   };
 
+  constexpr int kToggleCount = static_cast<int>(sizeof(items) / sizeof(items[0]));
+  constexpr int kActionReset = kToggleCount;
+
   const bool colors = has_colors() != 0;
 
   // Section header
@@ -815,17 +878,20 @@ static void drawConfig(int rows, int cols, int selected, const Config& cfg) {
   if (colors) attroff(COLOR_PAIR(4) | A_BOLD);
   ++y;
 
+  // Keep ':' aligned across both toggles and read-only informational rows.
   std::size_t maxLabelLen = 0;
-  for (const auto& it : items) {
-    maxLabelLen = std::max(maxLabelLen, std::strlen(it.label));
-  }
+  for (const auto& it : items) maxLabelLen = std::max(maxLabelLen, std::strlen(it.label));
+  maxLabelLen = std::max<std::size_t>(maxLabelLen, std::strlen("Reset to defaults"));
+  maxLabelLen = std::max<std::size_t>(maxLabelLen, std::strlen("Samples per bucket (bars)"));
+  maxLabelLen = std::max<std::size_t>(maxLabelLen, std::strlen("Value color"));
+  maxLabelLen = std::max<std::size_t>(maxLabelLen, std::strlen("Metric name color"));
 
   const int prefixW = 2;  // "> " or "  "
   const int colonCol = prefixW + static_cast<int>(maxLabelLen);
   const int valueCol = colonCol + 2;  // ": "
 
-  constexpr int kCount = static_cast<int>(sizeof(items) / sizeof(items[0]));
-  for (int i = 0; i < kCount; ++i) {
+  for (int i = 0; i < kToggleCount; ++i) {
+    if (y >= rows - 3) break;
     mvhline(y, 0, ' ', cols);
     const char* prefix = (i == selected ? "> " : "  ");
     if (0 < cols) mvaddnstr(y, 0, prefix, cols);
@@ -842,8 +908,65 @@ static void drawConfig(int rows, int cols, int selected, const Config& cfg) {
     if (valueCol < cols) mvaddnstr(y, valueCol, (items[i].value ? "ON" : "OFF"), cols - valueCol);
     ++y;
   }
+
+  // Action row: reset config to defaults.
+  if (y < rows - 3) {
+    mvhline(y, 0, ' ', cols);
+    const char* prefix = (kActionReset == selected ? "> " : "  ");
+    if (0 < cols) mvaddnstr(y, 0, prefix, cols);
+    if (prefixW < cols) mvaddnstr(y, prefixW, "Reset to defaults", cols - prefixW);
+
+    const int labelEnd = prefixW + static_cast<int>(std::strlen("Reset to defaults"));
+    for (int x = labelEnd; x < colonCol && x < cols; ++x) {
+      mvaddch(y, x, ' ');
+    }
+
+    if (colonCol < cols) mvaddch(y, colonCol, ':');
+    if (colonCol + 1 < cols) mvaddch(y, colonCol + 1, ' ');
+    if (valueCol < cols) mvaddnstr(y, valueCol, "RESET", cols - valueCol);
+    ++y;
+  }
+
+  // Read-only misc info under Timelines.
+  auto drawReadonly = [&](const char* label, const std::string& value) {
+    if (y >= rows - 3) return;
+    mvhline(y, 0, ' ', cols);
+    if (0 < cols) mvaddnstr(y, 0, "  ", cols);
+    if (prefixW < cols) mvaddnstr(y, prefixW, label, cols - prefixW);
+
+    const int labelEnd = prefixW + static_cast<int>(std::strlen(label));
+    for (int x = labelEnd; x < colonCol && x < cols; ++x) mvaddch(y, x, ' ');
+    if (colonCol < cols) mvaddch(y, colonCol, ':');
+    if (colonCol + 1 < cols) mvaddch(y, colonCol + 1, ' ');
+    if (valueCol < cols) mvaddnstr(y, valueCol, value.c_str(), cols - valueCol);
+    ++y;
+  };
+
+  if (y < rows - 3) {
+    mvhline(y, 0, ' ', cols);
+    ++y;
+  }
+
+  if (y < rows - 3) {
+    mvhline(y, 0, ' ', cols);
+    if (colors) attron(COLOR_PAIR(4) | A_BOLD);
+    mvaddnstr(y, 0, "Misc", cols);
+    if (colors) attroff(COLOR_PAIR(4) | A_BOLD);
+    ++y;
+  }
+
+  const int safeCols = std::max(1, cols);
+  const std::uint32_t samples = cfg.timelineSamples;
+  const std::uint32_t bucket = (samples > static_cast<std::uint32_t>(safeCols))
+      ? ((samples + static_cast<std::uint32_t>(safeCols) - 1u) / static_cast<std::uint32_t>(safeCols))
+      : 1u;
+
+  drawReadonly("Samples per bucket (bars)", std::to_string(bucket));
+  drawReadonly("Value color", "white (default)");
+  drawReadonly("Metric name color", "light blue (cyan)");
+
   mvhline(rows - 3, 0, ' ', cols);
-  mvaddnstr(rows - 3, 0, "Space: toggle   s: save   Esc: back", cols);
+  mvaddnstr(rows - 3, 0, "Space: toggle/activate   s: save   d: defaults   Esc: back", cols);
 }
 
 static void drawHardware(int rows, int cols, const std::vector<std::string>& lines) {
@@ -1047,28 +1170,6 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
   HardwareInfo hwCache = HardwareInfo::probe();
   std::vector<std::string> hwLines = hwCache.toLines();
-
-  auto parseGpuNames = [](const HardwareInfo& hw, unsigned int gpuCount) {
-    std::vector<std::string> names;
-    names.resize(gpuCount);
-    for (unsigned int i = 0; i < gpuCount; ++i) names[i] = "GPU" + std::to_string(i);
-    for (const auto& l : hw.perGpuLines) {
-      // Format: "GPU0: <name>".
-      if (l.rfind("GPU", 0) != 0) continue;
-      const std::size_t sep = l.find(": ");
-      if (sep == std::string::npos) continue;
-      const std::string left = l.substr(0, sep);
-      const std::string right = l.substr(sep + 2);
-      if (left.size() < 4) continue;
-      try {
-        const unsigned int idx = static_cast<unsigned int>(std::stoul(left.substr(3)));
-        if (idx < names.size() && !right.empty()) names[idx] = right;
-      } catch (...) {
-        continue;
-      }
-    }
-    return names;
-  };
 
   std::vector<std::string> benchRowTitles;
   std::vector<bool> benchRowIsHeader;
@@ -1333,7 +1434,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     if (screen == Screen::Timelines) {
       // Custom title bar: green labels, black value background.
       const int headerRows = drawTitleBarTimelines(cols, cpu, cfg.showDiskRead, cfg.showDiskWrite, diskRead, diskWrite, cfg.showNetRx, cfg.showNetTx, netRx, netTx, pcieRx, pcieTx, ram, gpuTel);
-      drawTimelines(rows, cols, headerRows, cfg, hwCache.cpuName, hwCache.gpuName, cpu, ramPct, vramPct, gpuMemUtil, gpuSamples, disk, diskRead, diskWrite, netRx, netTx, pcieRx, pcieTx, cpuTl, ramTl, vramTl, gpuMemUtilTl, gpuTls, diskTl, diskReadTl, diskWriteTl, netRxTl, netTxTl, pcieRxTl, pcieTxTl);
+      const std::vector<std::string> gpuNames = parseGpuNames(hwCache, gpuCount);
+      drawTimelines(rows, cols, headerRows, cfg, hwCache.cpuName, gpuNames, cpu, ramPct, vramPct, gpuMemUtil, gpuSamples, disk, diskRead, diskWrite, netRx, netTx, pcieRx, pcieTx, cpuTl, ramTl, vramTl, gpuMemUtilTl, gpuTls, diskTl, diskReadTl, diskWriteTl, netRxTl, netTxTl, pcieRxTl, pcieTxTl);
     } else if (screen == Screen::Help) {
       drawHeader(cols, "AI-Z - Help");
       drawHelp(rows, cols);
@@ -1416,7 +1518,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           }
         } else if (screen == Screen::Config) {
           if (ch == KEY_UP) configSelected = std::max(0, configSelected - 1);
-          else if (ch == KEY_DOWN) configSelected = std::min(10, configSelected + 1);
+          else if (ch == KEY_DOWN) configSelected = std::min(11, configSelected + 1);
           else if (ch == ' ') {
             switch (configSelected) {
               case 0: cfg.showCpu = !cfg.showCpu; break;
@@ -1430,7 +1532,13 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
               case 8: cfg.showPcieTx = !cfg.showPcieTx; break;
               case 9: cfg.showRam = !cfg.showRam; break;
               case 10: cfg.showVram = !cfg.showVram; break;
+              case 11: cfg = Config{}; break;  // reset to defaults
             }
+          } else if (ch == '\n' || ch == KEY_ENTER) {
+            // Enter only activates the action row to avoid accidental toggles.
+            if (configSelected == 11) cfg = Config{};
+          } else if (ch == 'd' || ch == 'D') {
+            cfg = Config{};
           } else if (ch == 's') {
             cfg.save();
           }

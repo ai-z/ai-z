@@ -400,6 +400,9 @@ static Command mapKey(const KEY_EVENT_RECORD& k) {
     case L's':
     case L'S':
       return Command::Save;
+    case L'd':
+    case L'D':
+      return Command::Defaults;
     case L'r':
     case L'R':
       return Command::Refresh;
@@ -492,7 +495,10 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
 
               // Apply config actions directly for now.
               if (state.screen == Screen::Config) {
-                if (cmd == Command::Toggle) {
+                if (cmd == Command::Defaults) {
+                  cfg = Config{};
+                }
+                if (cmd == Command::Toggle || cmd == Command::Activate) {
                   switch (state.configSel) {
                     case 0:
                       cfg.showCpu = !cfg.showCpu;
@@ -523,6 +529,9 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
                       break;
                     case 9:
                       cfg.showVram = !cfg.showVram;
+                      break;
+                    case 10:
+                      cfg = Config{};
                       break;
                     default:
                       break;
