@@ -2,6 +2,8 @@
 
 #ifdef AI_Z_ENABLE_OPENCL
 
+#include <aiz/dyn/opencl.h>
+
 #include <CL/cl.h>
 
 #include <chrono>
@@ -45,8 +47,11 @@ static std::string clErrToString(cl_int e) {
 }
 
 static std::optional<std::vector<cl_device_id>> listGpuDevices(std::string& err) {
+  const auto* cl = ::aiz::dyn::opencl::api(&err);
+  if (!cl) return std::nullopt;
+
   cl_uint numPlatforms = 0;
-  cl_int e = clGetPlatformIDs(0, nullptr, &numPlatforms);
+  cl_int e = cl->clGetPlatformIDs(0, nullptr, &numPlatforms);
   if (e != CL_SUCCESS) {
     err = "clGetPlatformIDs failed: " + clErrToString(e);
     return std::nullopt;
@@ -57,7 +62,7 @@ static std::optional<std::vector<cl_device_id>> listGpuDevices(std::string& err)
   }
 
   std::vector<cl_platform_id> platforms(numPlatforms);
-  e = clGetPlatformIDs(numPlatforms, platforms.data(), nullptr);
+  e = cl->clGetPlatformIDs(numPlatforms, platforms.data(), nullptr);
   if (e != CL_SUCCESS) {
     err = "clGetPlatformIDs(list) failed: " + clErrToString(e);
     return std::nullopt;
@@ -66,12 +71,12 @@ static std::optional<std::vector<cl_device_id>> listGpuDevices(std::string& err)
   std::vector<cl_device_id> devices;
   for (auto p : platforms) {
     cl_uint n = 0;
-    e = clGetDeviceIDs(p, CL_DEVICE_TYPE_GPU, 0, nullptr, &n);
+    e = cl->clGetDeviceIDs(p, CL_DEVICE_TYPE_GPU, 0, nullptr, &n);
     if (e == CL_DEVICE_NOT_FOUND) continue;
     if (e != CL_SUCCESS) continue;
     if (n == 0) continue;
     std::vector<cl_device_id> ds(n);
-    e = clGetDeviceIDs(p, CL_DEVICE_TYPE_GPU, n, ds.data(), nullptr);
+    e = cl->clGetDeviceIDs(p, CL_DEVICE_TYPE_GPU, n, ds.data(), nullptr);
     if (e != CL_SUCCESS) continue;
     for (auto d : ds) devices.push_back(d);
   }
@@ -84,14 +89,17 @@ static std::optional<std::vector<cl_device_id>> listGpuDevices(std::string& err)
 }
 
 static std::optional<double> eventSeconds(cl_event ev, std::string& err) {
+  const auto* cl = ::aiz::dyn::opencl::api(&err);
+  if (!cl) return std::nullopt;
+
   cl_ulong start = 0;
   cl_ulong end = 0;
-  cl_int e = clGetEventProfilingInfo(ev, CL_PROFILING_COMMAND_START, sizeof(start), &start, nullptr);
+  cl_int e = cl->clGetEventProfilingInfo(ev, CL_PROFILING_COMMAND_START, sizeof(start), &start, nullptr);
   if (e != CL_SUCCESS) {
     err = "clGetEventProfilingInfo(START) failed: " + clErrToString(e);
     return std::nullopt;
   }
-  e = clGetEventProfilingInfo(ev, CL_PROFILING_COMMAND_END, sizeof(end), &end, nullptr);
+  e = cl->clGetEventProfilingInfo(ev, CL_PROFILING_COMMAND_END, sizeof(end), &end, nullptr);
   if (e != CL_SUCCESS) {
     err = "clGetEventProfilingInfo(END) failed: " + clErrToString(e);
     return std::nullopt;
@@ -118,6 +126,9 @@ public:
 
   BenchResult run() override {
     std::string err;
+    const auto* cl = ::aiz::dyn::opencl::api(&err);
+    if (!cl) return BenchResult{false, err};
+
     auto devs = listGpuDevices(err);
     if (!devs) return BenchResult{false, err};
     if (gpuIndex_ >= devs->size()) return BenchResult{false, "Invalid OpenCL GPU index."};
@@ -125,17 +136,22 @@ public:
     cl_device_id dev = (*devs)[gpuIndex_];
 
     cl_int e = CL_SUCCESS;
-    cl_context ctx = clCreateContext(nullptr, 1, &dev, nullptr, nullptr, &e);
+    cl_context ctx = cl->clCreateContext(nullptr, 1, &dev, nullptr, nullptr, &e);
     if (!ctx || e != CL_SUCCESS) return BenchResult{false, "clCreateContext failed: " + clErrToString(e)};
 
 #if defined(CL_VERSION_2_0)
-    const cl_queue_properties props[] = {CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0};
-    cl_command_queue q = clCreateCommandQueueWithProperties(ctx, dev, props, &e);
+    cl_command_queue q{};
+    if (cl->clCreateCommandQueueWithProperties) {
+      const cl_queue_properties props[] = {CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0};
+      q = cl->clCreateCommandQueueWithProperties(ctx, dev, props, &e);
+    } else {
+      q = cl->clCreateCommandQueue(ctx, dev, CL_QUEUE_PROFILING_ENABLE, &e);
+    }
 #else
-    cl_command_queue q = clCreateCommandQueue(ctx, dev, CL_QUEUE_PROFILING_ENABLE, &e);
+    cl_command_queue q = cl->clCreateCommandQueue(ctx, dev, CL_QUEUE_PROFILING_ENABLE, &e);
 #endif
     if (!q || e != CL_SUCCESS) {
-      clReleaseContext(ctx);
+      cl->clReleaseContext(ctx);
       return BenchResult{false, "clCreateCommandQueue failed: " + clErrToString(e)};
     }
 
@@ -147,10 +163,10 @@ public:
     std::vector<std::uint8_t> host(bytes);
     std::memset(host.data(), 0xA5, host.size());
 
-    cl_mem buf = clCreateBuffer(ctx, CL_MEM_READ_WRITE, bytes, nullptr, &e);
+    cl_mem buf = cl->clCreateBuffer(ctx, CL_MEM_READ_WRITE, bytes, nullptr, &e);
     if (!buf || e != CL_SUCCESS) {
-      clReleaseCommandQueue(q);
-      clReleaseContext(ctx);
+      cl->clReleaseCommandQueue(q);
+      cl->clReleaseContext(ctx);
       return BenchResult{false, "clCreateBuffer failed: " + clErrToString(e)};
     }
 
@@ -158,9 +174,9 @@ public:
       // Warmup.
       for (int i = 0; i < warmup; ++i) {
         if (h2d) {
-          e = clEnqueueWriteBuffer(q, buf, CL_TRUE, 0, bytes, host.data(), 0, nullptr, nullptr);
+          e = cl->clEnqueueWriteBuffer(q, buf, CL_TRUE, 0, bytes, host.data(), 0, nullptr, nullptr);
         } else {
-          e = clEnqueueReadBuffer(q, buf, CL_TRUE, 0, bytes, host.data(), 0, nullptr, nullptr);
+          e = cl->clEnqueueReadBuffer(q, buf, CL_TRUE, 0, bytes, host.data(), 0, nullptr, nullptr);
         }
         if (e != CL_SUCCESS) {
           err = std::string("enqueue warmup failed: ") + clErrToString(e);
@@ -173,22 +189,22 @@ public:
       for (int i = 0; i < iters; ++i) {
         cl_event ev{};
         if (h2d) {
-          e = clEnqueueWriteBuffer(q, buf, CL_FALSE, 0, bytes, host.data(), 0, nullptr, &ev);
+          e = cl->clEnqueueWriteBuffer(q, buf, CL_FALSE, 0, bytes, host.data(), 0, nullptr, &ev);
         } else {
-          e = clEnqueueReadBuffer(q, buf, CL_FALSE, 0, bytes, host.data(), 0, nullptr, &ev);
+          e = cl->clEnqueueReadBuffer(q, buf, CL_FALSE, 0, bytes, host.data(), 0, nullptr, &ev);
         }
         if (e != CL_SUCCESS || !ev) {
           err = std::string("enqueue timed failed: ") + clErrToString(e);
           return false;
         }
-        e = clWaitForEvents(1, &ev);
+        e = cl->clWaitForEvents(1, &ev);
         if (e != CL_SUCCESS) {
-          clReleaseEvent(ev);
+          cl->clReleaseEvent(ev);
           err = std::string("clWaitForEvents failed: ") + clErrToString(e);
           return false;
         }
         auto sec = eventSeconds(ev, err);
-        clReleaseEvent(ev);
+        cl->clReleaseEvent(ev);
         if (!sec) return false;
         totalSec += *sec;
       }
@@ -208,9 +224,9 @@ public:
     const bool okRx = measure(true, rx);   // host->device
     const bool okTx = okRx ? measure(false, tx) : false;  // device->host
 
-    clReleaseMemObject(buf);
-    clReleaseCommandQueue(q);
-    clReleaseContext(ctx);
+    cl->clReleaseMemObject(buf);
+    cl->clReleaseCommandQueue(q);
+    cl->clReleaseContext(ctx);
 
     if (!okRx || !okTx) return BenchResult{false, err.empty() ? std::string("transfer failed") : err};
 

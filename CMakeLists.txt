@@ -1,13 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 project(ai-z VERSION 0.1.0 LANGUAGES CXX)
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-
-# CUDA is enabled conditionally; keep its dialect compatible with older CMake.
-set(CMAKE_CUDA_STANDARD 17)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 option(AI_Z_ENABLE_NVML "Enable NVIDIA NVML backend" ON)
 option(AI_Z_ENABLE_CUDA "Enable CUDA benchmarks/backends" ON)
@@ -31,6 +29,9 @@ add_executable(ai-z
   src/main.cpp
   src/aiz/app.cpp
   src/aiz/config/config.cpp
+  src/aiz/dyn/cuda.cpp
+  src/aiz/dyn/opencl.cpp
+  src/aiz/dyn/vulkan.cpp
   src/aiz/hw/hardware_info.cpp
   src/aiz/metrics/cpu_usage.cpp
   src/aiz/metrics/disk_bandwidth.cpp
@@ -82,19 +83,11 @@ if (AI_Z_ENABLE_LIBTORCH)
 endif()
 
 if (AI_Z_ENABLE_CUDA)
-  find_package(CUDAToolkit QUIET)
-  if (NOT CUDAToolkit_FOUND)
-    message(WARNING "AI_Z_ENABLE_CUDA=ON but CUDAToolkit not found; disabling CUDA backend. Configure with -DAI_Z_ENABLE_CUDA=OFF to silence.")
-    set(AI_Z_ENABLE_CUDA OFF CACHE BOOL "Enable CUDA benchmarks/backends" FORCE)
-  else()
-    enable_language(CUDA)
-    # Avoid empty CUDA_ARCHITECTURES warnings. "native" can map to compute_native,
-    # which older NVCC versions don't accept; use a conservative default set.
-    set_property(TARGET ai-z PROPERTY CUDA_ARCHITECTURES 70 75 80 86)
-    target_sources(ai-z PRIVATE src/aiz/bench/pcie_bandwidth_cuda.cpp)
-    target_sources(ai-z PRIVATE src/aiz/bench/gpu_compute_cuda.cu)
-    target_link_libraries(ai-z PRIVATE CUDA::cudart)
-  endif()
+  # CUDA is runtime-loaded via libcuda (driver API). No compile-time CUDA toolkit required.
+  target_sources(ai-z PRIVATE
+    src/aiz/bench/pcie_bandwidth_cuda.cpp
+    src/aiz/bench/gpu_compute_cuda.cpp
+  )
 endif()
 
 if (AI_Z_ENABLE_OPENCL)
@@ -103,11 +96,14 @@ if (AI_Z_ENABLE_OPENCL)
     message(WARNING "AI_Z_ENABLE_OPENCL=ON but OpenCL not found; disabling OpenCL backend. Configure with -DAI_Z_ENABLE_OPENCL=OFF to silence.")
     set(AI_Z_ENABLE_OPENCL OFF CACHE BOOL "Enable OpenCL benchmarks/backends" FORCE)
   else()
+    # Runtime-loaded; only need headers at build time.
     if (TARGET OpenCL::OpenCL)
-      target_link_libraries(ai-z PRIVATE OpenCL::OpenCL)
+      get_target_property(AI_Z_OPENCL_INCLUDES OpenCL::OpenCL INTERFACE_INCLUDE_DIRECTORIES)
+      if (AI_Z_OPENCL_INCLUDES)
+        target_include_directories(ai-z PRIVATE ${AI_Z_OPENCL_INCLUDES})
+      endif()
     else()
       target_include_directories(ai-z PRIVATE ${OpenCL_INCLUDE_DIRS})
-      target_link_libraries(ai-z PRIVATE ${OpenCL_LIBRARIES})
     endif()
   endif()
 endif()
@@ -118,11 +114,14 @@ if (AI_Z_ENABLE_VULKAN)
     message(WARNING "AI_Z_ENABLE_VULKAN=ON but Vulkan not found; disabling Vulkan backend. Configure with -DAI_Z_ENABLE_VULKAN=OFF to silence.")
     set(AI_Z_ENABLE_VULKAN OFF CACHE BOOL "Enable Vulkan benchmarks/backends" FORCE)
   else()
+    # Runtime-loaded; only need headers at build time.
     if (TARGET Vulkan::Vulkan)
-      target_link_libraries(ai-z PRIVATE Vulkan::Vulkan)
+      get_target_property(AI_Z_VULKAN_INCLUDES Vulkan::Vulkan INTERFACE_INCLUDE_DIRECTORIES)
+      if (AI_Z_VULKAN_INCLUDES)
+        target_include_directories(ai-z PRIVATE ${AI_Z_VULKAN_INCLUDES})
+      endif()
     else()
       target_include_directories(ai-z PRIVATE ${Vulkan_INCLUDE_DIRS})
-      target_link_libraries(ai-z PRIVATE ${Vulkan_LIBRARIES})
     endif()
 
     # Optional: shaderc enables runtime GLSL->SPIR-V compilation for Vulkan compute benchmarks.
@@ -186,3 +185,30 @@ endif()
 if (BUILD_TESTING)
   add_subdirectory(tests)
 endif()
+
+# Install
+install(TARGETS ai-z
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/docs/ai-z.1
+  DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
+)
+
+# Packaging (Debian/Ubuntu)
+set(CPACK_PACKAGE_NAME "ai-z")
+set(CPACK_PACKAGE_VENDOR "ai-z")
+set(CPACK_PACKAGE_CONTACT "ai-z")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "C++ TUI app for performance timelines (CPU/GPU/Disk/PCIe) and benchmarks")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+
+set(CPACK_GENERATOR "DEB")
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "ai-z")
+set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+
+# Let dpkg-shlibdeps compute shared-library dependencies when available.
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+
+include(CPack)

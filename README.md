@@ -18,41 +18,17 @@ cmake --build build -j
 ./build/ai-z
 ```
 
-NVIDIA PCIe bandwidth benchmark (CUDA):
+CUDA benchmarks (Linux):
 
-CUDA prerequisites (Linux):
+- Runtime prerequisite: an NVIDIA driver (for `libcuda.so` + GPU access). Quick check: `nvidia-smi`.
+- The CUDA Toolkit (`nvcc`, headers, libraries) is **not required** to build or run ai-z's current CUDA benchmarks.
+  The project uses the CUDA **driver API** and JITs small **embedded PTX** kernels at runtime.
 
-- You need both:
-	- An NVIDIA driver (for running on the GPU). Quick check: `nvidia-smi`
-	- The CUDA Toolkit (for building CUDA code: `nvcc`, headers, libraries). Quick check: `nvcc --version`
-- Install CUDA Toolkit:
-	- Ubuntu/Debian (often older): `sudo apt-get install -y nvidia-cuda-toolkit`
-	- Or install the CUDA Toolkit from NVIDIA's repo/installer (typically ends up in `/usr/local/cuda` or `/usr/local/cuda-12.x`)
+Notes:
 
-Build notes:
-
-- If CMake cannot find `CUDAToolkit`, this project will automatically disable CUDA (even if `-DAI_Z_ENABLE_CUDA=ON`).
-- After installing CUDA, reconfigure from scratch:
-
-```bash
-rm -rf build
-cmake -S . -B build -DAI_Z_ENABLE_CUDA=ON
-cmake --build build -j
-```
-
-- If CMake still can't find it, point it at your CUDA install:
-
-```bash
-cmake -S . -B build -DAI_Z_ENABLE_CUDA=ON -DCUDAToolkit_ROOT=/usr/local/cuda
-```
-
-- Enabled by default if a CUDA Toolkit is found.
-- Force enable/disable with `-DAI_Z_ENABLE_CUDA=ON/OFF`.
-
-```bash
-cmake -S . -B build -DAI_Z_ENABLE_CUDA=ON
-cmake --build build -j
-```
+- On machines without an NVIDIA driver/GPU, CUDA benchmarks will show as unavailable.
+- The CUDA Toolkit is still useful for development (e.g. generating PTX/CUBIN with `nvcc`/`ptxas`, adding new kernels,
+  or using CUDA profiling/debugging tools), but it is not an end-user dependency for the shipped benchmarks.
 
 OpenCL benchmarks (PCIe bandwidth + FP32 FLOPS):
 
@@ -127,6 +103,49 @@ On Windows:
 ```powershell
 ./build/Release/ai-z.exe --debug
 ```
+
+## Install (Debian/Ubuntu)
+
+This project can produce a `.deb` package. Installing the package puts the binary at `/usr/bin/ai-z`, so users can run:
+
+```bash
+ai-z
+```
+
+### Build a `.deb`
+
+Prereqs:
+
+```bash
+sudo apt-get install -y build-essential cmake dpkg-dev
+```
+
+Build + package:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+cpack --config build/CPackConfig.cmake -G DEB
+```
+
+This produces something like `ai-z_0.1.0_amd64.deb` in the build directory.
+
+### Install locally
+
+For local installs (or downloading from a release page), users can install via apt:
+
+```bash
+sudo apt install ./ai-z_0.1.0_amd64.deb
+```
+
+### Making `sudo apt install ai-z` work
+
+`sudo apt install ai-z` (without a local `.deb` path) requires that you publish the `.deb` into an APT repository users have added as a source (or publish to a Launchpad PPA / Debian/Ubuntu official repos).
+
+Common options:
+
+- Launchpad PPA (Ubuntu): users add the PPA, then `sudo apt install ai-z`.
+- Host your own APT repo (Debian/Ubuntu): generate `Packages.gz`/`Release` metadata and publish via HTTPS.
 
 ## Timelines
 

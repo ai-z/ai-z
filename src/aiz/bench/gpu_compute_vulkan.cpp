@@ -4,6 +4,8 @@
 
 #include "vulkan_fp32_bench_spv.h"
 
+#include <aiz/dyn/vulkan.h>
+
 #include <vulkan/vulkan.h>
 
 #include <array>
@@ -19,6 +21,10 @@
 
 namespace aiz {
 namespace {
+
+static const ::aiz::dyn::vulkan::Api* vkApi(std::string& err) {
+  return ::aiz::dyn::vulkan::api(&err);
+}
 
 static std::string vkErrToString(VkResult r) {
   switch (r) {
@@ -43,11 +49,15 @@ static std::string vkErrToString(VkResult r) {
 }
 
 static std::optional<uint32_t> findQueueFamilyCompute(VkPhysicalDevice phys) {
+  std::string err;
+  const auto* vk = vkApi(err);
+  if (!vk) return std::nullopt;
+
   uint32_t count = 0;
-  vkGetPhysicalDeviceQueueFamilyProperties(phys, &count, nullptr);
+  vk->vkGetPhysicalDeviceQueueFamilyProperties(phys, &count, nullptr);
   if (count == 0) return std::nullopt;
   std::vector<VkQueueFamilyProperties> props(count);
-  vkGetPhysicalDeviceQueueFamilyProperties(phys, &count, props.data());
+  vk->vkGetPhysicalDeviceQueueFamilyProperties(phys, &count, props.data());
 
   // Prefer compute-only if available.
   for (uint32_t i = 0; i < count; ++i) {
@@ -66,8 +76,12 @@ static std::optional<uint32_t> findQueueFamilyCompute(VkPhysicalDevice phys) {
 }
 
 static std::optional<uint32_t> findMemType(VkPhysicalDevice phys, uint32_t typeBits, VkMemoryPropertyFlags want) {
+  std::string err;
+  const auto* vk = vkApi(err);
+  if (!vk) return std::nullopt;
+
   VkPhysicalDeviceMemoryProperties mp{};
-  vkGetPhysicalDeviceMemoryProperties(phys, &mp);
+  vk->vkGetPhysicalDeviceMemoryProperties(phys, &mp);
   for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
     if ((typeBits & (1u << i)) == 0) continue;
     if ((mp.memoryTypes[i].propertyFlags & want) == want) return i;
@@ -80,6 +94,13 @@ static std::optional<uint32_t> cachedVulkanPhysicalDeviceCount() {
   static std::optional<uint32_t> cached;
 
   std::call_once(once, []() {
+    std::string err;
+    const auto* vk = vkApi(err);
+    if (!vk) {
+      cached = std::nullopt;
+      return;
+    }
+
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     app.pApplicationName = "ai-z";
     app.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -91,14 +112,14 @@ static std::optional<uint32_t> cachedVulkanPhysicalDeviceCount() {
     ici.pApplicationInfo = &app;
 
     VkInstance inst{};
-    if (vkCreateInstance(&ici, nullptr, &inst) != VK_SUCCESS) {
+    if (vk->vkCreateInstance(&ici, nullptr, &inst) != VK_SUCCESS) {
       cached = std::nullopt;
       return;
     }
 
     uint32_t n = 0;
-    const VkResult r = vkEnumeratePhysicalDevices(inst, &n, nullptr);
-    vkDestroyInstance(inst, nullptr);
+    const VkResult r = vk->vkEnumeratePhysicalDevices(inst, &n, nullptr);
+    vk->vkDestroyInstance(inst, nullptr);
     if (r != VK_SUCCESS) {
       cached = std::nullopt;
       return;
@@ -121,6 +142,10 @@ public:
   }
 
   BenchResult run() override {
+    std::string err;
+    const auto* vk = vkApi(err);
+    if (!vk) return BenchResult{false, err};
+
     if (bench::kVulkanFp32BenchSpvWordCount == 0) {
       return BenchResult{false, "Embedded SPIR-V is empty."};
     }
@@ -135,33 +160,33 @@ public:
     VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     ici.pApplicationInfo = &app;
     VkInstance inst{};
-    VkResult r = vkCreateInstance(&ici, nullptr, &inst);
+    VkResult r = vk->vkCreateInstance(&ici, nullptr, &inst);
     if (r != VK_SUCCESS) return BenchResult{false, "vkCreateInstance failed: " + vkErrToString(r)};
 
     uint32_t physCount = 0;
-    r = vkEnumeratePhysicalDevices(inst, &physCount, nullptr);
+    r = vk->vkEnumeratePhysicalDevices(inst, &physCount, nullptr);
     if (r != VK_SUCCESS || physCount == 0) {
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "No Vulkan physical devices found."};
     }
     if (gpuIndex_ >= physCount) {
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "Invalid Vulkan GPU index."};
     }
     std::vector<VkPhysicalDevice> phys(physCount);
-    vkEnumeratePhysicalDevices(inst, &physCount, phys.data());
+    vk->vkEnumeratePhysicalDevices(inst, &physCount, phys.data());
     VkPhysicalDevice pd = phys[gpuIndex_];
 
     VkPhysicalDeviceProperties props{};
-    vkGetPhysicalDeviceProperties(pd, &props);
+    vk->vkGetPhysicalDeviceProperties(pd, &props);
     if (props.limits.timestampPeriod <= 0.0f) {
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "Vulkan device does not report a valid timestampPeriod."};
     }
 
     auto qfamOpt = findQueueFamilyCompute(pd);
     if (!qfamOpt) {
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "No Vulkan compute queue family with timestamp support found."};
     }
     const uint32_t qfam = *qfamOpt;
@@ -177,23 +202,23 @@ public:
     dci.pQueueCreateInfos = &qci;
 
     VkDevice dev{};
-    r = vkCreateDevice(pd, &dci, nullptr, &dev);
+    r = vk->vkCreateDevice(pd, &dci, nullptr, &dev);
     if (r != VK_SUCCESS) {
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkCreateDevice failed: " + vkErrToString(r)};
     }
 
     VkQueue q{};
-    vkGetDeviceQueue(dev, qfam, 0, &q);
+    vk->vkGetDeviceQueue(dev, qfam, 0, &q);
 
     VkShaderModuleCreateInfo smci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     smci.codeSize = bench::kVulkanFp32BenchSpvWordCount * sizeof(std::uint32_t);
     smci.pCode = bench::kVulkanFp32BenchSpv;
     VkShaderModule shader{};
-    r = vkCreateShaderModule(dev, &smci, nullptr, &shader);
+    r = vk->vkCreateShaderModule(dev, &smci, nullptr, &shader);
     if (r != VK_SUCCESS) {
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkCreateShaderModule failed: " + vkErrToString(r)};
     }
 
@@ -207,11 +232,11 @@ public:
     dsli.bindingCount = 1;
     dsli.pBindings = &binding;
     VkDescriptorSetLayout dsl{};
-    r = vkCreateDescriptorSetLayout(dev, &dsli, nullptr, &dsl);
+    r = vk->vkCreateDescriptorSetLayout(dev, &dsli, nullptr, &dsl);
     if (r != VK_SUCCESS) {
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkCreateDescriptorSetLayout failed: " + vkErrToString(r)};
     }
 
@@ -219,12 +244,12 @@ public:
     plci.setLayoutCount = 1;
     plci.pSetLayouts = &dsl;
     VkPipelineLayout pl{};
-    r = vkCreatePipelineLayout(dev, &plci, nullptr, &pl);
+    r = vk->vkCreatePipelineLayout(dev, &plci, nullptr, &pl);
     if (r != VK_SUCCESS) {
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkCreatePipelineLayout failed: " + vkErrToString(r)};
     }
 
@@ -237,13 +262,13 @@ public:
     cpci.stage = stage;
     cpci.layout = pl;
     VkPipeline pipe{};
-    r = vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &cpci, nullptr, &pipe);
+    r = vk->vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &cpci, nullptr, &pipe);
     if (r != VK_SUCCESS) {
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkCreateComputePipelines failed: " + vkErrToString(r)};
     }
 
@@ -258,55 +283,55 @@ public:
     bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkBuffer buf{};
-    r = vkCreateBuffer(dev, &bci, nullptr, &buf);
+    r = vk->vkCreateBuffer(dev, &bci, nullptr, &buf);
     if (r != VK_SUCCESS) {
-      vkDestroyPipeline(dev, pipe, nullptr);
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyPipeline(dev, pipe, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkCreateBuffer failed: " + vkErrToString(r)};
     }
 
     VkMemoryRequirements req{};
-    vkGetBufferMemoryRequirements(dev, buf, &req);
+    vk->vkGetBufferMemoryRequirements(dev, buf, &req);
     auto mt = findMemType(pd, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (!mt) {
-      vkDestroyBuffer(dev, buf, nullptr);
-      vkDestroyPipeline(dev, pipe, nullptr);
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyBuffer(dev, buf, nullptr);
+      vk->vkDestroyPipeline(dev, pipe, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "No suitable Vulkan device-local memory type for output buffer."};
     }
     VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     mai.allocationSize = req.size;
     mai.memoryTypeIndex = *mt;
     VkDeviceMemory mem{};
-    r = vkAllocateMemory(dev, &mai, nullptr, &mem);
+    r = vk->vkAllocateMemory(dev, &mai, nullptr, &mem);
     if (r != VK_SUCCESS) {
-      vkDestroyBuffer(dev, buf, nullptr);
-      vkDestroyPipeline(dev, pipe, nullptr);
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyBuffer(dev, buf, nullptr);
+      vk->vkDestroyPipeline(dev, pipe, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkAllocateMemory failed: " + vkErrToString(r)};
     }
-    r = vkBindBufferMemory(dev, buf, mem, 0);
+    r = vk->vkBindBufferMemory(dev, buf, mem, 0);
     if (r != VK_SUCCESS) {
-      vkFreeMemory(dev, mem, nullptr);
-      vkDestroyBuffer(dev, buf, nullptr);
-      vkDestroyPipeline(dev, pipe, nullptr);
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkFreeMemory(dev, mem, nullptr);
+      vk->vkDestroyBuffer(dev, buf, nullptr);
+      vk->vkDestroyPipeline(dev, pipe, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkBindBufferMemory failed: " + vkErrToString(r)};
     }
 
@@ -318,16 +343,16 @@ public:
     dpci.poolSizeCount = 1;
     dpci.pPoolSizes = &ps;
     VkDescriptorPool dp{};
-    r = vkCreateDescriptorPool(dev, &dpci, nullptr, &dp);
+    r = vk->vkCreateDescriptorPool(dev, &dpci, nullptr, &dp);
     if (r != VK_SUCCESS) {
-      vkFreeMemory(dev, mem, nullptr);
-      vkDestroyBuffer(dev, buf, nullptr);
-      vkDestroyPipeline(dev, pipe, nullptr);
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkFreeMemory(dev, mem, nullptr);
+      vk->vkDestroyBuffer(dev, buf, nullptr);
+      vk->vkDestroyPipeline(dev, pipe, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkCreateDescriptorPool failed: " + vkErrToString(r)};
     }
 
@@ -336,17 +361,17 @@ public:
     dsai.descriptorSetCount = 1;
     dsai.pSetLayouts = &dsl;
     VkDescriptorSet ds{};
-    r = vkAllocateDescriptorSets(dev, &dsai, &ds);
+    r = vk->vkAllocateDescriptorSets(dev, &dsai, &ds);
     if (r != VK_SUCCESS) {
-      vkDestroyDescriptorPool(dev, dp, nullptr);
-      vkFreeMemory(dev, mem, nullptr);
-      vkDestroyBuffer(dev, buf, nullptr);
-      vkDestroyPipeline(dev, pipe, nullptr);
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyDescriptorPool(dev, dp, nullptr);
+      vk->vkFreeMemory(dev, mem, nullptr);
+      vk->vkDestroyBuffer(dev, buf, nullptr);
+      vk->vkDestroyPipeline(dev, pipe, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkAllocateDescriptorSets failed: " + vkErrToString(r)};
     }
 
@@ -360,23 +385,23 @@ public:
     wds.descriptorCount = 1;
     wds.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     wds.pBufferInfo = &dbi;
-    vkUpdateDescriptorSets(dev, 1, &wds, 0, nullptr);
+    vk->vkUpdateDescriptorSets(dev, 1, &wds, 0, nullptr);
 
     VkCommandPoolCreateInfo cpci2{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     cpci2.queueFamilyIndex = qfam;
     cpci2.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     VkCommandPool pool{};
-    r = vkCreateCommandPool(dev, &cpci2, nullptr, &pool);
+    r = vk->vkCreateCommandPool(dev, &cpci2, nullptr, &pool);
     if (r != VK_SUCCESS) {
-      vkDestroyDescriptorPool(dev, dp, nullptr);
-      vkFreeMemory(dev, mem, nullptr);
-      vkDestroyBuffer(dev, buf, nullptr);
-      vkDestroyPipeline(dev, pipe, nullptr);
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyDescriptorPool(dev, dp, nullptr);
+      vk->vkFreeMemory(dev, mem, nullptr);
+      vk->vkDestroyBuffer(dev, buf, nullptr);
+      vk->vkDestroyPipeline(dev, pipe, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkCreateCommandPool failed: " + vkErrToString(r)};
     }
 
@@ -385,18 +410,18 @@ public:
     cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cbai.commandBufferCount = 1;
     VkCommandBuffer cb{};
-    r = vkAllocateCommandBuffers(dev, &cbai, &cb);
+    r = vk->vkAllocateCommandBuffers(dev, &cbai, &cb);
     if (r != VK_SUCCESS) {
-      vkDestroyCommandPool(dev, pool, nullptr);
-      vkDestroyDescriptorPool(dev, dp, nullptr);
-      vkFreeMemory(dev, mem, nullptr);
-      vkDestroyBuffer(dev, buf, nullptr);
-      vkDestroyPipeline(dev, pipe, nullptr);
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyCommandPool(dev, pool, nullptr);
+      vk->vkDestroyDescriptorPool(dev, dp, nullptr);
+      vk->vkFreeMemory(dev, mem, nullptr);
+      vk->vkDestroyBuffer(dev, buf, nullptr);
+      vk->vkDestroyPipeline(dev, pipe, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkAllocateCommandBuffers failed: " + vkErrToString(r)};
     }
 
@@ -404,133 +429,134 @@ public:
     qpci.queryType = VK_QUERY_TYPE_TIMESTAMP;
     qpci.queryCount = 2;
     VkQueryPool qpool{};
-    r = vkCreateQueryPool(dev, &qpci, nullptr, &qpool);
+    r = vk->vkCreateQueryPool(dev, &qpci, nullptr, &qpool);
     if (r != VK_SUCCESS) {
-      vkDestroyCommandPool(dev, pool, nullptr);
-      vkDestroyDescriptorPool(dev, dp, nullptr);
-      vkFreeMemory(dev, mem, nullptr);
-      vkDestroyBuffer(dev, buf, nullptr);
-      vkDestroyPipeline(dev, pipe, nullptr);
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyCommandPool(dev, pool, nullptr);
+      vk->vkDestroyDescriptorPool(dev, dp, nullptr);
+      vk->vkFreeMemory(dev, mem, nullptr);
+      vk->vkDestroyBuffer(dev, buf, nullptr);
+      vk->vkDestroyPipeline(dev, pipe, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkCreateQueryPool failed: " + vkErrToString(r)};
     }
 
     VkCommandBufferBeginInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     cbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    r = vkBeginCommandBuffer(cb, &cbi);
+    r = vk->vkBeginCommandBuffer(cb, &cbi);
     if (r != VK_SUCCESS) {
-      vkDestroyQueryPool(dev, qpool, nullptr);
-      vkDestroyCommandPool(dev, pool, nullptr);
-      vkDestroyDescriptorPool(dev, dp, nullptr);
-      vkFreeMemory(dev, mem, nullptr);
-      vkDestroyBuffer(dev, buf, nullptr);
-      vkDestroyPipeline(dev, pipe, nullptr);
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyQueryPool(dev, qpool, nullptr);
+      vk->vkDestroyCommandPool(dev, pool, nullptr);
+      vk->vkDestroyDescriptorPool(dev, dp, nullptr);
+      vk->vkFreeMemory(dev, mem, nullptr);
+      vk->vkDestroyBuffer(dev, buf, nullptr);
+      vk->vkDestroyPipeline(dev, pipe, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkBeginCommandBuffer failed: " + vkErrToString(r)};
     }
 
-    vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, qpool, 0);
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pl, 0, 1, &ds, 0, nullptr);
+    vk->vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, qpool, 0);
+    vk->vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
+    vk->vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pl, 0, 1, &ds, 0, nullptr);
     const uint32_t groups = (kN + kLocalSize - 1) / kLocalSize;
-    vkCmdDispatch(cb, groups, 1, 1);
-    vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, qpool, 1);
+    vk->vkCmdDispatch(cb, groups, 1, 1);
+    vk->vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, qpool, 1);
 
-    r = vkEndCommandBuffer(cb);
+    r = vk->vkEndCommandBuffer(cb);
     if (r != VK_SUCCESS) {
-      vkDestroyQueryPool(dev, qpool, nullptr);
-      vkDestroyCommandPool(dev, pool, nullptr);
-      vkDestroyDescriptorPool(dev, dp, nullptr);
-      vkFreeMemory(dev, mem, nullptr);
-      vkDestroyBuffer(dev, buf, nullptr);
-      vkDestroyPipeline(dev, pipe, nullptr);
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyQueryPool(dev, qpool, nullptr);
+      vk->vkDestroyCommandPool(dev, pool, nullptr);
+      vk->vkDestroyDescriptorPool(dev, dp, nullptr);
+      vk->vkFreeMemory(dev, mem, nullptr);
+      vk->vkDestroyBuffer(dev, buf, nullptr);
+      vk->vkDestroyPipeline(dev, pipe, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkEndCommandBuffer failed: " + vkErrToString(r)};
     }
 
     VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     VkFence fence{};
-    r = vkCreateFence(dev, &fci, nullptr, &fence);
+    r = vk->vkCreateFence(dev, &fci, nullptr, &fence);
     if (r != VK_SUCCESS) {
-      vkDestroyQueryPool(dev, qpool, nullptr);
-      vkDestroyCommandPool(dev, pool, nullptr);
-      vkDestroyDescriptorPool(dev, dp, nullptr);
-      vkFreeMemory(dev, mem, nullptr);
-      vkDestroyBuffer(dev, buf, nullptr);
-      vkDestroyPipeline(dev, pipe, nullptr);
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyQueryPool(dev, qpool, nullptr);
+      vk->vkDestroyCommandPool(dev, pool, nullptr);
+      vk->vkDestroyDescriptorPool(dev, dp, nullptr);
+      vk->vkFreeMemory(dev, mem, nullptr);
+      vk->vkDestroyBuffer(dev, buf, nullptr);
+      vk->vkDestroyPipeline(dev, pipe, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkCreateFence failed: " + vkErrToString(r)};
     }
 
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cb;
-    r = vkQueueSubmit(q, 1, &si, fence);
+    r = vk->vkQueueSubmit(q, 1, &si, fence);
     if (r != VK_SUCCESS) {
-      vkDestroyFence(dev, fence, nullptr);
-      vkDestroyQueryPool(dev, qpool, nullptr);
-      vkDestroyCommandPool(dev, pool, nullptr);
-      vkDestroyDescriptorPool(dev, dp, nullptr);
-      vkFreeMemory(dev, mem, nullptr);
-      vkDestroyBuffer(dev, buf, nullptr);
-      vkDestroyPipeline(dev, pipe, nullptr);
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyFence(dev, fence, nullptr);
+      vk->vkDestroyQueryPool(dev, qpool, nullptr);
+      vk->vkDestroyCommandPool(dev, pool, nullptr);
+      vk->vkDestroyDescriptorPool(dev, dp, nullptr);
+      vk->vkFreeMemory(dev, mem, nullptr);
+      vk->vkDestroyBuffer(dev, buf, nullptr);
+      vk->vkDestroyPipeline(dev, pipe, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkQueueSubmit failed: " + vkErrToString(r)};
     }
 
-    r = vkWaitForFences(dev, 1, &fence, VK_TRUE, 60ull * 1000ull * 1000ull * 1000ull);
+    r = vk->vkWaitForFences(dev, 1, &fence, VK_TRUE, 60ull * 1000ull * 1000ull * 1000ull);
     if (r != VK_SUCCESS) {
-      vkDestroyFence(dev, fence, nullptr);
-      vkDestroyQueryPool(dev, qpool, nullptr);
-      vkDestroyCommandPool(dev, pool, nullptr);
-      vkDestroyDescriptorPool(dev, dp, nullptr);
-      vkFreeMemory(dev, mem, nullptr);
-      vkDestroyBuffer(dev, buf, nullptr);
-      vkDestroyPipeline(dev, pipe, nullptr);
-      vkDestroyPipelineLayout(dev, pl, nullptr);
-      vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-      vkDestroyShaderModule(dev, shader, nullptr);
-      vkDestroyDevice(dev, nullptr);
-      vkDestroyInstance(inst, nullptr);
+      vk->vkDestroyFence(dev, fence, nullptr);
+      vk->vkDestroyQueryPool(dev, qpool, nullptr);
+      vk->vkDestroyCommandPool(dev, pool, nullptr);
+      vk->vkDestroyDescriptorPool(dev, dp, nullptr);
+      vk->vkFreeMemory(dev, mem, nullptr);
+      vk->vkDestroyBuffer(dev, buf, nullptr);
+      vk->vkDestroyPipeline(dev, pipe, nullptr);
+      vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+      vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+      vk->vkDestroyShaderModule(dev, shader, nullptr);
+      vk->vkDestroyDevice(dev, nullptr);
+      vk->vkDestroyInstance(inst, nullptr);
       return BenchResult{false, "vkWaitForFences failed/timeout: " + vkErrToString(r)};
     }
 
     uint64_t ts[2] = {0, 0};
-    r = vkGetQueryPoolResults(dev, qpool, 0, 2, sizeof(ts), ts, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
-    vkDestroyFence(dev, fence, nullptr);
-    vkDestroyQueryPool(dev, qpool, nullptr);
+    r = vk->vkGetQueryPoolResults(dev, qpool, 0, 2, sizeof(ts), ts, sizeof(uint64_t),
+                    VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+    vk->vkDestroyFence(dev, fence, nullptr);
+    vk->vkDestroyQueryPool(dev, qpool, nullptr);
 
     // Cleanup.
-    vkDestroyCommandPool(dev, pool, nullptr);
-    vkDestroyDescriptorPool(dev, dp, nullptr);
-    vkFreeMemory(dev, mem, nullptr);
-    vkDestroyBuffer(dev, buf, nullptr);
-    vkDestroyPipeline(dev, pipe, nullptr);
-    vkDestroyPipelineLayout(dev, pl, nullptr);
-    vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
-    vkDestroyShaderModule(dev, shader, nullptr);
-    vkDestroyDevice(dev, nullptr);
-    vkDestroyInstance(inst, nullptr);
+    vk->vkDestroyCommandPool(dev, pool, nullptr);
+    vk->vkDestroyDescriptorPool(dev, dp, nullptr);
+    vk->vkFreeMemory(dev, mem, nullptr);
+    vk->vkDestroyBuffer(dev, buf, nullptr);
+    vk->vkDestroyPipeline(dev, pipe, nullptr);
+    vk->vkDestroyPipelineLayout(dev, pl, nullptr);
+    vk->vkDestroyDescriptorSetLayout(dev, dsl, nullptr);
+    vk->vkDestroyShaderModule(dev, shader, nullptr);
+    vk->vkDestroyDevice(dev, nullptr);
+    vk->vkDestroyInstance(inst, nullptr);
 
     if (r != VK_SUCCESS) return BenchResult{false, "vkGetQueryPoolResults failed: " + vkErrToString(r)};
     if (ts[1] <= ts[0]) return BenchResult{false, "Invalid Vulkan timestamp delta."};

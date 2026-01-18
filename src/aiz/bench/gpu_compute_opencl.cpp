@@ -2,6 +2,8 @@
 
 #ifdef AI_Z_ENABLE_OPENCL
 
+#include <aiz/dyn/opencl.h>
+
 #include <CL/cl.h>
 
 #include <cstddef>
@@ -34,8 +36,11 @@ static std::string clErrToString(cl_int e) {
 }
 
 static std::optional<std::vector<cl_device_id>> listGpuDevices(std::string& err) {
+  const auto* cl = ::aiz::dyn::opencl::api(&err);
+  if (!cl) return std::nullopt;
+
   cl_uint numPlatforms = 0;
-  cl_int e = clGetPlatformIDs(0, nullptr, &numPlatforms);
+  cl_int e = cl->clGetPlatformIDs(0, nullptr, &numPlatforms);
   if (e != CL_SUCCESS) {
     err = "clGetPlatformIDs failed: " + clErrToString(e);
     return std::nullopt;
@@ -46,7 +51,7 @@ static std::optional<std::vector<cl_device_id>> listGpuDevices(std::string& err)
   }
 
   std::vector<cl_platform_id> platforms(numPlatforms);
-  e = clGetPlatformIDs(numPlatforms, platforms.data(), nullptr);
+  e = cl->clGetPlatformIDs(numPlatforms, platforms.data(), nullptr);
   if (e != CL_SUCCESS) {
     err = "clGetPlatformIDs(list) failed: " + clErrToString(e);
     return std::nullopt;
@@ -55,12 +60,12 @@ static std::optional<std::vector<cl_device_id>> listGpuDevices(std::string& err)
   std::vector<cl_device_id> devices;
   for (auto p : platforms) {
     cl_uint n = 0;
-    e = clGetDeviceIDs(p, CL_DEVICE_TYPE_GPU, 0, nullptr, &n);
+    e = cl->clGetDeviceIDs(p, CL_DEVICE_TYPE_GPU, 0, nullptr, &n);
     if (e == CL_DEVICE_NOT_FOUND) continue;
     if (e != CL_SUCCESS) continue;
     if (n == 0) continue;
     std::vector<cl_device_id> ds(n);
-    e = clGetDeviceIDs(p, CL_DEVICE_TYPE_GPU, n, ds.data(), nullptr);
+    e = cl->clGetDeviceIDs(p, CL_DEVICE_TYPE_GPU, n, ds.data(), nullptr);
     if (e != CL_SUCCESS) continue;
     for (auto d : ds) devices.push_back(d);
   }
@@ -73,14 +78,17 @@ static std::optional<std::vector<cl_device_id>> listGpuDevices(std::string& err)
 }
 
 static std::optional<double> eventSeconds(cl_event ev, std::string& err) {
+  const auto* cl = ::aiz::dyn::opencl::api(&err);
+  if (!cl) return std::nullopt;
+
   cl_ulong start = 0;
   cl_ulong end = 0;
-  cl_int e = clGetEventProfilingInfo(ev, CL_PROFILING_COMMAND_START, sizeof(start), &start, nullptr);
+  cl_int e = cl->clGetEventProfilingInfo(ev, CL_PROFILING_COMMAND_START, sizeof(start), &start, nullptr);
   if (e != CL_SUCCESS) {
     err = "clGetEventProfilingInfo(START) failed: " + clErrToString(e);
     return std::nullopt;
   }
-  e = clGetEventProfilingInfo(ev, CL_PROFILING_COMMAND_END, sizeof(end), &end, nullptr);
+  e = cl->clGetEventProfilingInfo(ev, CL_PROFILING_COMMAND_END, sizeof(end), &end, nullptr);
   if (e != CL_SUCCESS) {
     err = "clGetEventProfilingInfo(END) failed: " + clErrToString(e);
     return std::nullopt;
@@ -120,115 +128,123 @@ public:
 
   BenchResult run() override {
     std::string err;
+    const auto* cl = ::aiz::dyn::opencl::api(&err);
+    if (!cl) return BenchResult{false, err};
+
     auto devs = listGpuDevices(err);
     if (!devs) return BenchResult{false, err};
     if (gpuIndex_ >= devs->size()) return BenchResult{false, "Invalid OpenCL GPU index."};
 
     cl_device_id dev = (*devs)[gpuIndex_];
     cl_int e = CL_SUCCESS;
-    cl_context ctx = clCreateContext(nullptr, 1, &dev, nullptr, nullptr, &e);
+    cl_context ctx = cl->clCreateContext(nullptr, 1, &dev, nullptr, nullptr, &e);
     if (!ctx || e != CL_SUCCESS) return BenchResult{false, "clCreateContext failed: " + clErrToString(e)};
 
 #if defined(CL_VERSION_2_0)
-    const cl_queue_properties props[] = {CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0};
-    cl_command_queue q = clCreateCommandQueueWithProperties(ctx, dev, props, &e);
+    cl_command_queue q{};
+    if (cl->clCreateCommandQueueWithProperties) {
+      const cl_queue_properties props[] = {CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0};
+      q = cl->clCreateCommandQueueWithProperties(ctx, dev, props, &e);
+    } else {
+      q = cl->clCreateCommandQueue(ctx, dev, CL_QUEUE_PROFILING_ENABLE, &e);
+    }
 #else
-    cl_command_queue q = clCreateCommandQueue(ctx, dev, CL_QUEUE_PROFILING_ENABLE, &e);
+    cl_command_queue q = cl->clCreateCommandQueue(ctx, dev, CL_QUEUE_PROFILING_ENABLE, &e);
 #endif
     if (!q || e != CL_SUCCESS) {
-      clReleaseContext(ctx);
+      cl->clReleaseContext(ctx);
       return BenchResult{false, "clCreateCommandQueue failed: " + clErrToString(e)};
     }
 
     const char* srcs[] = {kKernelSrc};
     const std::size_t lens[] = {std::strlen(kKernelSrc)};
-    cl_program prog = clCreateProgramWithSource(ctx, 1, srcs, lens, &e);
+    cl_program prog = cl->clCreateProgramWithSource(ctx, 1, srcs, lens, &e);
     if (!prog || e != CL_SUCCESS) {
-      clReleaseCommandQueue(q);
-      clReleaseContext(ctx);
+      cl->clReleaseCommandQueue(q);
+      cl->clReleaseContext(ctx);
       return BenchResult{false, "clCreateProgramWithSource failed: " + clErrToString(e)};
     }
 
-    e = clBuildProgram(prog, 1, &dev, "-cl-fast-relaxed-math", nullptr, nullptr);
+    e = cl->clBuildProgram(prog, 1, &dev, "-cl-fast-relaxed-math", nullptr, nullptr);
     if (e != CL_SUCCESS) {
       // Grab build log.
       std::size_t logSize = 0;
-      clGetProgramBuildInfo(prog, dev, CL_PROGRAM_BUILD_LOG, 0, nullptr, &logSize);
+      cl->clGetProgramBuildInfo(prog, dev, CL_PROGRAM_BUILD_LOG, 0, nullptr, &logSize);
       std::string log;
       if (logSize > 0) {
         log.resize(logSize);
-        clGetProgramBuildInfo(prog, dev, CL_PROGRAM_BUILD_LOG, logSize, log.data(), nullptr);
+        cl->clGetProgramBuildInfo(prog, dev, CL_PROGRAM_BUILD_LOG, logSize, log.data(), nullptr);
       }
-      clReleaseProgram(prog);
-      clReleaseCommandQueue(q);
-      clReleaseContext(ctx);
+      cl->clReleaseProgram(prog);
+      cl->clReleaseCommandQueue(q);
+      cl->clReleaseContext(ctx);
       return BenchResult{false, "clBuildProgram failed: " + clErrToString(e) + (log.empty() ? std::string() : ("\n" + log))};
     }
 
-    cl_kernel k = clCreateKernel(prog, "fma_bench", &e);
+    cl_kernel k = cl->clCreateKernel(prog, "fma_bench", &e);
     if (!k || e != CL_SUCCESS) {
-      clReleaseProgram(prog);
-      clReleaseCommandQueue(q);
-      clReleaseContext(ctx);
+      cl->clReleaseProgram(prog);
+      cl->clReleaseCommandQueue(q);
+      cl->clReleaseContext(ctx);
       return BenchResult{false, "clCreateKernel failed: " + clErrToString(e)};
     }
 
     constexpr std::size_t n = 1u << 20;  // 1,048,576 work-items
-    cl_mem outBuf = clCreateBuffer(ctx, CL_MEM_READ_WRITE, n * sizeof(float), nullptr, &e);
+    cl_mem outBuf = cl->clCreateBuffer(ctx, CL_MEM_READ_WRITE, n * sizeof(float), nullptr, &e);
     if (!outBuf || e != CL_SUCCESS) {
-      clReleaseKernel(k);
-      clReleaseProgram(prog);
-      clReleaseCommandQueue(q);
-      clReleaseContext(ctx);
+      cl->clReleaseKernel(k);
+      cl->clReleaseProgram(prog);
+      cl->clReleaseCommandQueue(q);
+      cl->clReleaseContext(ctx);
       return BenchResult{false, "clCreateBuffer(out) failed: " + clErrToString(e)};
     }
 
-    e = clSetKernelArg(k, 0, sizeof(outBuf), &outBuf);
+    e = cl->clSetKernelArg(k, 0, sizeof(outBuf), &outBuf);
     if (e != CL_SUCCESS) {
-      clReleaseMemObject(outBuf);
-      clReleaseKernel(k);
-      clReleaseProgram(prog);
-      clReleaseCommandQueue(q);
-      clReleaseContext(ctx);
+      cl->clReleaseMemObject(outBuf);
+      cl->clReleaseKernel(k);
+      cl->clReleaseProgram(prog);
+      cl->clReleaseCommandQueue(q);
+      cl->clReleaseContext(ctx);
       return BenchResult{false, "clSetKernelArg failed: " + clErrToString(e)};
     }
 
     constexpr int warmup = 1;
     for (int i = 0; i < warmup; ++i) {
       const std::size_t global = n;
-      e = clEnqueueNDRangeKernel(q, k, 1, nullptr, &global, nullptr, 0, nullptr, nullptr);
+      e = cl->clEnqueueNDRangeKernel(q, k, 1, nullptr, &global, nullptr, 0, nullptr, nullptr);
       if (e != CL_SUCCESS) {
-        clReleaseMemObject(outBuf);
-        clReleaseKernel(k);
-        clReleaseProgram(prog);
-        clReleaseCommandQueue(q);
-        clReleaseContext(ctx);
+        cl->clReleaseMemObject(outBuf);
+        cl->clReleaseKernel(k);
+        cl->clReleaseProgram(prog);
+        cl->clReleaseCommandQueue(q);
+        cl->clReleaseContext(ctx);
         return BenchResult{false, "warmup kernel enqueue failed: " + clErrToString(e)};
       }
-      clFinish(q);
+      cl->clFinish(q);
     }
 
     cl_event ev{};
     const std::size_t global = n;
-    e = clEnqueueNDRangeKernel(q, k, 1, nullptr, &global, nullptr, 0, nullptr, &ev);
+    e = cl->clEnqueueNDRangeKernel(q, k, 1, nullptr, &global, nullptr, 0, nullptr, &ev);
     if (e != CL_SUCCESS || !ev) {
-      clReleaseMemObject(outBuf);
-      clReleaseKernel(k);
-      clReleaseProgram(prog);
-      clReleaseCommandQueue(q);
-      clReleaseContext(ctx);
+      cl->clReleaseMemObject(outBuf);
+      cl->clReleaseKernel(k);
+      cl->clReleaseProgram(prog);
+      cl->clReleaseCommandQueue(q);
+      cl->clReleaseContext(ctx);
       return BenchResult{false, "kernel enqueue failed: " + clErrToString(e)};
     }
 
-    clWaitForEvents(1, &ev);
+    cl->clWaitForEvents(1, &ev);
     auto sec = eventSeconds(ev, err);
-    clReleaseEvent(ev);
+    cl->clReleaseEvent(ev);
 
-    clReleaseMemObject(outBuf);
-    clReleaseKernel(k);
-    clReleaseProgram(prog);
-    clReleaseCommandQueue(q);
-    clReleaseContext(ctx);
+    cl->clReleaseMemObject(outBuf);
+    cl->clReleaseKernel(k);
+    cl->clReleaseProgram(prog);
+    cl->clReleaseCommandQueue(q);
+    cl->clReleaseContext(ctx);
 
     if (!sec) return BenchResult{false, err};
     if (*sec <= 0.0) return BenchResult{false, "timing failed"};

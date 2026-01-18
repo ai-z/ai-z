@@ -804,8 +804,12 @@ static void drawBenchmarks(
     }
 
     // Benchmark rows: show "NAME: value" on a single line.
+    // Prefer a real stored result (including failure reasons) over the generic
+    // availability label so users can see why something failed.
     std::string r;
-    if (b && !b->isAvailable()) {
+    if (row >= 0 && row < static_cast<int>(rowResults.size()) && !rowResults[static_cast<std::size_t>(row)].empty()) {
+      r = rowResults[static_cast<std::size_t>(row)];
+    } else if (b && !b->isAvailable()) {
       r = "unavailable";
     } else {
       r = resultTextForRow(row);

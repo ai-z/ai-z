@@ -2,7 +2,7 @@
 
 #ifdef AI_Z_ENABLE_CUDA
 
-#include <cuda_runtime_api.h>
+#include <aiz/dyn/cuda.h>
 
 #include <chrono>
 #include <cstddef>
@@ -17,101 +17,100 @@ namespace aiz {
 
 namespace {
 
-static std::string cudaErrToString(cudaError_t e) {
-  const char* s = cudaGetErrorString(e);
-  return s ? std::string{s} : std::string{"<unknown cuda error>"};
-}
-
-static BenchResult failCuda(const std::string& where, cudaError_t e) {
-  return BenchResult{false, where + ": " + cudaErrToString(e)};
+static BenchResult failCuda(const std::string& where, ::aiz::dyn::cuda::CUresult r) {
+  return BenchResult{false, where + ": " + ::aiz::dyn::cuda::errToString(r)};
 }
 
 struct CudaEventPair {
-  cudaEvent_t start{};
-  cudaEvent_t stop{};
+  ::aiz::dyn::cuda::CUevent start{};
+  ::aiz::dyn::cuda::CUevent stop{};
 };
 
-static std::optional<CudaEventPair> createEvents(std::string& err) {
+static std::optional<CudaEventPair> createEvents(const ::aiz::dyn::cuda::Api* cu, std::string& err) {
   CudaEventPair p;
-  if (cudaEventCreate(&p.start) != cudaSuccess) {
-    err = "cudaEventCreate(start) failed";
+  auto r = cu->cuEventCreate(&p.start, ::aiz::dyn::cuda::CU_EVENT_DEFAULT);
+  if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+    err = "cuEventCreate(start) failed: " + ::aiz::dyn::cuda::errToString(r);
     return std::nullopt;
   }
-  if (cudaEventCreate(&p.stop) != cudaSuccess) {
-    cudaEventDestroy(p.start);
-    err = "cudaEventCreate(stop) failed";
+  r = cu->cuEventCreate(&p.stop, ::aiz::dyn::cuda::CU_EVENT_DEFAULT);
+  if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+    (void)cu->cuEventDestroy_v2(p.start);
+    err = "cuEventCreate(stop) failed: " + ::aiz::dyn::cuda::errToString(r);
     return std::nullopt;
   }
   return p;
 }
 
-static void destroyEvents(CudaEventPair& p) {
-  if (p.start) cudaEventDestroy(p.start);
-  if (p.stop) cudaEventDestroy(p.stop);
+static void destroyEvents(const ::aiz::dyn::cuda::Api* cu, CudaEventPair& p) {
+  if (p.start) (void)cu->cuEventDestroy_v2(p.start);
+  if (p.stop) (void)cu->cuEventDestroy_v2(p.stop);
   p.start = nullptr;
   p.stop = nullptr;
 }
 
-static std::optional<double> measureMemcpyGBps(cudaStream_t stream,
-                                              void* dst,
-                                              const void* src,
+static std::optional<double> measureMemcpyGBps(const ::aiz::dyn::cuda::Api* cu,
+                                              ::aiz::dyn::cuda::CUstream stream,
+                                              ::aiz::dyn::cuda::CUdeviceptr dev,
+                                              void* host,
                                               std::size_t bytes,
-                                              cudaMemcpyKind kind,
+                                              bool h2d,
                                               int iters,
                                               int warmupIters,
                                               std::string& err) {
-  // Warmup
   for (int i = 0; i < warmupIters; ++i) {
-    const cudaError_t e = cudaMemcpyAsync(dst, src, bytes, kind, stream);
-    if (e != cudaSuccess) {
-      err = "cudaMemcpyAsync(warmup) failed: " + cudaErrToString(e);
+    const auto r = h2d ? cu->cuMemcpyHtoDAsync_v2(dev, host, bytes, stream)
+                       : cu->cuMemcpyDtoHAsync_v2(host, dev, bytes, stream);
+    if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+      err = std::string("cuMemcpy") + (h2d ? "HtoD" : "DtoH") + "Async(warmup) failed: " + ::aiz::dyn::cuda::errToString(r);
       return std::nullopt;
     }
   }
-  if (cudaStreamSynchronize(stream) != cudaSuccess) {
-    err = "cudaStreamSynchronize(warmup) failed";
+  if (cu->cuStreamSynchronize(stream) != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+    err = "cuStreamSynchronize(warmup) failed";
     return std::nullopt;
   }
 
-  auto eventsOpt = createEvents(err);
+  auto eventsOpt = createEvents(cu, err);
   if (!eventsOpt) return std::nullopt;
   CudaEventPair events = *eventsOpt;
 
-  cudaError_t e = cudaEventRecord(events.start, stream);
-  if (e != cudaSuccess) {
-    destroyEvents(events);
-    err = "cudaEventRecord(start) failed: " + cudaErrToString(e);
+  auto r = cu->cuEventRecord(events.start, stream);
+  if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+    destroyEvents(cu, events);
+    err = "cuEventRecord(start) failed: " + ::aiz::dyn::cuda::errToString(r);
     return std::nullopt;
   }
 
   for (int i = 0; i < iters; ++i) {
-    e = cudaMemcpyAsync(dst, src, bytes, kind, stream);
-    if (e != cudaSuccess) {
-      destroyEvents(events);
-      err = "cudaMemcpyAsync(timed) failed: " + cudaErrToString(e);
+    r = h2d ? cu->cuMemcpyHtoDAsync_v2(dev, host, bytes, stream)
+            : cu->cuMemcpyDtoHAsync_v2(host, dev, bytes, stream);
+    if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+      destroyEvents(cu, events);
+      err = std::string("cuMemcpy") + (h2d ? "HtoD" : "DtoH") + "Async(timed) failed: " + ::aiz::dyn::cuda::errToString(r);
       return std::nullopt;
     }
   }
 
-  e = cudaEventRecord(events.stop, stream);
-  if (e != cudaSuccess) {
-    destroyEvents(events);
-    err = "cudaEventRecord(stop) failed: " + cudaErrToString(e);
+  r = cu->cuEventRecord(events.stop, stream);
+  if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+    destroyEvents(cu, events);
+    err = "cuEventRecord(stop) failed: " + ::aiz::dyn::cuda::errToString(r);
     return std::nullopt;
   }
 
-  e = cudaEventSynchronize(events.stop);
-  if (e != cudaSuccess) {
-    destroyEvents(events);
-    err = "cudaEventSynchronize(stop) failed: " + cudaErrToString(e);
+  r = cu->cuEventSynchronize(events.stop);
+  if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+    destroyEvents(cu, events);
+    err = "cuEventSynchronize(stop) failed: " + ::aiz::dyn::cuda::errToString(r);
     return std::nullopt;
   }
 
   float ms = 0.0f;
-  e = cudaEventElapsedTime(&ms, events.start, events.stop);
-  destroyEvents(events);
-  if (e != cudaSuccess) {
-    err = "cudaEventElapsedTime failed: " + cudaErrToString(e);
+  r = cu->cuEventElapsedTime(&ms, events.start, events.stop);
+  destroyEvents(cu, events);
+  if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+    err = "cuEventElapsedTime failed: " + ::aiz::dyn::cuda::errToString(r);
     return std::nullopt;
   }
 
@@ -131,15 +130,21 @@ public:
   std::string name() const override { return "PCIe bandwidth test (CUDA)"; }
 
   bool isAvailable() const override {
+    std::string err;
+    const auto* cu = ::aiz::dyn::cuda::api(&err);
+    if (!cu) return false;
     int n = 0;
-    const cudaError_t e = cudaGetDeviceCount(&n);
-    return (e == cudaSuccess) && (n > 0);
+    return (cu->cuDeviceGetCount(&n) == ::aiz::dyn::cuda::CUDA_SUCCESS) && (n > 0);
   }
 
   BenchResult run() override {
+    std::string err;
+    const auto* cu = ::aiz::dyn::cuda::api(&err);
+    if (!cu) return BenchResult{false, err};
+
     int deviceCount = 0;
-    cudaError_t e = cudaGetDeviceCount(&deviceCount);
-    if (e != cudaSuccess) return failCuda("cudaGetDeviceCount", e);
+    auto r = cu->cuDeviceGetCount(&deviceCount);
+    if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) return failCuda("cuDeviceGetCount", r);
     if (deviceCount <= 0) return BenchResult{false, "No CUDA devices found."};
 
     // Use a reasonably large buffer to approach peak throughput.
@@ -149,70 +154,78 @@ public:
     constexpr int iters = 10;
 
     void* host = nullptr;
-    e = cudaMallocHost(&host, bytes);
-    if (e != cudaSuccess) return failCuda("cudaMallocHost", e);
+    r = cu->cuMemHostAlloc(&host, bytes, ::aiz::dyn::cuda::CU_MEMHOSTALLOC_PORTABLE);
+    if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) return failCuda("cuMemHostAlloc", r);
 
     std::ostringstream out;
     out << std::fixed << std::setprecision(2);
 
     for (int device = 0; device < deviceCount; ++device) {
-      e = cudaSetDevice(device);
-      if (e != cudaSuccess) {
-        cudaFreeHost(host);
-        return failCuda("cudaSetDevice", e);
+      ::aiz::dyn::cuda::CUdevice dev = 0;
+      r = cu->cuDeviceGet(&dev, device);
+      if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+        (void)cu->cuMemFreeHost(host);
+        return failCuda("cuDeviceGet", r);
       }
 
-      cudaDeviceProp prop{};
-      e = cudaGetDeviceProperties(&prop, device);
-      if (e != cudaSuccess) {
-        cudaFreeHost(host);
-        return failCuda("cudaGetDeviceProperties", e);
+      char name[128] = {0};
+      (void)cu->cuDeviceGetName(name, static_cast<int>(sizeof(name)), dev);
+
+      ::aiz::dyn::cuda::CUcontext ctx{};
+      r = cu->cuCtxCreate_v2(&ctx, 0, dev);
+      if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+        (void)cu->cuMemFreeHost(host);
+        return failCuda("cuCtxCreate_v2", r);
       }
 
-      void* dev = nullptr;
-      e = cudaMalloc(&dev, bytes);
-      if (e != cudaSuccess) {
-        cudaFreeHost(host);
-        return failCuda("cudaMalloc", e);
+      ::aiz::dyn::cuda::CUdeviceptr devmem{};
+      r = cu->cuMemAlloc_v2(&devmem, bytes);
+      if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+        (void)cu->cuCtxDestroy_v2(ctx);
+        (void)cu->cuMemFreeHost(host);
+        return failCuda("cuMemAlloc_v2", r);
       }
 
-      cudaStream_t stream{};
-      e = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
-      if (e != cudaSuccess) {
-        cudaFree(dev);
-        cudaFreeHost(host);
-        return failCuda("cudaStreamCreateWithFlags", e);
+      ::aiz::dyn::cuda::CUstream stream{};
+      r = cu->cuStreamCreate(&stream, ::aiz::dyn::cuda::CU_STREAM_NON_BLOCKING);
+      if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+        (void)cu->cuMemFree_v2(devmem);
+        (void)cu->cuCtxDestroy_v2(ctx);
+        (void)cu->cuMemFreeHost(host);
+        return failCuda("cuStreamCreate", r);
       }
 
-      std::string err;
-      const auto h2d = measureMemcpyGBps(stream, dev, host, bytes, cudaMemcpyHostToDevice, iters, warmupIters, err);
+      const auto h2d = measureMemcpyGBps(cu, stream, devmem, host, bytes, true, iters, warmupIters, err);
       if (!h2d) {
-        cudaStreamDestroy(stream);
-        cudaFree(dev);
-        cudaFreeHost(host);
+        (void)cu->cuStreamDestroy_v2(stream);
+        (void)cu->cuMemFree_v2(devmem);
+        (void)cu->cuCtxDestroy_v2(ctx);
+        (void)cu->cuMemFreeHost(host);
         return BenchResult{false, "GPU" + std::to_string(device) + " H→D failed: " + err};
       }
 
       err.clear();
-      const auto d2h = measureMemcpyGBps(stream, host, dev, bytes, cudaMemcpyDeviceToHost, iters, warmupIters, err);
+      const auto d2h = measureMemcpyGBps(cu, stream, devmem, host, bytes, false, iters, warmupIters, err);
       if (!d2h) {
-        cudaStreamDestroy(stream);
-        cudaFree(dev);
-        cudaFreeHost(host);
+        (void)cu->cuStreamDestroy_v2(stream);
+        (void)cu->cuMemFree_v2(devmem);
+        (void)cu->cuCtxDestroy_v2(ctx);
+        (void)cu->cuMemFreeHost(host);
         return BenchResult{false, "GPU" + std::to_string(device) + " D→H failed: " + err};
       }
 
-      cudaStreamDestroy(stream);
-      cudaFree(dev);
+      (void)cu->cuStreamDestroy_v2(stream);
+      (void)cu->cuMemFree_v2(devmem);
+      (void)cu->cuCtxDestroy_v2(ctx);
 
           if (device > 0) out << "\n";
           // Per-GPU block (UI indents each line). Keep RX/TX on separate lines so values align.
-          out << "GPU" << device << ": " << prop.name << "\n"
+          out << "GPU" << device << ": " << name << "\n"
             << "RX: " << *h2d << " GB/s\n"
             << "TX: " << *d2h << " GB/s";
     }
 
-    cudaFreeHost(host);
+    (void)cu->cuMemFreeHost(host);
     return BenchResult{true, out.str()};
   }
 };
@@ -229,15 +242,21 @@ public:
   }
 
   bool isAvailable() const override {
+    std::string err;
+    const auto* cu = ::aiz::dyn::cuda::api(&err);
+    if (!cu) return false;
     int n = 0;
-    const cudaError_t e = cudaGetDeviceCount(&n);
-    return (e == cudaSuccess) && (n > 0) && (gpuIndex_ < static_cast<unsigned int>(n));
+    return (cu->cuDeviceGetCount(&n) == ::aiz::dyn::cuda::CUDA_SUCCESS) && (n > 0) && (gpuIndex_ < static_cast<unsigned int>(n));
   }
 
   BenchResult run() override {
+    std::string err;
+    const auto* cu = ::aiz::dyn::cuda::api(&err);
+    if (!cu) return BenchResult{false, err};
+
     int deviceCount = 0;
-    cudaError_t e = cudaGetDeviceCount(&deviceCount);
-    if (e != cudaSuccess) return failCuda("cudaGetDeviceCount", e);
+    auto r = cu->cuDeviceGetCount(&deviceCount);
+    if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) return failCuda("cuDeviceGetCount", r);
     if (deviceCount <= 0) return BenchResult{false, "No CUDA devices found."};
     if (gpuIndex_ >= static_cast<unsigned int>(deviceCount)) return BenchResult{false, "Invalid GPU index."};
 
@@ -245,41 +264,51 @@ public:
     constexpr int warmupIters = 2;
     constexpr int iters = 10;
 
-    e = cudaSetDevice(static_cast<int>(gpuIndex_));
-    if (e != cudaSuccess) return failCuda("cudaSetDevice", e);
+    ::aiz::dyn::cuda::CUdevice dev = 0;
+    r = cu->cuDeviceGet(&dev, static_cast<int>(gpuIndex_));
+    if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) return failCuda("cuDeviceGet", r);
+
+    ::aiz::dyn::cuda::CUcontext ctx{};
+    r = cu->cuCtxCreate_v2(&ctx, 0, dev);
+    if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) return failCuda("cuCtxCreate_v2", r);
 
     void* host = nullptr;
-    e = cudaMallocHost(&host, bytes);
-    if (e != cudaSuccess) return failCuda("cudaMallocHost", e);
-
-    void* dev = nullptr;
-    e = cudaMalloc(&dev, bytes);
-    if (e != cudaSuccess) {
-      cudaFreeHost(host);
-      return failCuda("cudaMalloc", e);
+    r = cu->cuMemHostAlloc(&host, bytes, ::aiz::dyn::cuda::CU_MEMHOSTALLOC_PORTABLE);
+    if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+      (void)cu->cuCtxDestroy_v2(ctx);
+      return failCuda("cuMemHostAlloc", r);
     }
 
-    cudaStream_t stream{};
-    e = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
-    if (e != cudaSuccess) {
-      cudaFree(dev);
-      cudaFreeHost(host);
-      return failCuda("cudaStreamCreateWithFlags", e);
+    ::aiz::dyn::cuda::CUdeviceptr devmem{};
+    r = cu->cuMemAlloc_v2(&devmem, bytes);
+    if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+      (void)cu->cuMemFreeHost(host);
+      (void)cu->cuCtxDestroy_v2(ctx);
+      return failCuda("cuMemAlloc_v2", r);
     }
 
-    std::string err;
+    ::aiz::dyn::cuda::CUstream stream{};
+    r = cu->cuStreamCreate(&stream, ::aiz::dyn::cuda::CU_STREAM_NON_BLOCKING);
+    if (r != ::aiz::dyn::cuda::CUDA_SUCCESS) {
+      (void)cu->cuMemFree_v2(devmem);
+      (void)cu->cuMemFreeHost(host);
+      (void)cu->cuCtxDestroy_v2(ctx);
+      return failCuda("cuStreamCreate", r);
+    }
+
     std::optional<double> gbps;
     if (dir_ == Dir::Rx) {
       // RX: host -> device (GPU receives).
-      gbps = measureMemcpyGBps(stream, dev, host, bytes, cudaMemcpyHostToDevice, iters, warmupIters, err);
+      gbps = measureMemcpyGBps(cu, stream, devmem, host, bytes, true, iters, warmupIters, err);
     } else {
       // TX: device -> host (GPU sends).
-      gbps = measureMemcpyGBps(stream, host, dev, bytes, cudaMemcpyDeviceToHost, iters, warmupIters, err);
+      gbps = measureMemcpyGBps(cu, stream, devmem, host, bytes, false, iters, warmupIters, err);
     }
 
-    cudaStreamDestroy(stream);
-    cudaFree(dev);
-    cudaFreeHost(host);
+    (void)cu->cuStreamDestroy_v2(stream);
+    (void)cu->cuMemFree_v2(devmem);
+    (void)cu->cuMemFreeHost(host);
+    (void)cu->cuCtxDestroy_v2(ctx);
 
     if (!gbps) return BenchResult{false, err.empty() ? std::string("transfer failed") : err};
 
