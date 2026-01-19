@@ -21,6 +21,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <atomic>
 #include <thread>
 
 namespace aiz {
@@ -481,7 +482,76 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
   state.benches.push_back(makeDirectMLMemoryBandwidthBenchmark());
   state.benchResults.resize(state.benches.size());
 
+  std::atomic<bool> benchStop{false};
+  std::thread benchThread;
+
+  auto benchIsRunning = [&]() -> bool {
+    std::lock_guard<std::mutex> lk(state.benchMutex);
+    return state.benchmarksRunning;
+  };
+
+  auto tryJoinBenchThread = [&]() {
+    if (!benchThread.joinable()) return;
+    if (benchIsRunning()) return;
+    benchThread.join();
+  };
+
+  auto startBenchThread = [&](bool runAll, int singleIndex) {
+    // Ensure we don't leak a completed thread object.
+    tryJoinBenchThread();
+    if (benchThread.joinable()) return;  // still running
+
+    {
+      std::lock_guard<std::mutex> lk(state.benchMutex);
+      if (state.benchmarksRunning) return;
+      state.benchmarksRunning = true;
+      state.runningBenchIndex = -1;
+      state.lastBenchResult = runAll ? "Running all..." : "Running...";
+    }
+
+    benchStop.store(false);
+    benchThread = std::thread([&, runAll, singleIndex]() {
+      auto runOne = [&](int i) {
+        if (i < 0 || i >= static_cast<int>(state.benches.size())) return;
+
+        {
+          std::lock_guard<std::mutex> lk(state.benchMutex);
+          state.runningBenchIndex = i;
+        }
+
+        auto& b = state.benches[static_cast<std::size_t>(i)];
+        const BenchResult r = b ? b->run() : BenchResult{false, "(null benchmark)"};
+
+        {
+          std::lock_guard<std::mutex> lk(state.benchMutex);
+          if (static_cast<std::size_t>(i) < state.benchResults.size()) {
+            state.benchResults[static_cast<std::size_t>(i)] = r.ok ? r.summary : ("FAIL: " + r.summary);
+          }
+          state.lastBenchResult = r.ok ? ("OK: " + r.summary) : ("FAIL: " + r.summary);
+        }
+      };
+
+      if (runAll) {
+        for (int i = 0; i < static_cast<int>(state.benches.size()); ++i) {
+          if (benchStop.load()) break;
+          runOne(i);
+        }
+        std::lock_guard<std::mutex> lk(state.benchMutex);
+        state.lastBenchResult = benchStop.load() ? "Stopped." : "Done.";
+      } else {
+        runOne(singleIndex);
+      }
+
+      std::lock_guard<std::mutex> lk(state.benchMutex);
+      state.runningBenchIndex = -1;
+      state.benchmarksRunning = false;
+    });
+  };
+
   while (true) {
+    // Join completed benchmark worker thread (if any).
+    tryJoinBenchThread();
+
     // Drain pending input events.
     DWORD nEvents = 0;
     if (hIn != INVALID_HANDLE_VALUE && GetNumberOfConsoleInputEvents(hIn, &nEvents) && nEvents > 0) {
@@ -493,7 +563,11 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
           const auto& e = events[static_cast<std::size_t>(i)];
           if (e.EventType == KEY_EVENT) {
             const Command cmd = mapKey(e.Event.KeyEvent);
-            if (cmd == Command::Quit) return 0;
+            if (cmd == Command::Quit) {
+              benchStop.store(true);
+              if (benchThread.joinable()) benchThread.join();
+              return 0;
+            }
             if (cmd != Command::None) {
               if (cmd == Command::Refresh && state.screen == Screen::Hardware) {
                 state.hardwareDirty = true;
@@ -549,23 +623,13 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
               }
 
               if (state.screen == Screen::Benchmarks && cmd == Command::Activate) {
+                // Do not block the UI thread; run in the background.
                 const int sel = state.benchmarksSel;
                 if (sel == 0) {
-                  state.lastBenchResult = "Running all...";
-                  for (std::size_t i = 0; i < state.benches.size(); ++i) {
-                    auto& b = state.benches[i];
-                    const BenchResult r = b->run();
-                    state.benchResults[i] = r.ok ? r.summary : ("FAIL: " + r.summary);
-                  }
-                  state.lastBenchResult = "Done.";
+                  startBenchThread(true, -1);
                 } else {
                   const int benchIndex = sel - 1;
-                  if (benchIndex >= 0 && benchIndex < static_cast<int>(state.benches.size())) {
-                    auto& b = state.benches[static_cast<std::size_t>(benchIndex)];
-                    const BenchResult r = b->run();
-                    state.benchResults[static_cast<std::size_t>(benchIndex)] = r.ok ? r.summary : ("FAIL: " + r.summary);
-                    state.lastBenchResult = r.ok ? ("OK: " + r.summary) : ("FAIL: " + r.summary);
-                  }
+                  startBenchThread(false, benchIndex);
                 }
               }
 

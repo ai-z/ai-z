@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <mutex>
 
 namespace aiz {
 
@@ -630,6 +631,17 @@ static void renderHardware(Frame& out, int bodyTop, const TuiState& state) {
 }
 
 static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
+  // Snapshot benchmark execution state to avoid races with a worker thread.
+  bool running = false;
+  int runningIdx = -1;
+  std::vector<std::string> results;
+  {
+    std::lock_guard<std::mutex> lk(state.benchMutex);
+    running = state.benchmarksRunning;
+    runningIdx = state.runningBenchIndex;
+    results = state.benchResults;
+  }
+
   int y = bodyTop + 1;
   // Two-column layout: left = benchmark names, right = results.
   std::size_t maxNameLen = 0;
@@ -637,6 +649,8 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
     if (!b) continue;
     std::string n = b->name();
     if (!b->isAvailable()) n += " [unavailable]";
+    // Reserve space for a 1-char spinner + a following space.
+    n = "  " + n;
     maxNameLen = std::max(maxNameLen, n.size());
   }
   const int minValueCol = 24;
@@ -709,9 +723,21 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
 
       // Left column: benchmark name.
       drawText(out, 0, y, prefix, Style::Value);
-      drawText(out, static_cast<int>(prefix.size()), y, widenAscii(name), avail ? Style::Section : Style::Value);
+
+      wchar_t spin = L' ';
+      if (running && runningIdx == i) {
+        static const wchar_t kSpin[4] = {L'|', L'/', L'-', L'\\'};
+        spin = kSpin[static_cast<std::size_t>(state.tick % 4u)];
+      }
+
+      std::wstring left;
+      left.push_back(spin);
+      left.push_back(L' ');
+      left += widenAscii(name);
+
+      drawText(out, static_cast<int>(prefix.size()), y, left, avail ? Style::Section : Style::Value);
       if (!suffix.empty()) {
-        const int sx = static_cast<int>(prefix.size() + name.size());
+        const int sx = static_cast<int>(prefix.size() + 2 + name.size());
         drawText(out, sx, y, widenAscii(suffix), Style::Value);
       }
 
@@ -720,8 +746,8 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
       const int resultTop = y + 1;
       if (resultTop < out.height - 2) {
         std::string r;
-        if (i >= 0 && i < static_cast<int>(state.benchResults.size()) && !state.benchResults[static_cast<std::size_t>(i)].empty()) {
-          r = state.benchResults[static_cast<std::size_t>(i)];
+        if (i >= 0 && i < static_cast<int>(results.size()) && !results[static_cast<std::size_t>(i)].empty()) {
+          r = results[static_cast<std::size_t>(i)];
         } else {
           r = placeholderForBenchmarkName(name);
         }

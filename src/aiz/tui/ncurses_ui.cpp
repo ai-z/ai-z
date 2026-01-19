@@ -665,7 +665,10 @@ static void drawBenchmarks(
     const std::vector<std::string>& rowTitles,
     const std::vector<bool>& rowIsHeader,
     const std::vector<std::unique_ptr<IBenchmark>>& rowBenches,
-    const std::vector<std::string>& rowResults) {
+  const std::vector<std::string>& rowResults,
+  bool benchesRunning,
+  int runningRow,
+  std::uint64_t tick) {
   const bool colors = has_colors() != 0;
   int y = headerRows;
 
@@ -746,7 +749,7 @@ static void drawBenchmarks(
       continue;
     }
 
-    // Benchmark rows: show "NAME: value" on a single line.
+    // Benchmark rows: show a 1-char spinner (if running) and "NAME: value" on a single line.
     // Prefer a real stored result (including failure reasons) over the generic
     // availability label so users can see why something failed.
     std::string r;
@@ -762,8 +765,17 @@ static void drawBenchmarks(
     const std::string firstLine = (end0 == std::string::npos) ? r : r.substr(0, end0);
     constexpr int kMetricIndent = 4;
     const std::string indent(kMetricIndent, ' ');
-    std::string namePart = indent + name;
-    const std::size_t targetLen = indent.size() + maxBenchNameLen;
+    char spin = ' ';
+    if (benchesRunning && runningRow == row) {
+      static const char kSpin[4] = {'|', '/', '-', '\\'};
+      spin = kSpin[static_cast<std::size_t>(tick % 4u)];
+    }
+
+    std::string namePart = indent;
+    namePart.push_back(spin);
+    namePart.push_back(' ');
+    namePart += name;
+    const std::size_t targetLen = indent.size() + 2 + maxBenchNameLen;
     if (namePart.size() < targetLen) namePart.append(targetLen - namePart.size(), ' ');
     const std::string valuePart = ": " + firstLine;
 
@@ -1189,6 +1201,12 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   std::vector<std::unique_ptr<IBenchmark>> benchRowBenches;
   std::vector<std::string> benchRowResults;
 
+  // Benchmark runner state: keep UI responsive while benchmarks execute.
+  std::mutex benchMutex;
+  std::atomic<bool> benchesRunning{false};
+  std::atomic<int> runningBenchRow{-1};
+  std::thread benchThread;
+
   auto rebuildBenchRows = [&]() {
     benchRowTitles.clear();
     benchRowIsHeader.clear();
@@ -1224,26 +1242,36 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       addBench(makeGpuFp64Benchmark(gi));
       addBench(makeGpuInt4Benchmark(gi));
       addBench(makeGpuInt8Benchmark(gi));
+
+      // Inference benchmarks: currently device-0 only.
+      if (gi == 0) {
+        addBench(makeOrtCudaMatMulBenchmark());
+        addBench(makeOrtCudaMemoryBandwidthBenchmark());
+        addBench(makeDirectMLMatMulBenchmark());
+        addBench(makeDirectMLMemoryBandwidthBenchmark());
+      }
+    }
+
+    // If no GPUs are detected, still group GPU inference benches under a GPU header.
+    if (gpuCount == 0) {
+      addHeader("GPU0 - (no GPU detected)");
+      addBench(makeOrtCudaMatMulBenchmark());
+      addBench(makeOrtCudaMemoryBandwidthBenchmark());
+      addBench(makeDirectMLMatMulBenchmark());
+      addBench(makeDirectMLMemoryBandwidthBenchmark());
     }
 
     addHeader("CPU0 - " + (hwCache.cpuName.empty() ? std::string("unknown") : hwCache.cpuName));
     addBench(makeCpuFp16FlopsBenchmark());
     addBench(makeCpuFp32FlopsBenchmark());
-
-    addHeader("ONNX Runtime");
     addBench(makeOrtCpuMatMulBenchmark());
     addBench(makeOrtCpuMemoryBandwidthBenchmark());
-    addBench(makeOrtCudaMatMulBenchmark());
-    addBench(makeOrtCudaMemoryBandwidthBenchmark());
-
-    addHeader("DirectML");
-    addBench(makeDirectMLMatMulBenchmark());
-    addBench(makeDirectMLMemoryBandwidthBenchmark());
   };
 
   bool benchReady = false;
 
   auto ensureHardwareAndBenches = [&]() {
+    if (benchesRunning.load()) return;
     if (hwReady && benchReady) return;
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
@@ -1286,6 +1314,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   int configSelected = 0;
   std::string lastBenchResult;
 
+  std::uint64_t uiTick = 0;
+
   bool running = true;
 
   constexpr std::uint32_t kRefreshMinMs = 50;
@@ -1307,6 +1337,12 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   };
 
   while (running) {
+    ++uiTick;
+    // Join completed benchmark worker (if any) so we can start another run.
+    if (benchThread.joinable() && !benchesRunning.load()) {
+      benchThread.join();
+    }
+
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
 
@@ -1483,7 +1519,23 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     } else if (screen == Screen::Benchmarks) {
       // Show the same basic metrics header as the main screen.
       const int headerRows = drawTitleBarTimelines(cols, cpu, cfg.showDiskRead, cfg.showDiskWrite, diskRead, diskWrite, cfg.showNetRx, cfg.showNetTx, netRx, netTx, pcieRx, pcieTx, ram, gpuTel);
-      drawBenchmarks(rows, cols, headerRows, benchSelected, benchRowTitles, benchRowIsHeader, benchRowBenches, benchRowResults);
+      std::vector<std::string> resultsCopy;
+      {
+        std::lock_guard<std::mutex> lk(benchMutex);
+        resultsCopy = benchRowResults;
+      }
+      drawBenchmarks(
+          rows,
+          cols,
+          headerRows,
+          benchSelected,
+          benchRowTitles,
+          benchRowIsHeader,
+          benchRowBenches,
+          resultsCopy,
+          benchesRunning.load(),
+          runningBenchRow.load(),
+          uiTick);
     } else if (screen == Screen::Config) {
       drawHeader(cols, "AI-Z - Config");
       drawConfig(rows, cols, configSelected, cfg);
@@ -1496,7 +1548,9 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     refresh();
 
     // Wait up to refreshMs for input; wake immediately on keypress.
-    timeout(static_cast<int>(cfg.refreshMs));
+    // While benchmarks are running, cap the sleep so the spinner animates.
+    const std::uint32_t waitMs = benchesRunning.load() ? std::min<std::uint32_t>(cfg.refreshMs, 100u) : cfg.refreshMs;
+    timeout(static_cast<int>(waitMs));
     const int ch = getch();
     if (ch != ERR) {
       // Function keys (htop-style)
@@ -1539,25 +1593,59 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           if (ch == KEY_UP) benchSelected = clampBenchSelected(benchSelected - 1);
           else if (ch == KEY_DOWN) benchSelected = clampBenchSelected(benchSelected + 1);
           else if (ch == '\n' || ch == KEY_ENTER) {
-            if (benchSelected == 0) {
-              // Run all benchmarks.
-              lastBenchResult = "Running all...";
-              for (std::size_t row = 0; row < benchRowBenches.size(); ++row) {
-                if (benchRowIsHeader[row]) continue;
-                auto& b = benchRowBenches[row];
-                const BenchResult r = b->run();
-                benchRowResults[row] = r.ok ? r.summary : ("FAIL: " + r.summary);
-              }
-              lastBenchResult = "Done.";
+            // Run benchmarks on a worker thread so the UI can keep updating.
+            if (benchThread.joinable() && benchesRunning.load()) {
+              // Ignore activation while a run is in progress.
             } else {
-              const int row = benchSelected - 1;
-              if (row >= 0 && row < static_cast<int>(benchRowBenches.size()) && !benchRowIsHeader[static_cast<std::size_t>(row)]) {
-                auto& b = benchRowBenches[static_cast<std::size_t>(row)];
-                const BenchResult r = b->run();
-                benchRowResults[static_cast<std::size_t>(row)] = r.ok ? r.summary : ("FAIL: " + r.summary);
-                lastBenchResult = r.ok ? ("OK: " + r.summary) : ("FAIL: " + r.summary);
+              if (benchThread.joinable() && !benchesRunning.load()) benchThread.join();
+
+              if (benchSelected == 0) {
+                // Run all benchmarks.
+                lastBenchResult = "Running all...";
+                benchesRunning.store(true);
+                runningBenchRow.store(-1);
+                benchThread = std::thread([&]() {
+                  for (int row = 0; row < static_cast<int>(benchRowBenches.size()); ++row) {
+                    if (benchRowIsHeader[static_cast<std::size_t>(row)]) continue;
+                    runningBenchRow.store(row);
+
+                    auto& b = benchRowBenches[static_cast<std::size_t>(row)];
+                    const BenchResult r = b ? b->run() : BenchResult{false, "(null benchmark)"};
+
+                    {
+                      std::lock_guard<std::mutex> lk(benchMutex);
+                      if (static_cast<std::size_t>(row) < benchRowResults.size()) {
+                        benchRowResults[static_cast<std::size_t>(row)] = r.ok ? r.summary : ("FAIL: " + r.summary);
+                      }
+                    }
+                  }
+
+                  runningBenchRow.store(-1);
+                  benchesRunning.store(false);
+                });
               } else {
-                lastBenchResult = "(not runnable)";
+                const int row = benchSelected - 1;
+                if (row >= 0 && row < static_cast<int>(benchRowBenches.size()) && !benchRowIsHeader[static_cast<std::size_t>(row)]) {
+                  lastBenchResult = "Running...";
+                  benchesRunning.store(true);
+                  runningBenchRow.store(row);
+                  benchThread = std::thread([&, row]() {
+                    auto& b = benchRowBenches[static_cast<std::size_t>(row)];
+                    const BenchResult r = b ? b->run() : BenchResult{false, "(null benchmark)"};
+
+                    {
+                      std::lock_guard<std::mutex> lk(benchMutex);
+                      if (static_cast<std::size_t>(row) < benchRowResults.size()) {
+                        benchRowResults[static_cast<std::size_t>(row)] = r.ok ? r.summary : ("FAIL: " + r.summary);
+                      }
+                    }
+
+                    runningBenchRow.store(-1);
+                    benchesRunning.store(false);
+                  });
+                } else {
+                  lastBenchResult = "(not runnable)";
+                }
               }
             }
           }
@@ -1599,6 +1687,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
   nvmlStop.store(true);
   if (nvmlThread.joinable()) nvmlThread.join();
+  if (benchThread.joinable()) {
+    // Benchmarks are best-effort; allow them to finish before tearing down ncurses.
+    benchThread.join();
+  }
   endwin();
   return 0;
 }

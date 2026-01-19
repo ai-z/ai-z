@@ -242,7 +242,7 @@ double benchMemoryBandwidth(const OrtApi* api, bool /*use_cuda*/, size_t bytes, 
 
 class OrtCpuMatMulBenchmark final : public OrtBenchBase {
 public:
-  std::string name() const override { return "ORT CPU FP32 MatMul"; }
+  std::string name() const override { return "ONNX FP32 MatMul"; }
 
   bool isAvailable() const override {
     const OrtApi* api;
@@ -270,7 +270,7 @@ public:
 
 class OrtCudaMatMulBenchmark final : public OrtBenchBase {
 public:
-  std::string name() const override { return "ORT CUDA FP32 MatMul"; }
+  std::string name() const override { return "ONNX CUDA FP32 MatMul"; }
 
   bool isAvailable() const override {
     std::string err;
@@ -301,7 +301,7 @@ public:
 
 class OrtCpuMemoryBandwidthBenchmark final : public OrtBenchBase {
 public:
-  std::string name() const override { return "ORT CPU Memory BW"; }
+  std::string name() const override { return "ONNX Memory BW"; }
 
   bool isAvailable() const override {
     const OrtApi* api;
@@ -329,7 +329,7 @@ public:
 
 class OrtCudaMemoryBandwidthBenchmark final : public OrtBenchBase {
 public:
-  std::string name() const override { return "ORT CUDA Memory BW"; }
+  std::string name() const override { return "ONNX CUDA Memory BW"; }
 
   bool isAvailable() const override {
     std::string err;

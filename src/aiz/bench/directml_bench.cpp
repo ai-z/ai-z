@@ -82,7 +82,7 @@ protected:
 
 class DirectMLMatMulBenchmark final : public DirectMLBenchBase {
 public:
-  std::string name() const override { return "DirectML FP32 MatMul"; }
+  std::string name() const override { return "ONNX DIRECTML FP32 MatMul"; }
 
   bool isAvailable() const override {
     std::string err;
@@ -108,7 +108,7 @@ public:
 
 class DirectMLMemoryBandwidthBenchmark final : public DirectMLBenchBase {
 public:
-  std::string name() const override { return "DirectML Memory BW"; }
+  std::string name() const override { return "ONNX DIRECTML Memory BW"; }
 
   bool isAvailable() const override {
     std::string err;

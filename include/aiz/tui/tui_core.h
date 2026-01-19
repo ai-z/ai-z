@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -59,6 +60,12 @@ struct TuiState {
   std::vector<std::unique_ptr<IBenchmark>> benches;
   std::vector<std::string> benchResults;
   std::string lastBenchResult;
+
+  // Benchmarks execution state (updated from a worker thread in some backends).
+  // Protected by benchMutex.
+  bool benchmarksRunning = false;
+  int runningBenchIndex = -1;  // 0-based index into benches, or -1 when idle.
+  mutable std::mutex benchMutex;
 
   // UI messages.
   std::optional<std::string> statusLine;
