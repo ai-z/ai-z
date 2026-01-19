@@ -26,10 +26,12 @@
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <atomic>
 #include <vector>
 #include <random>
 
@@ -268,6 +270,7 @@ struct VramUsage {
 
 struct GpuTelemetry {
   std::optional<double> utilPct;
+  std::optional<double> memUtilPct;
   std::optional<double> vramUsedGiB;
   std::optional<double> vramTotalGiB;
   std::optional<double> watts;
@@ -278,71 +281,13 @@ struct GpuTelemetry {
   std::string source;
 };
 
-static std::string trim(std::string s) {
-  auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
-  while (!s.empty() && isSpace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
-  while (!s.empty() && isSpace(static_cast<unsigned char>(s.back()))) s.pop_back();
-  return s;
-}
-
-static std::optional<std::string> runCommand(const std::string& cmd) {
-  std::array<char, 4096> buf{};
-  std::string out;
-
-  FILE* pipe = popen(cmd.c_str(), "r");
-  if (!pipe) return std::nullopt;
-
-  while (fgets(buf.data(), static_cast<int>(buf.size()), pipe) != nullptr) {
-    out += buf.data();
-    if (out.size() > 64 * 1024) break;
-  }
-
-  const int rc = pclose(pipe);
-  if (rc != 0) return std::nullopt;
-
-  out = trim(out);
-  if (out.empty()) return std::nullopt;
-  return out;
-}
-
-static std::optional<GpuTelemetry> readNvidiaGpuTelemetry() {
-  // Query first GPU. nounits ensures raw numbers.
-  // Example output: "23.45, 45, P8"
-  const auto line = runCommand(
-      "nvidia-smi --query-gpu=power.draw,temperature.gpu,pstate --format=csv,noheader,nounits 2>/dev/null | head -n 1");
-  if (!line) return std::nullopt;
-
-  std::string s = *line;
-  std::string a, b, c;
-  const auto p1 = s.find(',');
-  if (p1 == std::string::npos) return std::nullopt;
-  a = trim(s.substr(0, p1));
-  s = s.substr(p1 + 1);
-  const auto p2 = s.find(',');
-  if (p2 == std::string::npos) return std::nullopt;
-  b = trim(s.substr(0, p2));
-  c = trim(s.substr(p2 + 1));
-
-  if (a.empty() || b.empty() || c.empty()) return std::nullopt;
-
-  try {
-    GpuTelemetry t;
-    t.watts = std::stod(a);
-    t.tempC = std::stod(b);
-    t.pstate = c;
-    t.source = "nvidia-smi";
-    return t;
-  } catch (...) {
-    return std::nullopt;
-  }
-}
-
 static std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index) {
   GpuTelemetry t;
   bool any = false;
 
   if (const auto nv = readNvmlTelemetryForGpu(index)) {
     t.utilPct = nv->gpuUtilPct;
+    t.memUtilPct = nv->memUtilPct;
     t.vramUsedGiB = nv->memUsedGiB;
     t.vramTotalGiB = nv->memTotalGiB;
     t.watts = nv->powerWatts;
@@ -373,8 +318,6 @@ static std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index
     return t;
   }
 
-  // Fallback only supports first GPU (nvidia-smi has no multi-GPU loop here).
-  if (index == 0) return readNvidiaGpuTelemetry();
   return std::nullopt;
 }
 
@@ -1114,6 +1057,18 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
   Screen screen = Screen::Timelines;
 
+  // Draw something immediately so we don't appear to hang on a cleared screen.
+  {
+    int rows = 0, cols = 0;
+    getmaxyx(stdscr, rows, cols);
+    (void)rows;
+    erase();
+    drawHeader(cols, "AI-Z - Starting");
+    mvhline(2, 0, ' ', cols);
+    mvaddnstr(2, 0, "Initializing...", cols);
+    refresh();
+  }
+
   CpuUsageCollector cpuCol;
   GpuUsageCollector gpuCol;
   GpuMemoryUtilCollector gpuMemUtilCol;
@@ -1142,18 +1097,70 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   RandomWalk dbgGpuTemp(25.0, 92.0, 6.0);
 
   unsigned int gpuCount = 1;
+  bool hasNvml = false;
   if (!debugMode) {
-    if (const auto n = nvmlGpuCount(); n && *n > 0) {
+    int rows = 0, cols = 0;
+    getmaxyx(stdscr, rows, cols);
+    (void)rows;
+    erase();
+    drawHeader(cols, "AI-Z - Starting");
+    mvhline(2, 0, ' ', cols);
+    mvaddnstr(2, 0, "Initializing NVML...", cols);
+    refresh();
+
+    const auto n = nvmlGpuCount();
+    if (n && *n > 0) {
       gpuCount = *n;
+      hasNvml = true;
     } else {
       const unsigned int nSys = linuxGpuCount();
       if (nSys > 0) gpuCount = nSys;
     }
   }
 
+  std::mutex nvmlMu;
   std::vector<std::optional<GpuTelemetry>> cachedGpuTel;
   cachedGpuTel.resize(gpuCount);
-  auto lastGpuTelQuery = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+  std::optional<NvmlPcieThroughput> cachedPcie;
+  std::atomic<bool> nvmlStop{false};
+  std::thread nvmlThread;
+  if (!debugMode) {
+    nvmlThread = std::thread([&]() {
+      while (!nvmlStop.load()) {
+        std::vector<std::optional<GpuTelemetry>> nextGpu;
+        nextGpu.resize(gpuCount);
+
+        for (unsigned int i = 0; i < gpuCount; ++i) {
+          if (hasNvml) {
+            nextGpu[static_cast<std::size_t>(i)] = readGpuTelemetryPreferNvml(i);
+          } else {
+            // Avoid NVML wrapper overhead on non-NVIDIA systems.
+            if (const auto lt = readLinuxGpuTelemetry(i)) {
+              GpuTelemetry t;
+              t.utilPct = lt->utilPct;
+              t.vramUsedGiB = lt->vramUsedGiB;
+              t.vramTotalGiB = lt->vramTotalGiB;
+              t.watts = lt->watts;
+              t.tempC = lt->tempC;
+              t.pstate = lt->pstate;
+              t.source = lt->source;
+              nextGpu[static_cast<std::size_t>(i)] = t;
+            }
+          }
+        }
+
+        const auto nextPcie = hasNvml ? readNvmlPcieThroughput() : std::nullopt;
+
+        {
+          std::lock_guard<std::mutex> lk(nvmlMu);
+          cachedGpuTel = std::move(nextGpu);
+          cachedPcie = nextPcie;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      }
+    });
+  }
 
   Timeline cpuTl(cfg.timelineSamples);
   Timeline ramTl(cfg.timelineSamples);
@@ -1172,8 +1179,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   Timeline pcieRxTl(cfg.timelineSamples);
   Timeline pcieTxTl(cfg.timelineSamples);
 
-  HardwareInfo hwCache = HardwareInfo::probe();
-  std::vector<std::string> hwLines = hwCache.toLines();
+  // Defer heavy probing until the user opens Hardware/Benchmarks.
+  HardwareInfo hwCache;
+  std::vector<std::string> hwLines = {"(Press W / F2 to probe hardware)", "(Press B / F3 to load benchmarks)"};
+  bool hwReady = false;
 
   std::vector<std::string> benchRowTitles;
   std::vector<bool> benchRowIsHeader;
@@ -1220,9 +1229,36 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     addHeader("CPU0 - " + (hwCache.cpuName.empty() ? std::string("unknown") : hwCache.cpuName));
     addBench(makeCpuFp16FlopsBenchmark());
     addBench(makeCpuFp32FlopsBenchmark());
+
+    addHeader("ONNX Runtime");
+    addBench(makeOrtCpuMatMulBenchmark());
+    addBench(makeOrtCpuMemoryBandwidthBenchmark());
+    addBench(makeOrtCudaMatMulBenchmark());
+    addBench(makeOrtCudaMemoryBandwidthBenchmark());
+
+    addHeader("DirectML");
+    addBench(makeDirectMLMatMulBenchmark());
+    addBench(makeDirectMLMemoryBandwidthBenchmark());
   };
 
-  rebuildBenchRows();
+  bool benchReady = false;
+
+  auto ensureHardwareAndBenches = [&]() {
+    if (hwReady && benchReady) return;
+    int rows = 0, cols = 0;
+    getmaxyx(stdscr, rows, cols);
+    erase();
+    drawHeader(cols, "AI-Z - Initializing");
+    mvhline(2, 0, ' ', cols);
+    mvaddnstr(2, 0, "Probing hardware...", cols);
+    refresh();
+
+    hwCache = HardwareInfo::probe();
+    hwLines = hwCache.toLines();
+    hwReady = true;
+    rebuildBenchRows();
+    benchReady = true;
+  };
 
   auto isSelectableBenchRow = [&](int selectedRow) {
     if (selectedRow <= 0) return true;  // 0 = run all
@@ -1358,35 +1394,36 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       netTx = netTxCol.sample();
       ram = readRamUsage();
 
-      gpuMemUtil = gpuMemUtilCol.sample();
-
-      pcieRx = pcieRxCol.sample();
-      pcieTx = pcieTxCol.sample();
-
-      // GPU utilization: if NVML is available, use per-GPU telemetry; otherwise fall back
-      // to the collector (may be unavailable).
-      const bool hasNvml = (nvmlGpuCount().value_or(0) > 0);
-
-      if (!hasNvml) {
-        // Legacy fallback (kept for compatibility): single aggregated sample.
-        gpuSamples[0] = gpuCol.sample();
-      }
-
-      // GPU telemetry (best-effort, cached)
-      const auto now = std::chrono::steady_clock::now();
-      if (now - lastGpuTelQuery > std::chrono::milliseconds(900)) {
-        for (unsigned int i = 0; i < gpuCount; ++i) {
-          cachedGpuTel[static_cast<std::size_t>(i)] = readGpuTelemetryPreferNvml(i);
+      // Copy cached NVML/sysfs telemetry without doing any expensive work on the UI thread.
+      {
+        std::lock_guard<std::mutex> lk(nvmlMu);
+        gpuTel = cachedGpuTel;
+        if (cachedPcie) {
+          pcieRx = Sample{cachedPcie->rxMBps, "MB/s", "nvml"};
+          pcieTx = Sample{cachedPcie->txMBps, "MB/s", "nvml"};
         }
-        lastGpuTelQuery = now;
       }
-      gpuTel = cachedGpuTel;
+
+      // Aggregate GPU memory-controller utilization (when available).
+      double maxMemUtil = -1.0;
+      std::string memLabel;
+      for (const auto& gt : gpuTel) {
+        if (!gt || !gt->memUtilPct) continue;
+        if (*gt->memUtilPct > maxMemUtil) {
+          maxMemUtil = *gt->memUtilPct;
+          memLabel = gt->source;
+        }
+      }
+      if (maxMemUtil >= 0.0) {
+        if (memLabel.empty()) memLabel = "gpu";
+        gpuMemUtil = Sample{maxMemUtil, "%", memLabel};
+      }
 
       // Prefer per-GPU telemetry when available (NVML or sysfs).
       for (unsigned int i = 0; i < gpuCount; ++i) {
         const auto& gt = gpuTel[static_cast<std::size_t>(i)];
         if (!gt || !gt->utilPct) continue;
-        const std::string label = !gt->source.empty() ? gt->source : (hasNvml ? std::string("nvml") : std::string("sysfs"));
+        const std::string label = !gt->source.empty() ? gt->source : std::string("gpu");
         gpuSamples[static_cast<std::size_t>(i)] = Sample{*gt->utilPct, "%", label};
       }
 
@@ -1412,7 +1449,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
             break;
           }
         }
-        if (label.empty()) label = hasNvml ? std::string("nvml") : std::string("sysfs");
+        if (label.empty()) label = "gpu";
         vramPct = Sample{(100.0 * sumUsed / sumTotal), "%", label};
       }
     }
@@ -1465,26 +1502,30 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       // Function keys (htop-style)
       if (ch == KEY_F(1)) screen = Screen::Help;
       else if (ch == KEY_F(2)) {
-        hwCache = HardwareInfo::probe();
-        hwLines = hwCache.toLines();
-        rebuildBenchRows();
+        ensureHardwareAndBenches();
         benchSelected = clampBenchSelected(benchSelected);
         screen = Screen::Hardware;
       }
-      else if (ch == KEY_F(3)) screen = Screen::Benchmarks;
+      else if (ch == KEY_F(3)) {
+        ensureHardwareAndBenches();
+        benchSelected = clampBenchSelected(benchSelected);
+        screen = Screen::Benchmarks;
+      }
       else if (ch == KEY_F(4)) screen = Screen::Config;
       else if (ch == KEY_F(10)) running = false;
 
       // Letter shortcuts
       else if (ch == 'h' || ch == 'H') screen = Screen::Help;
       else if (ch == 'w' || ch == 'W') {
-        hwCache = HardwareInfo::probe();
-        hwLines = hwCache.toLines();
-        rebuildBenchRows();
+        ensureHardwareAndBenches();
         benchSelected = clampBenchSelected(benchSelected);
         screen = Screen::Hardware;
       }
-      else if (ch == 'b' || ch == 'B') screen = Screen::Benchmarks;
+      else if (ch == 'b' || ch == 'B') {
+        ensureHardwareAndBenches();
+        benchSelected = clampBenchSelected(benchSelected);
+        screen = Screen::Benchmarks;
+      }
       else if (ch == 'c' || ch == 'C') screen = Screen::Config;
       else if (ch == 'q' || ch == 'Q') running = false;
 
@@ -1548,9 +1589,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           }
         } else if (screen == Screen::Hardware) {
           if (ch == 'r') {
-            hwCache = HardwareInfo::probe();
-            hwLines = hwCache.toLines();
-            rebuildBenchRows();
+            ensureHardwareAndBenches();
             benchSelected = clampBenchSelected(benchSelected);
           }
         }
@@ -1558,6 +1597,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     }
   }
 
+  nvmlStop.store(true);
+  if (nvmlThread.joinable()) nvmlThread.join();
   endwin();
   return 0;
 }

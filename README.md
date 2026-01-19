@@ -52,6 +52,59 @@ cmake -S . -B build -DAI_Z_ENABLE_VULKAN=ON
 cmake --build build -j
 ```
 
+ONNX Runtime benchmarks (CPU + GPU inference):
+
+- Detected at runtime via `dlopen`—**no build-time dependency**.
+- Provides CPU and CUDA (if available) benchmarks:
+	- FP32 MatMul GFLOPS
+	- Memory bandwidth (GB/s)
+- **Easy installation** (choose one method):
+
+	**Option 1: Via pip** (easiest, auto-detected):
+	```bash
+	pip install onnxruntime
+	# ai-z will automatically find it - no configuration needed!
+	```
+
+	**Option 2: System-wide** (for all users):
+	```bash
+	wget https://github.com/microsoft/onnxruntime/releases/download/v1.18.0/onnxruntime-linux-x64-1.18.0.tgz
+	tar xzf onnxruntime-linux-x64-1.18.0.tgz
+	sudo cp onnxruntime-linux-x64-1.18.0/lib/libonnxruntime.so* /usr/local/lib/
+	sudo ldconfig
+	```
+
+	**Option 3: Custom location** (advanced):
+	```bash
+	export AI_Z_ONNXRUNTIME_PATH=/path/to/libonnxruntime.so
+	```
+
+- Benchmarks appear as "unavailable" if ONNX Runtime is not found
+- **PPA-compatible**: The `.deb` package has zero ONNX Runtime dependencies—users can install it anytime
+
+DirectML benchmarks (DirectX Machine Learning):
+
+- Detected at runtime via `dlopen`—**no build-time dependency**.
+- Provides DirectML execution provider benchmarks:
+	- FP32 MatMul GFLOPS
+	- Memory bandwidth (GB/s)
+- **Installation** (choose one method):
+
+	**Option 1: Via pip** (easiest):
+	```bash
+	pip install onnxruntime-directml
+	# Works on Windows and Linux (via Wine/Proton)
+	```
+
+	**Option 2: Custom location**:
+	```bash
+	export AI_Z_DIRECTML_PATH=/path/to/libdirectml.so
+	```
+
+- Primarily for Windows, but also works on Linux with Wine/Proton or Mesa D3D12 support
+- Benchmarks appear as "unavailable" if DirectML is not found
+- **PPA-compatible**: Zero DirectML dependencies in the package
+
 ### Windows
 
 Prereqs:

@@ -8,6 +8,16 @@
 
 namespace aiz {
 
+// Forward declarations for ONNX Runtime benchmarks
+std::unique_ptr<IBenchmark> makeOrtCpuMatMulBenchmark();
+std::unique_ptr<IBenchmark> makeOrtCudaMatMulBenchmark();
+std::unique_ptr<IBenchmark> makeOrtCpuMemoryBandwidthBenchmark();
+std::unique_ptr<IBenchmark> makeOrtCudaMemoryBandwidthBenchmark();
+
+// Forward declarations for DirectML benchmarks
+std::unique_ptr<IBenchmark> makeDirectMLMatMulBenchmark();
+std::unique_ptr<IBenchmark> makeDirectMLMemoryBandwidthBenchmark();
+
 #ifdef AI_Z_ENABLE_CUDA
 std::unique_ptr<IBenchmark> makePcieBandwidthBenchmarkCuda();
 std::unique_ptr<IBenchmark> makePcieBandwidthRxBenchmarkCuda(unsigned int gpuIndex);

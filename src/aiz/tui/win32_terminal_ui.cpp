@@ -473,6 +473,12 @@ int Win32TerminalUi::run(Config& cfg, bool debugMode) {
   state.benches.push_back(makePcieBandwidthBenchmark());
   state.benches.push_back(makeFlopsBenchmark());
   state.benches.push_back(makeTorchMatmulBenchmark());
+  state.benches.push_back(makeOrtCpuMatMulBenchmark());
+  state.benches.push_back(makeOrtCpuMemoryBandwidthBenchmark());
+  state.benches.push_back(makeOrtCudaMatMulBenchmark());
+  state.benches.push_back(makeOrtCudaMemoryBandwidthBenchmark());
+  state.benches.push_back(makeDirectMLMatMulBenchmark());
+  state.benches.push_back(makeDirectMLMemoryBandwidthBenchmark());
   state.benchResults.resize(state.benches.size());
 
   while (true) {

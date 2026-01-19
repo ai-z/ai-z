@@ -32,6 +32,8 @@ add_executable(ai-z
   src/aiz/dyn/cuda.cpp
   src/aiz/dyn/opencl.cpp
   src/aiz/dyn/vulkan.cpp
+  src/aiz/dyn/onnxruntime.cpp
+  src/aiz/dyn/directml.cpp
   src/aiz/hw/hardware_info.cpp
   src/aiz/metrics/cpu_usage.cpp
   src/aiz/metrics/disk_bandwidth.cpp
@@ -49,6 +51,8 @@ add_executable(ai-z
   src/aiz/bench/gpu_compute_opencl.cpp
   src/aiz/bench/pcie_bandwidth_vulkan.cpp
   src/aiz/bench/gpu_compute_vulkan.cpp
+  src/aiz/bench/onnxruntime_bench.cpp
+  src/aiz/bench/directml_bench.cpp
 )
 
 target_include_directories(ai-z PRIVATE include)
