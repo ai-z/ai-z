@@ -4,7 +4,7 @@ C++ TUI app for performance timelines (CPU/GPU/Disk/PCIe) and benchmarks.
 
 Current platform support:
 - Linux: ncurses TUI
-- Windows: minimal console UI (press `q` to quit)
+- Windows: Win32 console TUI (feature-parity UI core)
 - macOS: planned (not implemented yet)
 
 ## Build
@@ -162,17 +162,20 @@ You can change the aggregation mode via config:
 - `F2` or `W`: Hardware info
 - `F3` or `B`: Benchmarks
 - `F4` or `C`: Config display
+- `F5` or `T`: Timelines
 - `F10` or `Q`: Quit
-
-Windows console UI:
-- `q`: Quit
 
 ## Config
 
 Config is stored at `~/.config/ai-z/config.ini` (or `$XDG_CONFIG_HOME/ai-z/config.ini`).
 
+On Windows, config is stored at `%APPDATA%\ai-z\config.ini` (Roaming AppData).
+
 Keys:
-- `showCpu`, `showGpu`, `showDisk`, `showPcieRx`, `showPcieTx`, `showRam`, `showVram` (true/false)
+- `showCpu`, `showGpu`, `showGpuMem`, `showRam`, `showVram` (true/false)
+- `showDiskRead`, `showDiskWrite` (true/false)
+- `showNetRx`, `showNetTx` (true/false)
+- `showPcieRx`, `showPcieTx` (true/false)
 - `refreshMs` (integer)
 - `timelineSamples` (integer)
 - `timelineAgg` (`max` or `avg`)

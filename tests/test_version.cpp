@@ -1,12 +1,6 @@
 #include <aiz/version.h>
 
-#if __has_include(<catch2/catch_test_macros.hpp>)
-#include <catch2/catch_test_macros.hpp>
-#elif __has_include(<catch2/catch.hpp>)
-#include <catch2/catch.hpp>
-#else
-#error "Catch2 headers not found"
-#endif
+#include "test_framework.h"
 
 #include <string>
 

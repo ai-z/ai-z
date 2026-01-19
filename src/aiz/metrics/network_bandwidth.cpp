@@ -2,7 +2,9 @@
 
 #if defined(_WIN32)
 
+#define NOMINMAX
 #include <iphlpapi.h>
+#include <vector>
 
 #pragma comment(lib, "iphlpapi.lib")
 
@@ -14,23 +16,31 @@ NetworkBandwidthCollector::NetworkBandwidthCollector(NetworkBandwidthMode mode, 
 NetworkBandwidthCollector::~NetworkBandwidthCollector() = default;
 
 static bool readNetworkBytesTotal(NetworkBandwidthMode mode, std::uint64_t& bytesOut) {
-  MIB_IF_TABLE2* table = nullptr;
-  if (GetIfTable2(&table) != NO_ERROR || table == nullptr) {
+  // Use the classic IP Helper API table for maximum compatibility.
+  // Note: these counters are 32-bit and may wrap on long-running systems.
+  ULONG size = 0;
+  const DWORD first = GetIfTable(nullptr, &size, FALSE);
+  if (first != ERROR_INSUFFICIENT_BUFFER || size == 0) {
+    return false;
+  }
+
+  std::vector<std::uint8_t> buf(size);
+  PMIB_IFTABLE table = reinterpret_cast<PMIB_IFTABLE>(buf.data());
+  const DWORD second = GetIfTable(table, &size, FALSE);
+  if (second != NO_ERROR || table == nullptr) {
     return false;
   }
 
   std::uint64_t total = 0;
-  for (ULONG i = 0; i < table->NumEntries; ++i) {
-    const MIB_IF_ROW2& row = table->Table[i];
+  for (DWORD i = 0; i < table->dwNumEntries; ++i) {
+    const MIB_IFROW& row = table->table[i];
     // Skip loopback.
-    if (row.Type == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+    if (row.dwType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
 
-    // Best-effort: include all other interfaces.
-    if (mode == NetworkBandwidthMode::Rx) total += static_cast<std::uint64_t>(row.InOctets);
-    else total += static_cast<std::uint64_t>(row.OutOctets);
+    if (mode == NetworkBandwidthMode::Rx) total += static_cast<std::uint64_t>(row.dwInOctets);
+    else total += static_cast<std::uint64_t>(row.dwOutOctets);
   }
 
-  FreeMibTable(table);
   bytesOut = total;
   return true;
 }
@@ -50,12 +60,15 @@ std::optional<Sample> NetworkBandwidthCollector::sample() {
   const auto dt = std::chrono::duration_cast<std::chrono::duration<double>>(now - prevTime_).count();
   prevTime_ = now;
 
-  const std::uint64_t dbytes = bytesTotal - prevBytes_;
+  const std::uint64_t prev = prevBytes_;
   prevBytes_ = bytesTotal;
+
+  // Best-effort wrap handling for 32-bit octet counters.
+  const std::uint64_t adjDbytes = (bytesTotal >= prev) ? (bytesTotal - prev) : (bytesTotal + (1ULL << 32) - prev);
 
   if (dt <= 0.0) return Sample{0.0, "MB/s", ""};
 
-  const double mbps = (static_cast<double>(dbytes) / (1024.0 * 1024.0)) / dt;
+  const double mbps = (static_cast<double>(adjDbytes) / (1024.0 * 1024.0)) / dt;
   return Sample{mbps, "MB/s", ""};
 }
 
