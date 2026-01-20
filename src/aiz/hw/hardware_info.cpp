@@ -145,33 +145,50 @@ static std::string probeOpenCLVersion() {
 
 std::vector<std::string> HardwareInfo::toLines() const {
   const bool hasPerGpu = !perGpuLines.empty();
-  std::vector<std::string> lines = {
-      "OS: " + (osPretty.empty() ? std::string(kUnknown) : osPretty),
-      "Kernel: " + (kernelVersion.empty() ? std::string(kUnknown) : kernelVersion),
-      "CPU: " + (cpuName.empty() ? std::string(kUnknown) : cpuName),
-      "CPU Instructions: " + (cpuInstructions.empty() ? std::string(kUnknown) : cpuInstructions),
-      "RAM: " + (ramSummary.empty() ? std::string(kUnknown) : ramSummary),
-      // If we have per-GPU lines, the single GPU line is redundant.
-      hasPerGpu ? std::string() : ("GPU: " + (gpuName.empty() ? std::string(kUnknown) : gpuName)),
-      "GPU Driver: " + (gpuDriver.empty() ? std::string(kUnknown) : gpuDriver),
-  };
+  const bool hasPerNic = !perNicLines.empty();
+  const bool hasPerDisk = !perDiskLines.empty();
+  std::vector<std::string> lines;
+  lines.reserve(32);
 
-  // Drop any empty placeholders (e.g., the omitted GPU line).
-  lines.erase(std::remove_if(lines.begin(), lines.end(), [](const std::string& s) { return s.empty(); }), lines.end());
+  lines.push_back("OS: " + (osPretty.empty() ? std::string(kUnknown) : osPretty));
+  lines.push_back("Kernel: " + (kernelVersion.empty() ? std::string(kUnknown) : kernelVersion));
 
-  for (const auto& l : perGpuLines) lines.push_back(l);
+  // Requested: these should be under OS/KERNEL and before CPU.
+  lines.push_back("GPU Driver: " + (gpuDriver.empty() ? std::string(kUnknown) : gpuDriver));
+  lines.push_back("CUDA: " + (cudaVersion.empty() ? std::string(kUnknown) : cudaVersion));
+  lines.push_back("NVML: " + (nvmlVersion.empty() ? std::string(kUnknown) : nvmlVersion));
+  lines.push_back("ROCm: " + (rocmVersion.empty() ? std::string(kUnknown) : rocmVersion));
+  lines.push_back("OpenCL: " + (openclVersion.empty() ? std::string(kUnknown) : openclVersion));
+  lines.push_back("Vulkan: " + (vulkanVersion.empty() ? std::string(kUnknown) : vulkanVersion));
 
-  lines.insert(lines.end(), {
-      // If we have per-GPU lines, VRAM is already shown per GPU.
-      hasPerGpu ? std::string() : ("VRAM: " + (vramSummary.empty() ? std::string(kUnknown) : vramSummary)),
-      "CUDA: " + (cudaVersion.empty() ? std::string(kUnknown) : cudaVersion),
-      "NVML: " + (nvmlVersion.empty() ? std::string(kUnknown) : nvmlVersion),
-      "ROCm: " + (rocmVersion.empty() ? std::string(kUnknown) : rocmVersion),
-        "OpenCL: " + (openclVersion.empty() ? std::string(kUnknown) : openclVersion),
-      "Vulkan: " + (vulkanVersion.empty() ? std::string(kUnknown) : vulkanVersion),
-  });
+  // Requested: a space after those before CPU.
+  lines.push_back(std::string());
 
-  lines.erase(std::remove_if(lines.begin(), lines.end(), [](const std::string& s) { return s.empty(); }), lines.end());
+  lines.push_back("CPU: " + (cpuName.empty() ? std::string(kUnknown) : cpuName));
+  lines.push_back("CPU Physical cores: " + (cpuPhysicalCores.empty() ? std::string(kUnknown) : cpuPhysicalCores));
+  lines.push_back("CPU Logical cores: " + (cpuLogicalCores.empty() ? std::string(kUnknown) : cpuLogicalCores));
+  lines.push_back("CPU Cache L1: " + (cpuCacheL1.empty() ? std::string(kUnknown) : cpuCacheL1));
+  lines.push_back("CPU Cache L2: " + (cpuCacheL2.empty() ? std::string(kUnknown) : cpuCacheL2));
+  lines.push_back("CPU Cache L3: " + (cpuCacheL3.empty() ? std::string(kUnknown) : cpuCacheL3));
+  lines.push_back("CPU Instructions: " + (cpuInstructions.empty() ? std::string(kUnknown) : cpuInstructions));
+  lines.push_back("RAM: " + (ramSummary.empty() ? std::string(kUnknown) : ramSummary));
+
+  // GPU hardware details after CPU/RAM.
+  lines.push_back(std::string());
+
+  if (!hasPerGpu) {
+    lines.push_back("GPU: " + (gpuName.empty() ? std::string(kUnknown) : gpuName));
+    lines.push_back("VRAM: " + (vramSummary.empty() ? std::string(kUnknown) : vramSummary));
+  } else {
+    for (const auto& l : perGpuLines) lines.push_back(l);
+  }
+
+  // Vulkan is shown in the OS/Kernel block.
+
+  // NICs/Disks at end; each entry is one line and already formatted.
+  if (hasPerNic || hasPerDisk) lines.push_back(std::string());
+  for (const auto& l : perNicLines) lines.push_back(l);
+  for (const auto& l : perDiskLines) lines.push_back(l);
 
   return lines;
 }
@@ -185,11 +202,18 @@ HardwareInfo HardwareInfo::probe() {
   } else {
     info.cpuName = kUnknown;
   }
+  info.cpuPhysicalCores = kUnknown;
+  info.cpuLogicalCores = kUnknown;
+  info.cpuCacheL1 = kUnknown;
+  info.cpuCacheL2 = kUnknown;
+  info.cpuCacheL3 = kUnknown;
   info.cpuInstructions = kUnknown;
   info.ramSummary = kUnknown;
   info.gpuName = kUnknown;
   info.gpuDriver = kUnknown;
   info.vramSummary = kUnknown;
+  info.perNicLines.clear();
+  info.perDiskLines.clear();
   info.cudaVersion = runCommand("nvidia-smi 2>nul | findstr /C:\"CUDA Version\"")
                          .value_or(kUnknown);
   info.nvmlVersion = runCommand("nvidia-smi -q 2>nul | findstr /C:\"NVML Version\"")
@@ -215,11 +239,13 @@ HardwareInfo HardwareInfo::probe() {
 #include <cstdlib>
 #include <cstdint>
 #include <fstream>
+#include <filesystem>
 #include <iomanip>
 #include <optional>
 #include <unordered_set>
 #include <sstream>
 #include <string>
+#include <thread>
 
 #include <dlfcn.h>
 
@@ -592,6 +618,349 @@ static std::string probeCpuName() {
   return kUnknown;
 }
 
+static std::optional<std::string> readTextFileTrim(const std::filesystem::path& p) {
+  std::ifstream in(p);
+  if (!in.is_open()) return std::nullopt;
+  std::string s;
+  std::getline(in, s);
+  s = trim(s);
+  if (s.empty()) return std::nullopt;
+  return s;
+}
+
+static std::optional<std::string> readUeventValue(const std::filesystem::path& ueventPath, const std::string& key) {
+  std::ifstream in(ueventPath);
+  if (!in.is_open()) return std::nullopt;
+  std::string line;
+  const std::string prefix = key + "=";
+  while (std::getline(in, line)) {
+    if (line.rfind(prefix, 0) == 0) {
+      return trim(line.substr(prefix.size()));
+    }
+  }
+  return std::nullopt;
+}
+
+static std::optional<std::string> symlinkBasename(const std::filesystem::path& p) {
+  std::error_code ec;
+  const auto link = std::filesystem::read_symlink(p, ec);
+  if (ec) return std::nullopt;
+  const auto name = link.filename().string();
+  if (name.empty()) return std::nullopt;
+  return name;
+}
+
+static std::string probeCpuLogicalCores() {
+  std::ifstream in("/proc/cpuinfo");
+  if (in.is_open()) {
+    std::string line;
+    int count = 0;
+    while (std::getline(in, line)) {
+      if (line.rfind("processor", 0) == 0) {
+        const auto colon = line.find(':');
+        if (colon != std::string::npos) ++count;
+      }
+    }
+    if (count > 0) return std::to_string(count);
+  }
+
+  const unsigned int hc = std::thread::hardware_concurrency();
+  if (hc > 0) return std::to_string(hc);
+  return kUnknown;
+}
+
+static std::string probeCpuPhysicalCores() {
+  // Best-effort: count unique (physical id, core id) pairs.
+  std::ifstream in("/proc/cpuinfo");
+  if (!in.is_open()) return kUnknown;
+
+  std::unordered_set<std::string> unique;
+  unique.reserve(128);
+
+  std::string line;
+  std::string phys;
+  std::string core;
+
+  auto flush = [&]() {
+    if (!phys.empty() && !core.empty()) {
+      unique.insert(phys + ":" + core);
+    }
+    phys.clear();
+    core.clear();
+  };
+
+  while (std::getline(in, line)) {
+    line = trim(std::move(line));
+    if (line.empty()) {
+      flush();
+      continue;
+    }
+    if (line.rfind("physical id", 0) == 0) {
+      const auto colon = line.find(':');
+      if (colon != std::string::npos) phys = trim(line.substr(colon + 1));
+    } else if (line.rfind("core id", 0) == 0) {
+      const auto colon = line.find(':');
+      if (colon != std::string::npos) core = trim(line.substr(colon + 1));
+    }
+  }
+  flush();
+
+  if (!unique.empty()) return std::to_string(unique.size());
+
+  // Fallback: sockets * cpu cores.
+  std::ifstream in2("/proc/cpuinfo");
+  if (in2.is_open()) {
+    std::unordered_set<std::string> sockets;
+    sockets.reserve(8);
+    int coresPerSocket = 0;
+    std::string l;
+    while (std::getline(in2, l)) {
+      l = trim(std::move(l));
+      if (l.rfind("physical id", 0) == 0) {
+        const auto colon = l.find(':');
+        if (colon != std::string::npos) sockets.insert(trim(l.substr(colon + 1)));
+      } else if (l.rfind("cpu cores", 0) == 0 && coresPerSocket == 0) {
+        const auto colon = l.find(':');
+        if (colon != std::string::npos) {
+          const std::string v = trim(l.substr(colon + 1));
+          coresPerSocket = std::atoi(v.c_str());
+        }
+      }
+    }
+    if (!sockets.empty() && coresPerSocket > 0) {
+      return std::to_string(static_cast<int>(sockets.size()) * coresPerSocket);
+    }
+  }
+
+  return kUnknown;
+}
+
+static std::string normalizeSysfsSizeToken(std::string s) {
+  // Common sysfs cache size formats: "32K", "256K", "16384K", "4M".
+  s = trim(std::move(s));
+  if (s.empty()) return std::string(kUnknown);
+  return s;
+}
+
+static std::string probeCpuCacheL1() {
+  namespace fs = std::filesystem;
+  const fs::path base("/sys/devices/system/cpu/cpu0/cache");
+  std::error_code ec;
+  if (!fs::exists(base, ec)) return kUnknown;
+
+  std::string l1d;
+  std::string l1i;
+
+  for (const auto& e : fs::directory_iterator(base, ec)) {
+    if (ec || !e.is_directory()) continue;
+    const fs::path dir = e.path();
+    const auto lvl = readTextFileTrim(dir / "level");
+    const auto type = readTextFileTrim(dir / "type");
+    const auto size = readTextFileTrim(dir / "size");
+    if (!lvl || !type || !size) continue;
+    if (*lvl != "1") continue;
+    const std::string sz = normalizeSysfsSizeToken(*size);
+    if (*type == "Data") l1d = sz;
+    else if (*type == "Instruction") l1i = sz;
+  }
+
+  if (!l1d.empty() && !l1i.empty()) return l1d + " (d) + " + l1i + " (i)";
+  if (!l1d.empty()) return l1d;
+  if (!l1i.empty()) return l1i;
+  return kUnknown;
+}
+
+static std::string probeCpuCacheLevel(const std::string& level) {
+  namespace fs = std::filesystem;
+  const fs::path base("/sys/devices/system/cpu/cpu0/cache");
+  std::error_code ec;
+  if (!fs::exists(base, ec)) return kUnknown;
+
+  // Pick the largest cache size token we find for the requested level.
+  std::string best;
+  std::uint64_t bestBytes = 0;
+
+  auto parseToBytes = [](const std::string& s) -> std::uint64_t {
+    // Accept <num>[K|M] with optional spaces.
+    std::string t = trim(s);
+    if (t.empty()) return 0;
+    char unit = 0;
+    if (!t.empty()) {
+      const char last = t.back();
+      if (last == 'K' || last == 'M' || last == 'G') {
+        unit = last;
+        t.pop_back();
+      }
+    }
+    t = trim(t);
+    const std::uint64_t n = static_cast<std::uint64_t>(std::strtoull(t.c_str(), nullptr, 10));
+    if (n == 0) return 0;
+    if (unit == 'K') return n * 1024ull;
+    if (unit == 'M') return n * 1024ull * 1024ull;
+    if (unit == 'G') return n * 1024ull * 1024ull * 1024ull;
+    return n;
+  };
+
+  for (const auto& e : fs::directory_iterator(base, ec)) {
+    if (ec || !e.is_directory()) continue;
+    const fs::path dir = e.path();
+    const auto lvl = readTextFileTrim(dir / "level");
+    const auto size = readTextFileTrim(dir / "size");
+    if (!lvl || !size) continue;
+    if (*lvl != level) continue;
+    const std::string sz = normalizeSysfsSizeToken(*size);
+    const std::uint64_t b = parseToBytes(sz);
+    if (b > bestBytes) {
+      bestBytes = b;
+      best = sz;
+    }
+  }
+
+  if (!best.empty()) return best;
+  return kUnknown;
+}
+
+static std::vector<std::string> probePerNicLinesLinux() {
+  namespace fs = std::filesystem;
+  const fs::path base("/sys/class/net");
+  std::error_code ec;
+  if (!fs::exists(base, ec)) return {};
+
+  std::vector<std::string> names;
+  for (const auto& e : fs::directory_iterator(base, ec)) {
+    if (ec) break;
+    const std::string n = e.path().filename().string();
+    if (n.empty()) continue;
+    if (n == "lo") continue;
+    names.push_back(n);
+  }
+  std::sort(names.begin(), names.end());
+
+  std::vector<std::string> lines;
+
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    const std::string& ifname = names[i];
+    const fs::path p = base / ifname;
+
+    std::string speedStr;
+    if (const auto speed = readTextFileTrim(p / "speed")) {
+      if (*speed != "-1") speedStr = *speed + " Mb/s";
+    }
+
+    std::string desc;
+    const fs::path dev = p / "device";
+    if (fs::exists(dev, ec)) {
+      if (const auto slot = readUeventValue(dev / "uevent", "PCI_SLOT_NAME")) {
+        if (const auto l = runCommand("lspci -s " + *slot + " 2>/dev/null | head -n 1")) {
+          // lspci format: "04:00.0 Ethernet controller: Realtek ..."
+          // Strip the leading bus id to keep it readable.
+          const auto sp = l->find(' ');
+          desc = (sp == std::string::npos) ? *l : l->substr(sp + 1);
+        }
+      }
+
+      // If lspci isn't available (or doesn't help), fall back to driver name rather than raw hex IDs.
+      if (desc.empty()) {
+        if (const auto mod = symlinkBasename(dev / "driver" / "module")) {
+          desc = *mod;
+        } else if (const auto drv = symlinkBasename(dev / "driver")) {
+          desc = *drv;
+        }
+      }
+
+      if (desc.empty()) {
+        // Last resort: interface name.
+        desc = ifname;
+      }
+    }
+
+    if (desc.empty()) desc = ifname;
+
+    // One-line per NIC.
+    std::ostringstream l;
+    l << "NIC" << i << ": " << desc;
+    if (!speedStr.empty()) l << " (" << speedStr << ")";
+    lines.push_back(l.str());
+  }
+
+  return lines;
+}
+
+static std::vector<std::string> probePerDiskLinesLinux() {
+  namespace fs = std::filesystem;
+  const fs::path base("/sys/block");
+  std::error_code ec;
+  if (!fs::exists(base, ec)) return {};
+
+  std::vector<std::string> names;
+  for (const auto& e : fs::directory_iterator(base, ec)) {
+    if (ec) break;
+    const std::string n = e.path().filename().string();
+    if (n.empty()) continue;
+    if (n.rfind("loop", 0) == 0) continue;
+    if (n.rfind("ram", 0) == 0) continue;
+    names.push_back(n);
+  }
+  std::sort(names.begin(), names.end());
+
+  std::vector<std::string> lines;
+
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    const std::string& devName = names[i];
+    const fs::path p = base / devName;
+
+    std::string model;
+    if (const auto m = readTextFileTrim(p / "device" / "model")) {
+      model = *m;
+    } else if (const auto m = readTextFileTrim(p / "device" / "name")) {
+      model = *m;
+    }
+    if (model.empty()) model = devName;
+
+    const bool isNvme = (devName.rfind("nvme", 0) == 0);
+
+    // Size
+    std::uint64_t sectors = 0;
+    if (const auto s = readTextFileTrim(p / "size")) {
+      sectors = static_cast<std::uint64_t>(std::strtoull(s->c_str(), nullptr, 10));
+    }
+    std::uint64_t sectorSize = 512;
+    if (const auto ss = readTextFileTrim(p / "queue" / "hw_sector_size")) {
+      const std::uint64_t v = static_cast<std::uint64_t>(std::strtoull(ss->c_str(), nullptr, 10));
+      if (v > 0) sectorSize = v;
+    } else if (const auto ss = readTextFileTrim(p / "queue" / "logical_block_size")) {
+      const std::uint64_t v = static_cast<std::uint64_t>(std::strtoull(ss->c_str(), nullptr, 10));
+      if (v > 0) sectorSize = v;
+    }
+
+    std::string sizeG;
+    if (sectors > 0) {
+      const std::uint64_t bytes = sectors * sectorSize;
+      const double g = static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0);
+      const long rounded = static_cast<long>(std::llround(g));
+      if (std::abs(g - static_cast<double>(rounded)) < 0.05) {
+        sizeG = std::to_string(rounded) + "G";
+      } else {
+        std::ostringstream oss;
+        oss.setf(std::ios::fixed);
+        oss.precision(1);
+        oss << g << "G";
+        sizeG = oss.str();
+      }
+    }
+
+    // One-line per disk.
+    std::ostringstream l;
+    l << "Disk" << i << ": ";
+    if (isNvme) l << "NVMe ";
+    l << model;
+    if (!sizeG.empty()) l << " " << sizeG;
+    lines.push_back(l.str());
+  }
+
+  return lines;
+}
+
 static std::string joinWith(const std::vector<std::string>& parts, const char* sep) {
   if (parts.empty()) return std::string();
   std::ostringstream oss;
@@ -790,30 +1159,50 @@ static std::string probeGpuDriver() {
 
 std::vector<std::string> HardwareInfo::toLines() const {
   const bool hasPerGpu = !perGpuLines.empty();
-  std::vector<std::string> lines = {
-      "OS: " + (osPretty.empty() ? std::string(kUnknown) : osPretty),
-      "Kernel: " + (kernelVersion.empty() ? std::string(kUnknown) : kernelVersion),
-      "CPU: " + (cpuName.empty() ? std::string(kUnknown) : cpuName),
-      "CPU Instructions: " + (cpuInstructions.empty() ? std::string(kUnknown) : cpuInstructions),
-      "RAM: " + (ramSummary.empty() ? std::string(kUnknown) : ramSummary),
-      hasPerGpu ? std::string() : ("GPU: " + (gpuName.empty() ? std::string(kUnknown) : gpuName)),
-      "GPU Driver: " + (gpuDriver.empty() ? std::string(kUnknown) : gpuDriver),
-  };
+  const bool hasPerNic = !perNicLines.empty();
+  const bool hasPerDisk = !perDiskLines.empty();
+  std::vector<std::string> lines;
+  lines.reserve(48);
 
-  lines.erase(std::remove_if(lines.begin(), lines.end(), [](const std::string& s) { return s.empty(); }), lines.end());
+  lines.push_back("OS: " + (osPretty.empty() ? std::string(kUnknown) : osPretty));
+  lines.push_back("Kernel: " + (kernelVersion.empty() ? std::string(kUnknown) : kernelVersion));
 
-  for (const auto& l : perGpuLines) lines.push_back(l);
+  // Requested: these should be under OS/KERNEL and before CPU.
+  lines.push_back("GPU Driver: " + (gpuDriver.empty() ? std::string(kUnknown) : gpuDriver));
+  lines.push_back("CUDA: " + (cudaVersion.empty() ? std::string(kUnknown) : cudaVersion));
+  lines.push_back("NVML: " + (nvmlVersion.empty() ? std::string(kUnknown) : nvmlVersion));
+  lines.push_back("ROCm: " + (rocmVersion.empty() ? std::string(kUnknown) : rocmVersion));
+  lines.push_back("OpenCL: " + (openclVersion.empty() ? std::string(kUnknown) : openclVersion));
+  lines.push_back("Vulkan: " + (vulkanVersion.empty() ? std::string(kUnknown) : vulkanVersion));
 
-  lines.insert(lines.end(), {
-      hasPerGpu ? std::string() : ("VRAM: " + (vramSummary.empty() ? std::string(kUnknown) : vramSummary)),
-      "CUDA: " + (cudaVersion.empty() ? std::string(kUnknown) : cudaVersion),
-      "NVML: " + (nvmlVersion.empty() ? std::string(kUnknown) : nvmlVersion),
-      "ROCm: " + (rocmVersion.empty() ? std::string(kUnknown) : rocmVersion),
-        "OpenCL: " + (openclVersion.empty() ? std::string(kUnknown) : openclVersion),
-      "Vulkan: " + (vulkanVersion.empty() ? std::string(kUnknown) : vulkanVersion),
-  });
+  // Requested: a space after those before CPU.
+  lines.push_back(std::string());
 
-  lines.erase(std::remove_if(lines.begin(), lines.end(), [](const std::string& s) { return s.empty(); }), lines.end());
+  lines.push_back("CPU: " + (cpuName.empty() ? std::string(kUnknown) : cpuName));
+  lines.push_back("CPU Physical cores: " + (cpuPhysicalCores.empty() ? std::string(kUnknown) : cpuPhysicalCores));
+  lines.push_back("CPU Logical cores: " + (cpuLogicalCores.empty() ? std::string(kUnknown) : cpuLogicalCores));
+  lines.push_back("CPU Cache L1: " + (cpuCacheL1.empty() ? std::string(kUnknown) : cpuCacheL1));
+  lines.push_back("CPU Cache L2: " + (cpuCacheL2.empty() ? std::string(kUnknown) : cpuCacheL2));
+  lines.push_back("CPU Cache L3: " + (cpuCacheL3.empty() ? std::string(kUnknown) : cpuCacheL3));
+  lines.push_back("CPU Instructions: " + (cpuInstructions.empty() ? std::string(kUnknown) : cpuInstructions));
+  lines.push_back("RAM: " + (ramSummary.empty() ? std::string(kUnknown) : ramSummary));
+
+  // GPU hardware details after CPU/RAM.
+  lines.push_back(std::string());
+
+  if (!hasPerGpu) {
+    lines.push_back("GPU: " + (gpuName.empty() ? std::string(kUnknown) : gpuName));
+    lines.push_back("VRAM: " + (vramSummary.empty() ? std::string(kUnknown) : vramSummary));
+  } else {
+    for (const auto& l : perGpuLines) lines.push_back(l);
+  }
+
+  // Vulkan is shown in the OS/Kernel block.
+
+  // NICs/Disks go at the end; each entry is one line.
+  if (hasPerNic || hasPerDisk) lines.push_back(std::string());
+  for (const auto& l : perNicLines) lines.push_back(l);
+  for (const auto& l : perDiskLines) lines.push_back(l);
 
   return lines;
 }
@@ -823,11 +1212,18 @@ HardwareInfo HardwareInfo::probe() {
   info.osPretty = readOsPrettyName().value_or(kUnknown);
   info.kernelVersion = probeKernelVersion();
   info.cpuName = probeCpuName();
+  info.cpuPhysicalCores = probeCpuPhysicalCores();
+  info.cpuLogicalCores = probeCpuLogicalCores();
+  info.cpuCacheL1 = probeCpuCacheL1();
+  info.cpuCacheL2 = probeCpuCacheLevel("2");
+  info.cpuCacheL3 = probeCpuCacheLevel("3");
   info.cpuInstructions = probeCpuInstructions();
   info.ramSummary = probeRamSummary();
   info.gpuName = probeGpuName();
   info.gpuDriver = probeGpuDriver();
   info.perGpuLines = probePerGpuLinesNvidia();
+  info.perNicLines = probePerNicLinesLinux();
+  info.perDiskLines = probePerDiskLinesLinux();
   info.vramSummary = probeVramSummary();
   info.cudaVersion = probeCudaVersion();
   info.nvmlVersion = probeNvmlVersion();

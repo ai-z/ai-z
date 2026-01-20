@@ -165,7 +165,8 @@ static void drawFooter(int rows, int cols, Screen screen, std::uint32_t refreshM
   const int y = rows - 1;
   int x = 0;
 
-  mvhline(y, 0, ' ', cols);
+  // Avoid blanking the full footer row; let ncurses diff the previous frame.
+  move(y, 0);
 
   const bool colors = has_colors() != 0;
 
@@ -231,6 +232,8 @@ static void drawFooter(int rows, int cols, Screen screen, std::uint32_t refreshM
   addKeyBlock(" F10 ");
   addPlain(" ");
   addLabelWithHot("Quit", 'Q');
+
+  clrtoeol();
 }
 
 static void drawHeader(int cols, const std::string& title) {
@@ -354,9 +357,13 @@ static int drawTitleBarTimelines(int cols,
   const bool colors = has_colors() != 0;
   const int headerRows = 1 + static_cast<int>(gpus.size());
 
-  for (int row = 0; row < headerRows; ++row) {
-    mvhline(row, 0, ' ', cols);
-  }
+  (void)showDiskRead;
+  (void)showDiskWrite;
+  (void)showNetRx;
+  (void)showNetTx;
+
+  // Avoid clearing full rows each frame. Clearing forces ncurses to treat the
+  // whole line as changed, which is noticeably slow over SSH.
 
   enum class Align {
     Left,
@@ -421,6 +428,9 @@ static int drawTitleBarTimelines(int cols,
 
     addLabel(0, x, "NET R/T:");
     addValueField(0, x, netStr, 24, Align::Left);
+
+    // Clear any leftover chars from previous frames.
+    clrtoeol();
   }
 
   // Lines 2..N: one line per GPU present
@@ -468,6 +478,9 @@ static int drawTitleBarTimelines(int cols,
     const std::string pcieRStr = pcieRx ? (fmt0(pcieRx->value) + pcieRx->unit) : std::string("--");
     addLabel(row, x, "PCIE T/R:");
     addValueField(row, x, pcieTStr + "/" + pcieRStr, 22, Align::Left);
+
+    // Clear any leftover chars from previous frames.
+    clrtoeol();
   }
 
   return headerRows;
@@ -544,6 +557,9 @@ static void drawTimelines(
     const Timeline& netTxTl,
     const Timeline& pcieRxTl,
     const Timeline& pcieTxTl) {
+  (void)disk;
+  (void)diskTl;
+
   struct Panel {
     std::string name;
     bool enabled;
@@ -588,10 +604,10 @@ static void drawTimelines(
   panels.push_back(Panel{"PCIe TX", cfg.showPcieTx, &pcieTx, &pcieTxTl, 32'000.0, gpuContext(0)});
 
   // Disk/network last.
-  panels.push_back(Panel{"DiskR", cfg.showDiskRead, &diskRead, &diskReadTl, 5000.0, std::string{}});
-  panels.push_back(Panel{"DiskW", cfg.showDiskWrite, &diskWrite, &diskWriteTl, 5000.0, std::string{}});
-  panels.push_back(Panel{"NetRX", cfg.showNetRx, &netRx, &netRxTl, 5000.0, std::string{}});
-  panels.push_back(Panel{"NetTX", cfg.showNetTx, &netTx, &netTxTl, 5000.0, std::string{}});
+  panels.push_back(Panel{"Disk Read", cfg.showDiskRead, &diskRead, &diskReadTl, 5000.0, "#0"});
+  panels.push_back(Panel{"Disk Write", cfg.showDiskWrite, &diskWrite, &diskWriteTl, 5000.0, "#0"});
+  panels.push_back(Panel{"Net RX", cfg.showNetRx, &netRx, &netRxTl, 5000.0, "#0"});
+  panels.push_back(Panel{"Net TX", cfg.showNetTx, &netTx, &netTxTl, 5000.0, "#0"});
 
   panels.erase(
       std::remove_if(panels.begin(), panels.end(), [](const Panel& p) { return !p.enabled; }),
@@ -668,9 +684,14 @@ static void drawBenchmarks(
   const std::vector<std::string>& rowResults,
   bool benchesRunning,
   int runningRow,
-  std::uint64_t tick) {
+  std::uint64_t tick,
+  std::vector<int>* selectionY) {
   const bool colors = has_colors() != 0;
   int y = headerRows;
+
+  if (selectionY) {
+    selectionY->assign(rowTitles.size() + 1, -1);  // +1 for "run all" at index 0.
+  }
 
   std::size_t maxBenchNameLen = 0;
   for (std::size_t i = 0; i < rowTitles.size() && i < rowIsHeader.size(); ++i) {
@@ -698,32 +719,38 @@ static void drawBenchmarks(
   {
     // Spacer between the header bar and the first action.
     if (y < rows - 2) {
-      mvhline(y, 0, ' ', cols);
+      move(y, 0);
+      clrtoeol();
       ++y;
     }
 
+    if (y >= rows - 2) return;
+
     const std::string prefix = (selected == 0 ? "> " : "  ");
     const std::string label = "Run all benchmarks";
-    mvhline(y, 0, ' ', cols);
     mvaddnstr(y, 0, prefix.c_str(), cols);
+    if (selectionY) (*selectionY)[0] = y;
     if (colors) attron(COLOR_PAIR(6) | A_BOLD);
     if (static_cast<int>(prefix.size()) < cols) {
       mvaddnstr(y, static_cast<int>(prefix.size()), label.c_str(), cols - static_cast<int>(prefix.size()));
     }
     if (colors) attroff(COLOR_PAIR(6) | A_BOLD);
+    clrtoeol();
     ++y;
     // Blank spacer line between "run all" and individual benches.
     if (y < rows - 2) {
-      mvhline(y, 0, ' ', cols);
+      move(y, 0);
+      clrtoeol();
       ++y;
     }
   }
 
   for (int row = 0; row < static_cast<int>(rowTitles.size()); ++row) {
+    if (y >= rows - 2) break;
+
     const int rowIndex = row + 1;  // shifted by "run all"
     const bool isHeader = rowIsHeader[static_cast<std::size_t>(row)];
     const auto& b = rowBenches[static_cast<std::size_t>(row)];
-    mvhline(y, 0, ' ', cols);
 
     const std::string prefix = (!isHeader && rowIndex == selected) ? "> " : "  ";
     const std::string name = rowTitles[static_cast<std::size_t>(row)];
@@ -736,17 +763,28 @@ static void drawBenchmarks(
       const std::string kind = (name.rfind("GPU", 0) == 0) ? "GPU" : ((name.rfind("CPU", 0) == 0) ? "CPU" : "");
       if (kind == "CPU" && lastHeaderKind == "GPU") {
         if (y < rows - 2) {
-          mvhline(y, 0, ' ', cols);
+          move(y, 0);
+          clrtoeol();
           ++y;
-          mvhline(y, 0, ' ', cols);
+          if (y >= rows - 2) break;
+          move(y, 0);
+          clrtoeol();
         }
       }
       if (colors) attron(COLOR_PAIR(4) | A_BOLD);
       mvaddnstr(y, static_cast<int>(prefix.size()), name.c_str(), std::max(0, cols - static_cast<int>(prefix.size())));
       if (colors) attroff(COLOR_PAIR(4) | A_BOLD);
+      clrtoeol();
       ++y;
       if (!kind.empty()) lastHeaderKind = kind;
       continue;
+    }
+
+    if (selectionY) {
+      const int rowIndex = row + 1;  // shifted by "run all"
+      if (rowIndex >= 0 && static_cast<std::size_t>(rowIndex) < selectionY->size()) {
+        (*selectionY)[static_cast<std::size_t>(rowIndex)] = y;
+      }
     }
 
     // Benchmark rows: show a 1-char spinner (if running) and "NAME: value" on a single line.
@@ -786,6 +824,7 @@ static void drawBenchmarks(
     if (colors && avail) attroff(COLOR_PAIR(4) | A_BOLD);
     x += static_cast<int>(namePart.size());
     if (x < cols) mvaddnstr(y, x, valuePart.c_str(), cols - x);
+    clrtoeol();
     ++y;
 
     // If the result has extra lines (errors/details), show them underneath indented.
@@ -794,9 +833,10 @@ static void drawBenchmarks(
       while (start <= r.size() && y < rows - 2) {
         const std::size_t end = r.find('\n', start);
         const std::string extra = (end == std::string::npos) ? r.substr(start) : r.substr(start, end - start);
-        mvhline(y, 0, ' ', cols);
+        move(y, 0);
         const int ix = static_cast<int>(prefix.size()) + 2;
         if (ix < cols) mvaddnstr(y, ix, extra.c_str(), cols - ix);
+        clrtoeol();
         ++y;
         if (end == std::string::npos) break;
         start = end + 1;
@@ -804,8 +844,9 @@ static void drawBenchmarks(
     }
   }
 
-  mvhline(rows - 3, 0, ' ', cols);
+  move(rows - 3, 0);
   mvaddnstr(rows - 3, 0, "Enter: run   Esc: back", cols);
+  clrtoeol();
 }
 
 static void drawConfig(int rows, int cols, int selected, const Config& cfg) {
@@ -814,8 +855,8 @@ static void drawConfig(int rows, int cols, int selected, const Config& cfg) {
       {"CPU usage", cfg.showCpu},
       {"GPU usage", cfg.showGpu},
       {"GPU memory util", cfg.showGpuMem},
-      {"Disk read", cfg.showDiskRead},
-      {"Disk write", cfg.showDiskWrite},
+      {"Disk Read", cfg.showDiskRead},
+      {"Disk Write", cfg.showDiskWrite},
       {"Net RX", cfg.showNetRx},
       {"Net TX", cfg.showNetTx},
       {"PCIe RX", cfg.showPcieRx},
@@ -1048,6 +1089,13 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   cbreak();
   noecho();
   keypad(stdscr, TRUE);
+
+  // Arrow keys are typically encoded as escape sequences. The default ESCDELAY can
+  // make them feel sluggish and can also contribute to perceived input backlog.
+  // Keep it small so navigation is snappy.
+#if defined(NCURSES_VERSION)
+  set_escdelay(1);
+#endif
   curs_set(0);
 
   if (has_colors()) {
@@ -1275,6 +1323,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     if (hwReady && benchReady) return;
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
+    (void)rows;
     erase();
     drawHeader(cols, "AI-Z - Initializing");
     mvhline(2, 0, ' ', cols);
@@ -1314,7 +1363,15 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   int configSelected = 0;
   std::string lastBenchResult;
 
+  // Benchmarks navigation fast-path: map selection index -> screen y.
+  std::vector<int> benchSelectionY;
+  bool benchSelectionYValid = false;
+
   std::uint64_t uiTick = 0;
+
+  int lastRows = -1;
+  int lastCols = -1;
+  Screen lastScreen = screen;
 
   bool running = true;
 
@@ -1341,6 +1398,191 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     // Join completed benchmark worker (if any) so we can start another run.
     if (benchThread.joinable() && !benchesRunning.load()) {
       benchThread.join();
+    }
+
+    // Input first: if a key is pressed, apply it and render the updated state
+    // immediately, instead of waiting for the next refresh tick.
+    {
+      const std::uint32_t waitMs = benchesRunning.load() ? std::min<std::uint32_t>(cfg.refreshMs, 100u) : cfg.refreshMs;
+      timeout(static_cast<int>(waitMs));
+      const int ch = getch();
+
+      // If the UI is rendering/sampling slowly, key-repeat can build up in the input
+      // buffer. Drain any queued input immediately so navigation doesn't "coast"
+      // for seconds after releasing a key.
+      std::vector<int> queuedKeys;
+      if (ch != ERR) {
+        queuedKeys.push_back(ch);
+        timeout(0);
+        for (;;) {
+          const int next = getch();
+          if (next == ERR) break;
+          queuedKeys.push_back(next);
+        }
+      }
+
+      const int benchSelectedBeforeKeys = benchSelected;
+      Screen screenBeforeKeys = screen;
+
+      for (const int k : queuedKeys) {
+        // Function keys (htop-style)
+        if (k == KEY_F(1)) screen = Screen::Help;
+        else if (k == KEY_F(2)) {
+          ensureHardwareAndBenches();
+          benchSelected = clampBenchSelected(benchSelected);
+          screen = Screen::Hardware;
+        }
+        else if (k == KEY_F(3)) {
+          ensureHardwareAndBenches();
+          benchSelected = clampBenchSelected(benchSelected);
+          screen = Screen::Benchmarks;
+        }
+        else if (k == KEY_F(4)) screen = Screen::Config;
+        else if (k == KEY_F(10)) running = false;
+
+        // Letter shortcuts
+        else if (k == 'h' || k == 'H') screen = Screen::Help;
+        else if (k == 'w' || k == 'W') {
+          ensureHardwareAndBenches();
+          benchSelected = clampBenchSelected(benchSelected);
+          screen = Screen::Hardware;
+        }
+        else if (k == 'b' || k == 'B') {
+          ensureHardwareAndBenches();
+          benchSelected = clampBenchSelected(benchSelected);
+          screen = Screen::Benchmarks;
+        }
+        else if (k == 'c' || k == 'C') screen = Screen::Config;
+        else if (k == 'q' || k == 'Q') running = false;
+
+        // Sampling / scroll speed
+        else if (k == '+' || k == '=') adjustRefreshMs(true);
+        else if (k == '-' || k == '_') adjustRefreshMs(false);
+
+        else if (k == 27) screen = Screen::Timelines;  // ESC
+        else {
+          if (screen == Screen::Benchmarks) {
+            if (k == KEY_UP) benchSelected = clampBenchSelected(benchSelected - 1);
+            else if (k == KEY_DOWN) benchSelected = clampBenchSelected(benchSelected + 1);
+            else if (k == '\n' || k == KEY_ENTER) {
+              // Run benchmarks on a worker thread so the UI can keep updating.
+              if (benchThread.joinable() && benchesRunning.load()) {
+                // Ignore activation while a run is in progress.
+              } else {
+                if (benchThread.joinable() && !benchesRunning.load()) benchThread.join();
+
+                if (benchSelected == 0) {
+                  // Run all benchmarks.
+                  lastBenchResult = "Running all...";
+                  benchesRunning.store(true);
+                  runningBenchRow.store(-1);
+                  benchThread = std::thread([&]() {
+                    for (int row = 0; row < static_cast<int>(benchRowBenches.size()); ++row) {
+                      if (benchRowIsHeader[static_cast<std::size_t>(row)]) continue;
+                      runningBenchRow.store(row);
+
+                      auto& b = benchRowBenches[static_cast<std::size_t>(row)];
+                      const BenchResult r = b ? b->run() : BenchResult{false, "(null benchmark)"};
+
+                      {
+                        std::lock_guard<std::mutex> lk(benchMutex);
+                        if (static_cast<std::size_t>(row) < benchRowResults.size()) {
+                          benchRowResults[static_cast<std::size_t>(row)] = r.ok ? r.summary : ("FAIL: " + r.summary);
+                        }
+                      }
+                    }
+
+                    runningBenchRow.store(-1);
+                    benchesRunning.store(false);
+                  });
+                } else {
+                  const int row = benchSelected - 1;
+                  if (row >= 0 && row < static_cast<int>(benchRowBenches.size()) && !benchRowIsHeader[static_cast<std::size_t>(row)]) {
+                    lastBenchResult = "Running...";
+                    benchesRunning.store(true);
+                    runningBenchRow.store(row);
+                    benchThread = std::thread([&, row]() {
+                      auto& b = benchRowBenches[static_cast<std::size_t>(row)];
+                      const BenchResult r = b ? b->run() : BenchResult{false, "(null benchmark)"};
+
+                      {
+                        std::lock_guard<std::mutex> lk(benchMutex);
+                        if (static_cast<std::size_t>(row) < benchRowResults.size()) {
+                          benchRowResults[static_cast<std::size_t>(row)] = r.ok ? r.summary : ("FAIL: " + r.summary);
+                        }
+                      }
+
+                      runningBenchRow.store(-1);
+                      benchesRunning.store(false);
+                    });
+                  } else {
+                    lastBenchResult = "(not runnable)";
+                  }
+                }
+              }
+            }
+          } else if (screen == Screen::Config) {
+            if (k == KEY_UP) configSelected = std::max(0, configSelected - 1);
+            else if (k == KEY_DOWN) configSelected = std::min(11, configSelected + 1);
+            else if (k == ' ') {
+              switch (configSelected) {
+                case 0: cfg.showCpu = !cfg.showCpu; break;
+                case 1: cfg.showGpu = !cfg.showGpu; break;
+                case 2: cfg.showGpuMem = !cfg.showGpuMem; break;
+                case 3: cfg.showDiskRead = !cfg.showDiskRead; break;
+                case 4: cfg.showDiskWrite = !cfg.showDiskWrite; break;
+                case 5: cfg.showNetRx = !cfg.showNetRx; break;
+                case 6: cfg.showNetTx = !cfg.showNetTx; break;
+                case 7: cfg.showPcieRx = !cfg.showPcieRx; break;
+                case 8: cfg.showPcieTx = !cfg.showPcieTx; break;
+                case 9: cfg.showRam = !cfg.showRam; break;
+                case 10: cfg.showVram = !cfg.showVram; break;
+                case 11: cfg = Config{}; break;  // reset to defaults
+              }
+            } else if (k == '\n' || k == KEY_ENTER) {
+              // Enter only activates the action row to avoid accidental toggles.
+              if (configSelected == 11) cfg = Config{};
+            } else if (k == 'd' || k == 'D') {
+              cfg = Config{};
+            } else if (k == 's') {
+              cfg.save();
+            }
+          } else if (screen == Screen::Hardware) {
+            if (k == 'r') {
+              ensureHardwareAndBenches();
+              benchSelected = clampBenchSelected(benchSelected);
+            }
+          }
+        }
+      }
+
+      // Benchmarks navigation fast-path: if the only change is selection movement,
+      // update just the 2-character prefix on the old/new rows and skip the heavy redraw.
+      const bool stayedOnBenchmarks = (screenBeforeKeys == Screen::Benchmarks && screen == Screen::Benchmarks);
+      const bool selectionChanged = (benchSelected != benchSelectedBeforeKeys);
+      if (stayedOnBenchmarks && selectionChanged && !benchesRunning.load() && benchSelectionYValid) {
+        auto yForSel = [&](int sel) -> int {
+          if (sel < 0) return -1;
+          const std::size_t idx = static_cast<std::size_t>(sel);
+          if (idx >= benchSelectionY.size()) return -1;
+          return benchSelectionY[idx];
+        };
+
+        const int yOld = yForSel(benchSelectedBeforeKeys);
+        const int yNew = yForSel(benchSelected);
+        if (yOld >= 0 && yNew >= 0) {
+          mvaddnstr(yOld, 0, "  ", 2);
+          mvaddnstr(yNew, 0, "> ", 2);
+          refresh();
+          continue;
+        }
+      }
+
+      // If we moved into/out of benchmarks (or we did any other action), the cached
+      // mapping is no longer trustworthy.
+      if (screen != Screen::Benchmarks) {
+        benchSelectionYValid = false;
+      }
     }
 
     int rows = 0, cols = 0;
@@ -1506,7 +1748,15 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     pcieRxTl.push(pcieRx ? pcieRx->value : 0.0);
     pcieTxTl.push(pcieTx ? pcieTx->value : 0.0);
 
-    erase();
+    // Avoid clearing the entire screen every frame. Doing so defeats ncurses'
+    // diff-based refresh and can introduce noticeable input-to-render latency on
+    // slower terminals.
+    if (rows != lastRows || cols != lastCols || screen != lastScreen) {
+      erase();
+      lastRows = rows;
+      lastCols = cols;
+      lastScreen = screen;
+    }
 
     if (screen == Screen::Timelines) {
       // Custom title bar: green labels, black value background.
@@ -1517,8 +1767,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       drawHeader(cols, "AI-Z - Help");
       drawHelp(rows, cols);
     } else if (screen == Screen::Benchmarks) {
-      // Show the same basic metrics header as the main screen.
-      const int headerRows = drawTitleBarTimelines(cols, cpu, cfg.showDiskRead, cfg.showDiskWrite, diskRead, diskWrite, cfg.showNetRx, cfg.showNetTx, netRx, netTx, pcieRx, pcieTx, ram, gpuTel);
+      // Benchmarks screen: keep it lightweight (especially over SSH). Users who
+      // want live stats can run a separate AI-Z instance.
+      drawHeader(cols, "AI-Z - Benchmarks");
+      const int headerRows = 2;
       std::vector<std::string> resultsCopy;
       {
         std::lock_guard<std::mutex> lk(benchMutex);
@@ -1535,7 +1787,9 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           resultsCopy,
           benchesRunning.load(),
           runningBenchRow.load(),
-          uiTick);
+          uiTick,
+          &benchSelectionY);
+      benchSelectionYValid = true;
     } else if (screen == Screen::Config) {
       drawHeader(cols, "AI-Z - Config");
       drawConfig(rows, cols, configSelected, cfg);
@@ -1546,143 +1800,6 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
     drawFooter(rows, cols, screen, cfg.refreshMs);
     refresh();
-
-    // Wait up to refreshMs for input; wake immediately on keypress.
-    // While benchmarks are running, cap the sleep so the spinner animates.
-    const std::uint32_t waitMs = benchesRunning.load() ? std::min<std::uint32_t>(cfg.refreshMs, 100u) : cfg.refreshMs;
-    timeout(static_cast<int>(waitMs));
-    const int ch = getch();
-    if (ch != ERR) {
-      // Function keys (htop-style)
-      if (ch == KEY_F(1)) screen = Screen::Help;
-      else if (ch == KEY_F(2)) {
-        ensureHardwareAndBenches();
-        benchSelected = clampBenchSelected(benchSelected);
-        screen = Screen::Hardware;
-      }
-      else if (ch == KEY_F(3)) {
-        ensureHardwareAndBenches();
-        benchSelected = clampBenchSelected(benchSelected);
-        screen = Screen::Benchmarks;
-      }
-      else if (ch == KEY_F(4)) screen = Screen::Config;
-      else if (ch == KEY_F(10)) running = false;
-
-      // Letter shortcuts
-      else if (ch == 'h' || ch == 'H') screen = Screen::Help;
-      else if (ch == 'w' || ch == 'W') {
-        ensureHardwareAndBenches();
-        benchSelected = clampBenchSelected(benchSelected);
-        screen = Screen::Hardware;
-      }
-      else if (ch == 'b' || ch == 'B') {
-        ensureHardwareAndBenches();
-        benchSelected = clampBenchSelected(benchSelected);
-        screen = Screen::Benchmarks;
-      }
-      else if (ch == 'c' || ch == 'C') screen = Screen::Config;
-      else if (ch == 'q' || ch == 'Q') running = false;
-
-      // Sampling / scroll speed
-      else if (ch == '+' || ch == '=') adjustRefreshMs(true);
-      else if (ch == '-' || ch == '_') adjustRefreshMs(false);
-
-      else if (ch == 27) screen = Screen::Timelines;  // ESC
-      else {
-        if (screen == Screen::Benchmarks) {
-          if (ch == KEY_UP) benchSelected = clampBenchSelected(benchSelected - 1);
-          else if (ch == KEY_DOWN) benchSelected = clampBenchSelected(benchSelected + 1);
-          else if (ch == '\n' || ch == KEY_ENTER) {
-            // Run benchmarks on a worker thread so the UI can keep updating.
-            if (benchThread.joinable() && benchesRunning.load()) {
-              // Ignore activation while a run is in progress.
-            } else {
-              if (benchThread.joinable() && !benchesRunning.load()) benchThread.join();
-
-              if (benchSelected == 0) {
-                // Run all benchmarks.
-                lastBenchResult = "Running all...";
-                benchesRunning.store(true);
-                runningBenchRow.store(-1);
-                benchThread = std::thread([&]() {
-                  for (int row = 0; row < static_cast<int>(benchRowBenches.size()); ++row) {
-                    if (benchRowIsHeader[static_cast<std::size_t>(row)]) continue;
-                    runningBenchRow.store(row);
-
-                    auto& b = benchRowBenches[static_cast<std::size_t>(row)];
-                    const BenchResult r = b ? b->run() : BenchResult{false, "(null benchmark)"};
-
-                    {
-                      std::lock_guard<std::mutex> lk(benchMutex);
-                      if (static_cast<std::size_t>(row) < benchRowResults.size()) {
-                        benchRowResults[static_cast<std::size_t>(row)] = r.ok ? r.summary : ("FAIL: " + r.summary);
-                      }
-                    }
-                  }
-
-                  runningBenchRow.store(-1);
-                  benchesRunning.store(false);
-                });
-              } else {
-                const int row = benchSelected - 1;
-                if (row >= 0 && row < static_cast<int>(benchRowBenches.size()) && !benchRowIsHeader[static_cast<std::size_t>(row)]) {
-                  lastBenchResult = "Running...";
-                  benchesRunning.store(true);
-                  runningBenchRow.store(row);
-                  benchThread = std::thread([&, row]() {
-                    auto& b = benchRowBenches[static_cast<std::size_t>(row)];
-                    const BenchResult r = b ? b->run() : BenchResult{false, "(null benchmark)"};
-
-                    {
-                      std::lock_guard<std::mutex> lk(benchMutex);
-                      if (static_cast<std::size_t>(row) < benchRowResults.size()) {
-                        benchRowResults[static_cast<std::size_t>(row)] = r.ok ? r.summary : ("FAIL: " + r.summary);
-                      }
-                    }
-
-                    runningBenchRow.store(-1);
-                    benchesRunning.store(false);
-                  });
-                } else {
-                  lastBenchResult = "(not runnable)";
-                }
-              }
-            }
-          }
-        } else if (screen == Screen::Config) {
-          if (ch == KEY_UP) configSelected = std::max(0, configSelected - 1);
-          else if (ch == KEY_DOWN) configSelected = std::min(11, configSelected + 1);
-          else if (ch == ' ') {
-            switch (configSelected) {
-              case 0: cfg.showCpu = !cfg.showCpu; break;
-              case 1: cfg.showGpu = !cfg.showGpu; break;
-              case 2: cfg.showGpuMem = !cfg.showGpuMem; break;
-              case 3: cfg.showDiskRead = !cfg.showDiskRead; break;
-              case 4: cfg.showDiskWrite = !cfg.showDiskWrite; break;
-              case 5: cfg.showNetRx = !cfg.showNetRx; break;
-              case 6: cfg.showNetTx = !cfg.showNetTx; break;
-              case 7: cfg.showPcieRx = !cfg.showPcieRx; break;
-              case 8: cfg.showPcieTx = !cfg.showPcieTx; break;
-              case 9: cfg.showRam = !cfg.showRam; break;
-              case 10: cfg.showVram = !cfg.showVram; break;
-              case 11: cfg = Config{}; break;  // reset to defaults
-            }
-          } else if (ch == '\n' || ch == KEY_ENTER) {
-            // Enter only activates the action row to avoid accidental toggles.
-            if (configSelected == 11) cfg = Config{};
-          } else if (ch == 'd' || ch == 'D') {
-            cfg = Config{};
-          } else if (ch == 's') {
-            cfg.save();
-          }
-        } else if (screen == Screen::Hardware) {
-          if (ch == 'r') {
-            ensureHardwareAndBenches();
-            benchSelected = clampBenchSelected(benchSelected);
-          }
-        }
-      }
-    }
   }
 
   nvmlStop.store(true);

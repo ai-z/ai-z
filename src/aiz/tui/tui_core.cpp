@@ -292,7 +292,7 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   title += "  ";
 
   if (cfg.showDiskRead) {
-    title += "DiskR ";
+    title += "Disk Read#0 ";
     if (state.latest.diskRead) {
       title += fmt1(state.latest.diskRead->value);
       title += state.latest.diskRead->unit;
@@ -303,7 +303,7 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   }
 
   if (cfg.showDiskWrite) {
-    title += "DiskW ";
+    title += "Disk Write#0 ";
     if (state.latest.diskWrite) {
       title += fmt1(state.latest.diskWrite->value);
       title += state.latest.diskWrite->unit;
@@ -314,7 +314,7 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   }
 
   if (cfg.showNetRx) {
-    title += "NetRX ";
+    title += "Net RX#0 ";
     if (state.latest.netRx) {
       title += fmt1(state.latest.netRx->value);
       title += state.latest.netRx->unit;
@@ -325,7 +325,7 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   }
 
   if (cfg.showNetTx) {
-    title += "NetTX ";
+    title += "Net TX#0 ";
     if (state.latest.netTx) {
       title += fmt1(state.latest.netTx->value);
       title += state.latest.netTx->unit;
@@ -365,11 +365,11 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   // PCIe before disk/network; disk and net last.
   panels.push_back(Panel{"PCIe (RX/TX)", (cfg.showPcieRx || cfg.showPcieTx), &state.latest.pcieRx, &state.pcieRxTl, &state.pcieTxTl, 32'000.0, true});
 
-  panels.push_back(Panel{"DiskR", cfg.showDiskRead, &state.latest.diskRead, &state.diskReadTl, nullptr, 5000.0, false});
-  panels.push_back(Panel{"DiskW", cfg.showDiskWrite, &state.latest.diskWrite, &state.diskWriteTl, nullptr, 5000.0, false});
+  panels.push_back(Panel{"Disk Read #0", cfg.showDiskRead, &state.latest.diskRead, &state.diskReadTl, nullptr, 5000.0, false});
+  panels.push_back(Panel{"Disk Write #0", cfg.showDiskWrite, &state.latest.diskWrite, &state.diskWriteTl, nullptr, 5000.0, false});
 
-  panels.push_back(Panel{"NetRX", cfg.showNetRx, &state.latest.netRx, &state.netRxTl, nullptr, 5000.0, false});
-  panels.push_back(Panel{"NetTX", cfg.showNetTx, &state.latest.netTx, &state.netTxTl, nullptr, 5000.0, false});
+  panels.push_back(Panel{"Net RX #0", cfg.showNetRx, &state.latest.netRx, &state.netRxTl, nullptr, 5000.0, false});
+  panels.push_back(Panel{"Net TX #0", cfg.showNetTx, &state.latest.netTx, &state.netTxTl, nullptr, 5000.0, false});
 
   panels.erase(
       std::remove_if(panels.begin(), panels.end(), [](const Panel& p) { return !p.enabled; }),
@@ -461,7 +461,7 @@ static void renderHelp(Frame& out, int bodyTop) {
       "",
       "Description:",
       "  C++ TUI for performance timelines and benchmarks.",
-      "  Timelines: CPU, RAM, VRAM, GPU, Disk read/write, Net RX/TX, PCIe RX/TX.",
+      "  Timelines: CPU, RAM, VRAM, GPU, Disk Read/Write, Net RX/TX, PCIe RX/TX.",
       "",
       "Guide:",
       "  - Timelines are vertical bars that scroll over time.",
@@ -497,8 +497,8 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
   const Item items[] = {
       {L"CPU usage", cfg.showCpu},
       {L"GPU usage", cfg.showGpu},
-      {L"Disk read", cfg.showDiskRead},
-      {L"Disk write", cfg.showDiskWrite},
+      {L"Disk Read", cfg.showDiskRead},
+      {L"Disk Write", cfg.showDiskWrite},
       {L"Net RX", cfg.showNetRx},
       {L"Net TX", cfg.showNetTx},
       {L"PCIe RX", cfg.showPcieRx},

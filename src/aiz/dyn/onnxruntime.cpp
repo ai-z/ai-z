@@ -2,6 +2,7 @@
 
 #include <dlfcn.h>
 #include <cstdlib>
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <vector>
