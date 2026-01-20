@@ -32,7 +32,6 @@
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <cctype>
 #include <cstring>
 #include <cstdio>
 #include <fstream>
@@ -62,82 +61,6 @@ static void ensureTimelineCapacity(Timeline& tl, std::size_t desiredCapacity) {
 // RAM/GPU telemetry formatting helpers live in ncurses_telemetry.{h,cpp}.
 
 // Device-name probing helpers live in ncurses_probe.{h,cpp}.
-
-[[maybe_unused]] static void drawFooter(int rows, int cols, Screen screen, std::uint32_t refreshMs) {
-  (void)screen;
-  const int y = rows - 1;
-  int x = 0;
-
-  // Avoid blanking the full footer row; let ncurses diff the previous frame.
-  move(y, 0);
-
-  const bool colors = has_colors() != 0;
-
-  auto addPlain = [&](const std::string& s) {
-    if (x >= cols) return;
-    mvaddnstr(y, x, s.c_str(), cols - x);
-    x += static_cast<int>(s.size());
-  };
-
-  auto addKeyBlock = [&](const std::string& keyToken) {
-    if (x >= cols) return;
-    if (colors) attron(COLOR_PAIR(1) | A_BOLD);
-    mvaddnstr(y, x, keyToken.c_str(), cols - x);
-    if (colors) attroff(COLOR_PAIR(1) | A_BOLD);
-    x += static_cast<int>(keyToken.size());
-  };
-
-  auto addLabelWithHot = [&](const std::string& label, char hot) {
-    if (x >= cols) return;
-    for (char c : label) {
-      if (x >= cols) break;
-      const bool isHot = (std::toupper(static_cast<unsigned char>(c)) == std::toupper(static_cast<unsigned char>(hot)));
-      if (colors && isHot) {
-        attron(COLOR_PAIR(2) | A_BOLD);
-        mvaddch(y, x, c);
-        attroff(COLOR_PAIR(2) | A_BOLD);
-      } else {
-        mvaddch(y, x, c);
-      }
-      ++x;
-    }
-  };
-
-  // Format: [F-key block][space][Label]
-  // Also supports letter shortcuts: H/W/B/C/Q.
-  addPlain("AI-Z  ");
-
-  addKeyBlock(" +/- ");
-  addPlain(" Speed ");
-  addPlain(std::to_string(refreshMs));
-  addPlain("ms  ");
-
-  addKeyBlock(" F1 ");
-  addPlain(" ");
-  addLabelWithHot("Help", 'H');
-  addPlain("  ");
-
-  addKeyBlock(" F2 ");
-  addPlain(" ");
-  addLabelWithHot("Hardware", 'W');
-  addPlain("  ");
-
-  addKeyBlock(" F3 ");
-  addPlain(" ");
-  addLabelWithHot("Benchmarks", 'B');
-  addPlain("  ");
-
-  addKeyBlock(" F4 ");
-  addPlain(" ");
-  addLabelWithHot("Config", 'C');
-  addPlain("  ");
-
-  addKeyBlock(" F10 ");
-  addPlain(" ");
-  addLabelWithHot("Quit", 'Q');
-
-  clrtoeol();
-}
 
 }  // namespace
 
