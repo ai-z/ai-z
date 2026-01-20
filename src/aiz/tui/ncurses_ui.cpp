@@ -2,7 +2,7 @@
 
 #include <aiz/tui/tui_core.h>
 
-#include <aiz/bench/factory.h>
+#include <aiz/bench/bench.h>
 #include <aiz/dyn/cuda.h>
 #include <aiz/hw/hardware_info.h>
 #include <aiz/metrics/cpu_usage.h>
@@ -25,6 +25,7 @@
 #include "ncurses_bench.h"
 #include "ncurses_sampler.h"
 #include "ncurses_bootprobe.h"
+#include "ncurses_bench_rows.h"
 
 #include <algorithm>
 #include <array>
@@ -376,63 +377,6 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   // Benchmark runner state: keep UI responsive while benchmarks execute.
   std::thread benchThread;
 
-  auto rebuildBenchRows = [&]() {
-    state.benches.clear();
-    state.benchRowTitles.clear();
-    state.benchRowIsHeader.clear();
-    state.benchResults.clear();
-
-    const std::vector<std::string> gpuNames = ncurses::parseGpuNames(hwCache, gpuCount);
-
-    auto addHeader = [&](const std::string& title) {
-      state.benches.push_back(nullptr);
-      state.benchRowTitles.push_back(title);
-      state.benchRowIsHeader.push_back(true);
-      state.benchResults.emplace_back();
-    };
-
-    auto addBench = [&](std::unique_ptr<IBenchmark> b) {
-      const std::string title = b ? b->name() : std::string("(null)");
-      state.benches.push_back(std::move(b));
-      state.benchRowTitles.push_back(title);
-      state.benchRowIsHeader.push_back(false);
-      state.benchResults.emplace_back();
-    };
-
-    for (unsigned int gi = 0; gi < gpuCount; ++gi) {
-      addHeader("GPU" + std::to_string(gi) + " - " + gpuNames[static_cast<std::size_t>(gi)]);
-      addBench(makeGpuCudaPcieBandwidthBenchmark(gi));
-      addBench(makeGpuVulkanPcieBandwidthBenchmark(gi));
-      addBench(makeGpuOpenclPcieBandwidthBenchmark(gi));
-      addBench(makeGpuFp32BenchmarkVulkan(gi));
-      addBench(makeGpuFp32BenchmarkOpencl(gi));
-      addBench(makeGpuFp16Benchmark(gi));
-      addBench(makeGpuFp32Benchmark(gi));
-      addBench(makeGpuFp64Benchmark(gi));
-      addBench(makeGpuInt4Benchmark(gi));
-      addBench(makeGpuInt8Benchmark(gi));
-
-      // Inference benchmarks: currently device-0 only.
-      if (gi == 0) {
-        addBench(makeOrtCudaMatMulBenchmark());
-        addBench(makeOrtCudaMemoryBandwidthBenchmark());
-      }
-    }
-
-    // If no GPUs are detected, still group GPU inference benches under a GPU header.
-    if (gpuCount == 0) {
-      addHeader("GPU0 - (no GPU detected)");
-      addBench(makeOrtCudaMatMulBenchmark());
-      addBench(makeOrtCudaMemoryBandwidthBenchmark());
-    }
-
-    addHeader("CPU0 - " + (hwCache.cpuName.empty() ? std::string("unknown") : hwCache.cpuName));
-    addBench(makeCpuFp16FlopsBenchmark());
-    addBench(makeCpuFp32FlopsBenchmark());
-    addBench(makeOrtCpuMatMulBenchmark());
-    addBench(makeOrtCpuMemoryBandwidthBenchmark());
-  };
-
   bool benchReady = false;
 
   auto ensureHardwareAndBenches = [&]() {
@@ -457,7 +401,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     state.hardwareLines = hwLines;
     state.hardwareDirty = false;
     hwReady = true;
-    rebuildBenchRows();
+    ncurses::rebuildBenchRows(state, hwCache, gpuCount);
     benchReady = true;
   };
 
@@ -777,7 +721,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       hwReady = true;
 
       // Initialize benchmark rows too so we don't re-probe later.
-      rebuildBenchRows();
+      ncurses::rebuildBenchRows(state, hwCache, gpuCount);
       benchReady = true;
 
       // Best-effort device names for timeline section titles.
