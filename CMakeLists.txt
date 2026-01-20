@@ -67,6 +67,7 @@ target_sources(ai-z PRIVATE
   src/aiz/tui/ncurses_render.cpp
   src/aiz/tui/ncurses_probe.cpp
   src/aiz/tui/ncurses_telemetry.cpp
+  src/aiz/tui/ncurses_bench.cpp
   src/aiz/tui/ncurses_ui.cpp
   src/aiz/tui/tui_core.cpp
 )

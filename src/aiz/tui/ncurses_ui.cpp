@@ -22,6 +22,7 @@
 #include "ncurses_render.h"
 #include "ncurses_probe.h"
 #include "ncurses_telemetry.h"
+#include "ncurses_bench.h"
 
 #include <algorithm>
 #include <array>
@@ -542,14 +543,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   while (running) {
     ++uiTick;
     // Join completed benchmark worker (if any) so we can start another run.
-    if (benchThread.joinable()) {
-      bool runningNow = false;
-      {
-        std::lock_guard<std::mutex> lk(state.benchMutex);
-        runningNow = state.benchmarksRunning;
-      }
-      if (!runningNow) benchThread.join();
-    }
+    ncurses::benchJoinIfDone(benchThread, state);
 
     // Input first: if a key is pressed, apply it and render the updated state
     // immediately, instead of waiting for the next refresh tick.
@@ -622,80 +616,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
         if (cmd == Command::Activate && state.screen == Screen::Benchmarks) {
           // Run benchmarks on a worker thread so the UI can keep updating.
-          bool runningNow = false;
-          {
-            std::lock_guard<std::mutex> lk(state.benchMutex);
-            runningNow = state.benchmarksRunning;
-          }
-          if (benchThread.joinable() && runningNow) {
-            // Ignore activation while a run is in progress.
-            continue;
-          }
-          if (benchThread.joinable() && !runningNow) benchThread.join();
-
-          if (state.benchmarksSel == 0) {
-            {
-              std::lock_guard<std::mutex> lk(state.benchMutex);
-              state.lastBenchResult = "Running all...";
-              state.benchmarksRunning = true;
-              state.runningBenchIndex = -1;
-            }
-            benchThread = std::thread([&]() {
-              for (int row = 0; row < static_cast<int>(state.benches.size()); ++row) {
-                if (row >= 0 && row < static_cast<int>(state.benchRowIsHeader.size()) &&
-                    state.benchRowIsHeader[static_cast<std::size_t>(row)]) {
-                  continue;
-                }
-                {
-                  std::lock_guard<std::mutex> lk(state.benchMutex);
-                  state.runningBenchIndex = row;
-                }
-
-                auto& b = state.benches[static_cast<std::size_t>(row)];
-                const BenchResult r = b ? b->run() : BenchResult{false, "(null benchmark)"};
-
-                {
-                  std::lock_guard<std::mutex> lk(state.benchMutex);
-                  if (static_cast<std::size_t>(row) < state.benchResults.size()) {
-                    state.benchResults[static_cast<std::size_t>(row)] = r.ok ? r.summary : ("FAIL: " + r.summary);
-                  }
-                }
-              }
-              {
-                std::lock_guard<std::mutex> lk(state.benchMutex);
-                state.runningBenchIndex = -1;
-                state.benchmarksRunning = false;
-              }
-            });
-          } else {
-            const int row = state.benchmarksSel - 1;
-            if (row >= 0 && row < static_cast<int>(state.benches.size()) &&
-                row < static_cast<int>(state.benchRowIsHeader.size()) &&
-                !state.benchRowIsHeader[static_cast<std::size_t>(row)]) {
-              {
-                std::lock_guard<std::mutex> lk(state.benchMutex);
-                state.lastBenchResult = "Running...";
-                state.benchmarksRunning = true;
-                state.runningBenchIndex = row;
-              }
-              benchThread = std::thread([&, row]() {
-                auto& b = state.benches[static_cast<std::size_t>(row)];
-                const BenchResult r = b ? b->run() : BenchResult{false, "(null benchmark)"};
-
-                {
-                  std::lock_guard<std::mutex> lk(state.benchMutex);
-                  if (static_cast<std::size_t>(row) < state.benchResults.size()) {
-                    state.benchResults[static_cast<std::size_t>(row)] = r.ok ? r.summary : ("FAIL: " + r.summary);
-                  }
-                  state.runningBenchIndex = -1;
-                  state.benchmarksRunning = false;
-                }
-              });
-            } else {
-              std::lock_guard<std::mutex> lk(state.benchMutex);
-              state.lastBenchResult = "(not runnable)";
-            }
-          }
+          ncurses::benchHandleActivate(benchThread, state);
           continue;
         }
       }
@@ -1014,10 +935,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   nvmlStop.store(true);
   if (nvmlThread.joinable()) nvmlThread.join();
   if (bootHwThread.joinable()) bootHwThread.join();
-  if (benchThread.joinable()) {
-    // Benchmarks are best-effort; allow them to finish before tearing down ncurses.
-    benchThread.join();
-  }
+  // Benchmarks are best-effort; allow them to finish before tearing down ncurses.
+  ncurses::benchShutdown(benchThread);
   endwin();
   return 0;
 }
