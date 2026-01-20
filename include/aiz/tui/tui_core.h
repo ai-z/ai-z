@@ -136,7 +136,8 @@ struct Viewport {
 };
 
 // Drives shared state transitions.
-void applyCommand(TuiState& state, const Config& cfg, Command cmd);
+// Note: this may mutate cfg for screen-local actions (e.g., Config toggles).
+void applyCommand(TuiState& state, Config& cfg, Command cmd);
 
 // Renders the current screen into a full frame.
 void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Config& cfg, bool debugMode);

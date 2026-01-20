@@ -4,6 +4,7 @@
 #include <aiz/hw/hardware_info.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -11,7 +12,36 @@
 
 namespace aiz {
 
-constexpr int kConfigItemCount = 12;
+struct ConfigToggleItem {
+  const wchar_t* label;
+  bool Config::*field;
+};
+
+static constexpr std::array<ConfigToggleItem, 11> kConfigToggleItems = {{
+    {L"CPU usage", &Config::showCpu},
+    {L"GPU usage", &Config::showGpu},
+    {L"GPU mem ctrl", &Config::showGpuMem},
+    {L"Disk Read", &Config::showDiskRead},
+    {L"Disk Write", &Config::showDiskWrite},
+    {L"Net RX", &Config::showNetRx},
+    {L"Net TX", &Config::showNetTx},
+    {L"PCIe RX", &Config::showPcieRx},
+    {L"PCIe TX", &Config::showPcieTx},
+    {L"RAM usage", &Config::showRam},
+    {L"VRAM usage", &Config::showVram},
+}};
+
+static constexpr int configToggleCount() {
+  return static_cast<int>(kConfigToggleItems.size());
+}
+
+static constexpr int configResetRowIndex() {
+  return configToggleCount();
+}
+
+static constexpr int configItemCount() {
+  return configToggleCount() + 1;
+}
 
 void Frame::resize(int w, int h) {
   width = std::max(0, w);
@@ -47,16 +77,8 @@ static void drawText(Frame& f, int x, int y, const std::wstring& s, Style style)
   }
 }
 
-static void fillLine(Frame& f, int y, wchar_t ch, Style style) {
-  if (y < 0 || y >= f.height) return;
-  for (int x = 0; x < f.width; ++x) {
-    auto& c = f.at(x, y);
-    c.ch = ch;
-    c.style = static_cast<std::uint16_t>(style);
-  }
-}
 
-void applyCommand(TuiState& state, const Config& /*cfg*/, Command cmd) {
+void applyCommand(TuiState& state, Config& cfg, Command cmd) {
   switch (cmd) {
     case Command::Quit:
       // handled by backend
@@ -115,7 +137,34 @@ void applyCommand(TuiState& state, const Config& /*cfg*/, Command cmd) {
 
   if (state.screen == Screen::Config) {
     if (cmd == Command::Up) state.configSel = std::max(0, state.configSel - 1);
-    if (cmd == Command::Down) state.configSel = std::min(kConfigItemCount - 1, state.configSel + 1);
+    if (cmd == Command::Down) state.configSel = std::min(configItemCount() - 1, state.configSel + 1);
+
+    if (cmd == Command::Toggle) {
+      if (state.configSel >= 0 && state.configSel < configToggleCount()) {
+        const auto& it = kConfigToggleItems[static_cast<std::size_t>(state.configSel)];
+        cfg.*(it.field) = !(cfg.*(it.field));
+      } else if (state.configSel == configResetRowIndex()) {
+        cfg = Config{};
+      }
+      return;
+    }
+
+    if (cmd == Command::Defaults) {
+      cfg = Config{};
+      return;
+    }
+
+    if (cmd == Command::Save) {
+      cfg.save();
+      return;
+    }
+
+    if (cmd == Command::Activate) {
+      // Enter only activates the action row to avoid accidental toggles.
+      if (state.configSel == configResetRowIndex()) cfg = Config{};
+      return;
+    }
+
     return;
   }
 }
@@ -159,17 +208,6 @@ static std::string fmtSampleOrDash(const std::optional<Sample>& s) {
   return fmt1(s->value) + s->unit;
 }
 
-static std::string placeholderForBenchmarkName(const std::string& n) {
-  // Keep this heuristic simple: reserve the typical multi-line shapes so the UI
-  // is expanded even before any runs.
-  if (n.find("PCIe") != std::string::npos || n.find("PCI") != std::string::npos) {
-    return "GPU0: --\nRX: --\nTX: --";
-  }
-  if (n.find("Floating") != std::string::npos || n.find("FLOPS") != std::string::npos) {
-    return "FLOPS: --";
-  }
-  return "--";
-}
 
 static std::string fmt0(double v) {
   char buf[64]{};
@@ -563,34 +601,15 @@ static void renderHelp(Frame& out, int bodyTop) {
 }
 
 static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiState& state) {
-  struct Item {
-    const wchar_t* label;
-    bool value;
-  };
-  const Item items[] = {
-      {L"CPU usage", cfg.showCpu},
-      {L"GPU usage", cfg.showGpu},
-      {L"GPU mem ctrl", cfg.showGpuMem},
-      {L"Disk Read", cfg.showDiskRead},
-      {L"Disk Write", cfg.showDiskWrite},
-      {L"Net RX", cfg.showNetRx},
-      {L"Net TX", cfg.showNetTx},
-      {L"PCIe RX", cfg.showPcieRx},
-      {L"PCIe TX", cfg.showPcieTx},
-      {L"RAM usage", cfg.showRam},
-      {L"VRAM usage", cfg.showVram},
-  };
-
-  constexpr int kToggleCount = static_cast<int>(sizeof(items) / sizeof(items[0]));
-  constexpr int kActionReset = kToggleCount;
-  constexpr int kTotalCount = kToggleCount + 1;
+  const int kToggleCount = configToggleCount();
+  const int kActionReset = configResetRowIndex();
 
   int y = bodyTop + 1;
   drawBodyLine(out, y, L"Timelines", Style::Section);
   ++y;
 
   std::size_t maxLabelLen = 0;
-  for (const auto& it : items) {
+  for (const auto& it : kConfigToggleItems) {
     maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(it.label));
   }
   maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(L"Reset to defaults"));
@@ -598,15 +617,15 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
   maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(L"Value color"));
   maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(L"Metric name color"));
 
-  static_assert(kTotalCount == kConfigItemCount);
   for (int i = 0; i < kToggleCount; ++i) {
     std::wstring line = (i == state.configSel ? L"> " : L"  ");
-    line += items[i].label;
-    if (std::wcslen(items[i].label) < maxLabelLen) {
-      line.append(maxLabelLen - std::wcslen(items[i].label), L' ');
+    const auto& it = kConfigToggleItems[static_cast<std::size_t>(i)];
+    line += it.label;
+    if (std::wcslen(it.label) < maxLabelLen) {
+      line.append(maxLabelLen - std::wcslen(it.label), L' ');
     }
     line += L": ";
-    line += (items[i].value ? L"ON" : L"OFF");
+    line += ((cfg.*(it.field)) ? L"ON" : L"OFF");
     if (y >= out.height - 2) break;
     drawBodyLine(out, y, line, Style::Value);
     ++y;
