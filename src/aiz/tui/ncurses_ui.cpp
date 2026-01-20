@@ -404,22 +404,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
         runningNow = state.benchmarksRunning;
       }
       const std::uint32_t waitMs = runningNow ? std::min<std::uint32_t>(cfg.refreshMs, 100u) : cfg.refreshMs;
-      timeout(static_cast<int>(waitMs));
-      const int ch = getch();
-
       // If the UI is rendering/sampling slowly, key-repeat can build up in the input
       // buffer. Drain any queued input immediately so navigation doesn't "coast"
       // for seconds after releasing a key.
-      std::vector<int> queuedKeys;
-      if (ch != ERR) {
-        queuedKeys.push_back(ch);
-        timeout(0);
-        for (;;) {
-          const int next = getch();
-          if (next == ERR) break;
-          queuedKeys.push_back(next);
-        }
-      }
+      const std::vector<int> queuedKeys = ncurses::readAndDrainKeys(waitMs);
 
       for (const int k : queuedKeys) {
         // Sampling / scroll speed stays backend-local for now.

@@ -4,6 +4,26 @@
 
 namespace aiz::ncurses {
 
+std::vector<int> readAndDrainKeys(std::uint32_t waitMs) {
+  std::vector<int> queuedKeys;
+  timeout(static_cast<int>(waitMs));
+  const int ch = getch();
+
+  if (ch == ERR) return queuedKeys;
+
+  queuedKeys.push_back(ch);
+
+  // Drain queued keys without waiting.
+  timeout(0);
+  for (;;) {
+    const int next = getch();
+    if (next == ERR) break;
+    queuedKeys.push_back(next);
+  }
+
+  return queuedKeys;
+}
+
 std::optional<Command> keyToCommand(int key, Screen screen) {
   // Function keys (htop-style)
   if (key == KEY_F(1)) return Command::NavHelp;
