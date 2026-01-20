@@ -500,6 +500,14 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   TuiState state;
   state.screen = Screen::Timelines;
 
+  // Frame diffing: keep a previous frame and only update changed cells.
+  Frame prevFrame;
+  bool havePrevFrame = false;
+
+  int lastRows = -1;
+  int lastCols = -1;
+  Screen lastScreen = state.screen;
+
   // Draw something immediately so we don't appear to hang on a cleared screen.
   {
     int rows = 0, cols = 0;
@@ -525,6 +533,14 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     }
     attrset(A_NORMAL);
     refresh();
+
+    // Seed the diff cache and last-known geometry so the first loop iteration
+    // doesn't immediately erase + redraw the entire screen.
+    prevFrame = std::move(frame);
+    havePrevFrame = true;
+    lastRows = rows;
+    lastCols = cols;
+    lastScreen = state.screen;
   }
 
   CpuUsageCollector cpuCol;
@@ -760,10 +776,6 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   state.configSel = 0;
 
   std::uint64_t uiTick = 0;
-
-  int lastRows = -1;
-  int lastCols = -1;
-  Screen lastScreen = state.screen;
 
   bool running = true;
 
@@ -1210,24 +1222,49 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       lastRows = rows;
       lastCols = cols;
       lastScreen = state.screen;
+      havePrevFrame = false;
     }
 
     Frame frame;
     Viewport vp{cols, rows};
     renderFrame(frame, vp, state, cfg, debugMode);
 
+    const bool canDiff = havePrevFrame && prevFrame.width == frame.width && prevFrame.height == frame.height;
+
     int lastAttr = INT32_MIN;
-    for (int y = 0; y < rows; ++y) {
-      for (int x = 0; x < cols; ++x) {
-        const auto& c = frame.at(x, y);
-        const int attr = styleToAttr(c.style);
+    if (!canDiff) {
+      for (int y = 0; y < rows; ++y) {
+        for (int x = 0; x < cols; ++x) {
+          const auto& c = frame.at(x, y);
+          const int attr = styleToAttr(c.style);
+          if (attr != lastAttr) {
+            attrset(attr);
+            lastAttr = attr;
+          }
+          mvaddch(y, x, cellToChtype(c.ch));
+        }
+      }
+    } else {
+      const std::size_t n = frame.cells.size();
+      for (std::size_t i = 0; i < n; ++i) {
+        const auto& cur = frame.cells[i];
+        const auto& prev = prevFrame.cells[i];
+        if (cur.ch == prev.ch && cur.style == prev.style) continue;
+
+        const int y = static_cast<int>(i / static_cast<std::size_t>(frame.width));
+        const int x = static_cast<int>(i % static_cast<std::size_t>(frame.width));
+
+        const int attr = styleToAttr(cur.style);
         if (attr != lastAttr) {
           attrset(attr);
           lastAttr = attr;
         }
-        mvaddch(y, x, cellToChtype(c.ch));
+        mvaddch(y, x, cellToChtype(cur.ch));
       }
     }
+
+    prevFrame = std::move(frame);
+    havePrevFrame = true;
     attrset(A_NORMAL);
     refresh();
   }
