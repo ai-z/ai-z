@@ -71,6 +71,7 @@ target_sources(ai-z PRIVATE
   src/aiz/tui/ncurses_bench_rows.cpp
   src/aiz/tui/ncurses_sampler.cpp
   src/aiz/tui/ncurses_bootprobe.cpp
+  src/aiz/tui/ncurses_input.cpp
   src/aiz/tui/ncurses_ui.cpp
   src/aiz/tui/tui_core.cpp
 )
