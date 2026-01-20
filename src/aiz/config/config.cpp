@@ -16,27 +16,6 @@ static fs::path configPath() {
     return fs::path(xdg) / "ai-z" / "config.ini";
   }
 
-#if defined(_WIN32)
-  // Windows: prefer roaming AppData (per-user config).
-  const char* appdata = std::getenv("APPDATA");
-  if (appdata && *appdata) {
-    return fs::path(appdata) / "ai-z" / "config.ini";
-  }
-
-  // Fallback: local AppData.
-  const char* localappdata = std::getenv("LOCALAPPDATA");
-  if (localappdata && *localappdata) {
-    return fs::path(localappdata) / "ai-z" / "config.ini";
-  }
-
-  // Best-effort fallback if the above are missing.
-  const char* userprofile = std::getenv("USERPROFILE");
-  if (userprofile && *userprofile) {
-    // Typical: C:\Users\<name>\AppData\Roaming
-    return fs::path(userprofile) / "AppData" / "Roaming" / "ai-z" / "config.ini";
-  }
-#endif
-
   const char* home = std::getenv("HOME");
   if (home && *home) {
     return fs::path(home) / ".config" / "ai-z" / "config.ini";

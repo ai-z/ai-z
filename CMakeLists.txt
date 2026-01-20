@@ -7,6 +7,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Linux-only for now.
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  message(FATAL_ERROR "ai-z currently supports Linux only")
+endif()
+
 option(AI_Z_ENABLE_NVML "Enable NVIDIA NVML backend" ON)
 option(AI_Z_ENABLE_CUDA "Enable CUDA benchmarks/backends" ON)
 option(AI_Z_ENABLE_OPENCL "Enable OpenCL benchmarks/backends" OFF)
@@ -33,7 +38,6 @@ add_executable(ai-z
   src/aiz/dyn/opencl.cpp
   src/aiz/dyn/vulkan.cpp
   src/aiz/dyn/onnxruntime.cpp
-  src/aiz/dyn/directml.cpp
   src/aiz/hw/hardware_info.cpp
   src/aiz/metrics/cpu_usage.cpp
   src/aiz/metrics/disk_bandwidth.cpp
@@ -52,33 +56,21 @@ add_executable(ai-z
   src/aiz/bench/pcie_bandwidth_vulkan.cpp
   src/aiz/bench/gpu_compute_vulkan.cpp
   src/aiz/bench/onnxruntime_bench.cpp
-  src/aiz/bench/directml_bench.cpp
 )
 
 target_include_directories(ai-z PRIVATE include)
 target_include_directories(ai-z PRIVATE ${AI_Z_GENERATED_DIR})
 
-if (WIN32)
-  target_sources(ai-z PRIVATE
-    src/aiz/tui/windows_console_ui.cpp
-    src/aiz/tui/win32_terminal_ui.cpp
-    src/aiz/tui/tui_core.cpp
-  )
-  target_link_libraries(ai-z PRIVATE pdh iphlpapi)
-else()
-  find_package(Curses REQUIRED)
-  target_sources(ai-z PRIVATE
-    src/aiz/tui/platform_ui_ncurses.cpp
-    src/aiz/tui/ncurses_ui.cpp
-    src/aiz/tui/tui_core.cpp
-  )
-  target_link_libraries(ai-z PRIVATE ${CURSES_LIBRARIES})
-  target_include_directories(ai-z PRIVATE ${CURSES_INCLUDE_DIR})
-endif()
+find_package(Curses REQUIRED)
+target_sources(ai-z PRIVATE
+  src/aiz/tui/platform_ui_ncurses.cpp
+  src/aiz/tui/ncurses_ui.cpp
+  src/aiz/tui/tui_core.cpp
+)
+target_link_libraries(ai-z PRIVATE ${CURSES_LIBRARIES})
+target_include_directories(ai-z PRIVATE ${CURSES_INCLUDE_DIR})
 
-if (UNIX)
-  target_link_libraries(ai-z PRIVATE dl)
-endif()
+target_link_libraries(ai-z PRIVATE dl)
 
 if (AI_Z_ENABLE_LIBTORCH)
   find_package(Torch REQUIRED)

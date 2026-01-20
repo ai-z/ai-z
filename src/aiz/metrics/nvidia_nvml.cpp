@@ -1,9 +1,5 @@
 #include <aiz/metrics/nvidia_nvml.h>
 
-#if defined(_WIN32)
-#define NOMINMAX
-#include <windows.h>
-#else
 #include <dlfcn.h>
 #if defined(__linux__)
 #include <errno.h>
@@ -12,7 +8,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#endif
 #endif
 
 #include <array>
@@ -175,11 +170,7 @@ using nvmlSystemGetNVMLVersion_t = nvmlReturn_t (*)(char* /*version*/, unsigned 
 using nvmlSystemGetDriverVersion_t = nvmlReturn_t (*)(char* /*version*/, unsigned int /*length*/);
 
 struct NvmlApi {
-#if defined(_WIN32)
-  HMODULE lib = nullptr;
-#else
   void* lib = nullptr;
-#endif
   nvmlInit_v2_t nvmlInit_v2 = nullptr;
   nvmlShutdown_t nvmlShutdown = nullptr;
   nvmlDeviceGetCount_v2_t nvmlDeviceGetCount_v2 = nullptr;
@@ -207,11 +198,7 @@ constexpr unsigned int NVML_PCIE_UTIL_TX_BYTES = 0;
 constexpr unsigned int NVML_PCIE_UTIL_RX_BYTES = 1;
 
 static void* loadSym(void* lib, const char* name) {
-#if defined(_WIN32)
-  return reinterpret_cast<void*>(GetProcAddress(reinterpret_cast<HMODULE>(lib), name));
-#else
   return dlsym(lib, name);
-#endif
 }
 
 static NvmlApi& api() {
@@ -221,14 +208,10 @@ static NvmlApi& api() {
   attempted = true;
 
   // Prefer SONAME.
-#if defined(_WIN32)
-  a.lib = LoadLibraryA("nvml.dll");
-#else
   a.lib = dlopen("libnvidia-ml.so.1", RTLD_LAZY);
   if (!a.lib) {
     a.lib = dlopen("libnvidia-ml.so", RTLD_LAZY);
   }
-#endif
   if (!a.lib) return a;
 
   a.nvmlInit_v2 = reinterpret_cast<nvmlInit_v2_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlInit_v2"));

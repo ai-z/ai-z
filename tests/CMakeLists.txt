@@ -49,7 +49,7 @@ endif()
 if (AI_Z_TEST_BACKEND STREQUAL "catch2" AND NOT _ai_z_use_catch2)
   message(FATAL_ERROR
     "Catch2 was requested (AI_Z_TEST_BACKEND=catch2) but was not found. Options:\n"
-    "- Install Catch2 (Linux: sudo apt-get install catch2; Windows: vcpkg install catch2 and configure with -DCMAKE_TOOLCHAIN_FILE=.../vcpkg.cmake).\n"
+    "- Install Catch2 (e.g. Ubuntu/Debian: sudo apt-get install catch2).\n"
     "- Or set -DAI_Z_CATCH2_SOURCE_DIR=/path/to/Catch2 (local checkout).\n"
     "- Or configure with -DAI_Z_FETCH_CATCH2=ON (requires network access).\n"
     "- Or set -DAI_Z_TEST_BACKEND=minitest to use the built-in test runner."

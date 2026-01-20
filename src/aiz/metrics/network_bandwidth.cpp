@@ -1,81 +1,4 @@
 #include <aiz/metrics/network_bandwidth.h>
-
-#if defined(_WIN32)
-
-#define NOMINMAX
-#include <iphlpapi.h>
-#include <vector>
-
-#pragma comment(lib, "iphlpapi.lib")
-
-namespace aiz {
-
-NetworkBandwidthCollector::NetworkBandwidthCollector(NetworkBandwidthMode mode, std::string ifacePrefix)
-    : mode_(mode), ifacePrefix_(std::move(ifacePrefix)) {}
-
-NetworkBandwidthCollector::~NetworkBandwidthCollector() = default;
-
-static bool readNetworkBytesTotal(NetworkBandwidthMode mode, std::uint64_t& bytesOut) {
-  // Use the classic IP Helper API table for maximum compatibility.
-  // Note: these counters are 32-bit and may wrap on long-running systems.
-  ULONG size = 0;
-  const DWORD first = GetIfTable(nullptr, &size, FALSE);
-  if (first != ERROR_INSUFFICIENT_BUFFER || size == 0) {
-    return false;
-  }
-
-  std::vector<std::uint8_t> buf(size);
-  PMIB_IFTABLE table = reinterpret_cast<PMIB_IFTABLE>(buf.data());
-  const DWORD second = GetIfTable(table, &size, FALSE);
-  if (second != NO_ERROR || table == nullptr) {
-    return false;
-  }
-
-  std::uint64_t total = 0;
-  for (DWORD i = 0; i < table->dwNumEntries; ++i) {
-    const MIB_IFROW& row = table->table[i];
-    // Skip loopback.
-    if (row.dwType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
-
-    if (mode == NetworkBandwidthMode::Rx) total += static_cast<std::uint64_t>(row.dwInOctets);
-    else total += static_cast<std::uint64_t>(row.dwOutOctets);
-  }
-
-  bytesOut = total;
-  return true;
-}
-
-std::optional<Sample> NetworkBandwidthCollector::sample() {
-  std::uint64_t bytesTotal = 0;
-  if (!readNetworkBytesTotal(mode_, bytesTotal)) return std::nullopt;
-
-  const auto now = std::chrono::steady_clock::now();
-  if (!hasPrev_) {
-    hasPrev_ = true;
-    prevBytes_ = bytesTotal;
-    prevTime_ = now;
-    return Sample{0.0, "MB/s", ""};
-  }
-
-  const auto dt = std::chrono::duration_cast<std::chrono::duration<double>>(now - prevTime_).count();
-  prevTime_ = now;
-
-  const std::uint64_t prev = prevBytes_;
-  prevBytes_ = bytesTotal;
-
-  // Best-effort wrap handling for 32-bit octet counters.
-  const std::uint64_t adjDbytes = (bytesTotal >= prev) ? (bytesTotal - prev) : (bytesTotal + (1ULL << 32) - prev);
-
-  if (dt <= 0.0) return Sample{0.0, "MB/s", ""};
-
-  const double mbps = (static_cast<double>(adjDbytes) / (1024.0 * 1024.0)) / dt;
-  return Sample{mbps, "MB/s", ""};
-}
-
-}  // namespace aiz
-
-#else
-
 #include <cctype>
 #include <fstream>
 #include <sstream>
@@ -168,5 +91,3 @@ std::optional<Sample> NetworkBandwidthCollector::sample() {
 }
 
 }  // namespace aiz
-
-#endif

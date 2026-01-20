@@ -4,8 +4,6 @@ C++ TUI app for performance timelines (CPU/GPU/Disk/PCIe) and benchmarks.
 
 Current platform support:
 - Linux: ncurses TUI
-- Windows: Win32 console TUI (feature-parity UI core)
-- macOS: planned (not implemented yet)
 
 ## Build
 
@@ -82,43 +80,6 @@ ONNX Runtime benchmarks (CPU + GPU inference):
 - Benchmarks appear as "unavailable" if ONNX Runtime is not found
 - **PPA-compatible**: The `.deb` package has zero ONNX Runtime dependencies—users can install it anytime
 
-DirectML benchmarks (DirectX Machine Learning):
-
-- Detected at runtime via `dlopen`—**no build-time dependency**.
-- Provides DirectML execution provider benchmarks:
-	- FP32 MatMul GFLOPS
-	- Memory bandwidth (GB/s)
-- **Installation** (choose one method):
-
-	**Option 1: Via pip** (easiest):
-	```bash
-	pip install onnxruntime-directml
-	# Works on Windows and Linux (via Wine/Proton)
-	```
-
-	**Option 2: Custom location**:
-	```bash
-	export AI_Z_DIRECTML_PATH=/path/to/libdirectml.so
-	```
-
-- Primarily for Windows, but also works on Linux with Wine/Proton or Mesa D3D12 support
-- Benchmarks appear as "unavailable" if DirectML is not found
-- **PPA-compatible**: Zero DirectML dependencies in the package
-
-### Windows
-
-Prereqs:
-- Visual Studio 2022 (or Build Tools) with C++ workload
-- CMake (usually bundled with Visual Studio)
-
-PowerShell:
-
-```powershell
-cmake -S . -B build
-cmake --build build --config Release
-./build/Release/ai-z.exe
-```
-
 ## Testing
 
 Unit tests use Catch2 and are wired through CTest.
@@ -149,12 +110,6 @@ Run with synthetic/fake timelines (useful for debugging the timeline renderer):
 
 ```bash
 ./build/ai-z --debug
-```
-
-On Windows:
-
-```powershell
-./build/Release/ai-z.exe --debug
 ```
 
 ## Install (Debian/Ubuntu)
@@ -221,8 +176,6 @@ You can change the aggregation mode via config:
 ## Config
 
 Config is stored at `~/.config/ai-z/config.ini` (or `$XDG_CONFIG_HOME/ai-z/config.ini`).
-
-On Windows, config is stored at `%APPDATA%\ai-z\config.ini` (Roaming AppData).
 
 Keys:
 - `showCpu`, `showGpu`, `showGpuMem`, `showRam`, `showVram` (true/false)

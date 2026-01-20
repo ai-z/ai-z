@@ -38,8 +38,4 @@ std::unique_ptr<IBenchmark> makeOrtCudaMatMulBenchmark();
 std::unique_ptr<IBenchmark> makeOrtCpuMemoryBandwidthBenchmark();
 std::unique_ptr<IBenchmark> makeOrtCudaMemoryBandwidthBenchmark();
 
-// DirectML benchmarks
-std::unique_ptr<IBenchmark> makeDirectMLMatMulBenchmark();
-std::unique_ptr<IBenchmark> makeDirectMLMemoryBandwidthBenchmark();
-
 }  // namespace aiz

@@ -2,42 +2,10 @@
 
 #include <cstdint>
 
-#if defined(_WIN32)
-#define NOMINMAX
-#include <windows.h>
-#endif
-
-#if !defined(_WIN32)
 #include <fstream>
 #include <sstream>
-#endif
 
 namespace aiz {
-
-#if defined(_WIN32)
-
-std::optional<double> readRamTotalGiB() {
-  MEMORYSTATUSEX st{};
-  st.dwLength = sizeof(st);
-  if (!GlobalMemoryStatusEx(&st)) return std::nullopt;
-  const double totalGiB = static_cast<double>(st.ullTotalPhys) / (1024.0 * 1024.0 * 1024.0);
-  return totalGiB;
-}
-
-std::optional<RamUsage> readRamUsage() {
-  MEMORYSTATUSEX st{};
-  st.dwLength = sizeof(st);
-  if (!GlobalMemoryStatusEx(&st)) return std::nullopt;
-
-  const double totalGiB = static_cast<double>(st.ullTotalPhys) / (1024.0 * 1024.0 * 1024.0);
-  const double availGiB = static_cast<double>(st.ullAvailPhys) / (1024.0 * 1024.0 * 1024.0);
-  const double usedGiB = (totalGiB >= availGiB) ? (totalGiB - availGiB) : 0.0;
-  const double usedPct = (totalGiB > 0.0) ? (100.0 * usedGiB / totalGiB) : 0.0;
-
-  return RamUsage{usedGiB, totalGiB, usedPct};
-}
-
-#else
 
 static std::optional<std::uint64_t> readMeminfoFieldKb(const char* key) {
   std::ifstream in("/proc/meminfo");
@@ -75,7 +43,5 @@ std::optional<RamUsage> readRamUsage() {
 
   return RamUsage{usedGiB, totalGiB, usedPct};
 }
-
-#endif
 
 }  // namespace aiz

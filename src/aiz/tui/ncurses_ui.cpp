@@ -1295,8 +1295,6 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       if (gi == 0) {
         addBench(makeOrtCudaMatMulBenchmark());
         addBench(makeOrtCudaMemoryBandwidthBenchmark());
-        addBench(makeDirectMLMatMulBenchmark());
-        addBench(makeDirectMLMemoryBandwidthBenchmark());
       }
     }
 
@@ -1305,8 +1303,6 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       addHeader("GPU0 - (no GPU detected)");
       addBench(makeOrtCudaMatMulBenchmark());
       addBench(makeOrtCudaMemoryBandwidthBenchmark());
-      addBench(makeDirectMLMatMulBenchmark());
-      addBench(makeDirectMLMemoryBandwidthBenchmark());
     }
 
     addHeader("CPU0 - " + (hwCache.cpuName.empty() ? std::string("unknown") : hwCache.cpuName));
