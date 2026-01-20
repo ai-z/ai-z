@@ -105,7 +105,11 @@ else()
   add_test(NAME ai-z-tests COMMAND ai-z-tests)
 endif()
 
-if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(ai-z-tests PRIVATE -Wall -Wextra -Wpedantic)
+if (AI_Z_ENABLE_WARNINGS)
+  if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(ai-z-tests PRIVATE -Wall -Wextra -Wpedantic)
+  elseif (MSVC)
+    target_compile_options(ai-z-tests PRIVATE /W4)
+  endif()
 endif()
 

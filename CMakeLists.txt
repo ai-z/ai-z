@@ -20,6 +20,7 @@ option(AI_Z_ENABLE_HIP "Enable HIP benchmarks/backends" OFF)
 option(AI_Z_ENABLE_LIBTORCH "Enable LibTorch (PyTorch C++ API) benchmark" OFF)
 option(AI_Z_ENABLE_LEVEL_ZERO "Enable Intel Level Zero backend" OFF)
 option(AI_Z_ENABLE_SYCL "Enable SYCL/oneAPI backend" OFF)
+option(AI_Z_ENABLE_WARNINGS "Enable -Wall/-Wextra style warnings" OFF)
 
 set(AI_Z_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 configure_file(
@@ -182,9 +183,13 @@ target_compile_definitions(ai-z PRIVATE
   $<$<BOOL:${AI_Z_ENABLE_SYCL}>:AI_Z_ENABLE_SYCL>
 )
 
-# Keep warnings reasonable for early scaffold.
-if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(ai-z PRIVATE -Wall -Wextra -Wpedantic)
+# Opt-in warnings.
+if (AI_Z_ENABLE_WARNINGS)
+  if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(ai-z PRIVATE -Wall -Wextra -Wpedantic)
+  elseif (MSVC)
+    target_compile_options(ai-z PRIVATE /W4)
+  endif()
 endif()
 
 if (BUILD_TESTING)

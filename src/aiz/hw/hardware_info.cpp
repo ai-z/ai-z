@@ -116,28 +116,6 @@ static std::optional<std::string> runCommand(const std::string& cmd) {
   return out;
 }
 
-static std::string fmtGiBFromMiB(std::uint64_t mib) {
-  const double gib = static_cast<double>(mib) / 1024.0;
-  std::ostringstream oss;
-  oss.setf(std::ios::fixed);
-  oss.precision(1);
-  oss << gib << " GiB";
-  return oss.str();
-}
-
-static std::string fmtGFromMiB(std::uint64_t mib) {
-  const double g = static_cast<double>(mib) / 1024.0;
-  const long rounded = static_cast<long>(std::llround(g));
-  if (std::abs(g - static_cast<double>(rounded)) < 0.05) {
-    return std::to_string(rounded) + "G";
-  }
-  std::ostringstream oss;
-  oss.setf(std::ios::fixed);
-  oss.precision(1);
-  oss << g << "G";
-  return oss.str();
-}
-
 static std::vector<std::string> probePerGpuLinesNvidia() {
   const auto n = nvmlGpuCount();
   if (!n || *n == 0) return {};
