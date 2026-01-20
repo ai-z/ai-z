@@ -24,6 +24,7 @@
 #include "ncurses_telemetry.h"
 #include "ncurses_bench.h"
 #include "ncurses_sampler.h"
+#include "ncurses_bootprobe.h"
 
 #include <algorithm>
 #include <array>
@@ -369,23 +370,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
   // Boot-time hardware probe (background): this is primarily to get CPU/GPU names
   // for Timelines titles reliably, without requiring the user to open the Hardware screen.
-  std::mutex bootHwMu;
-  std::atomic<bool> bootHwReady{false};
-  HardwareInfo bootHwCache;
-  std::vector<std::string> bootHwLines;
-  std::thread bootHwThread;
-  if (!debugMode) {
-    bootHwThread = std::thread([&]() {
-      HardwareInfo hw = HardwareInfo::probe();
-      std::vector<std::string> lines = hw.toLines();
-      {
-        std::lock_guard<std::mutex> lk(bootHwMu);
-        bootHwCache = std::move(hw);
-        bootHwLines = std::move(lines);
-      }
-      bootHwReady.store(true);
-    });
-  }
+  ncurses::BootHardwareProbe bootProbe;
+  if (!debugMode) bootProbe.start();
 
   // Benchmark runner state: keep UI responsive while benchmarks execute.
   std::thread benchThread;
@@ -784,12 +770,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     // If the background boot probe finished, apply it once.
     // This makes device names available for Timelines section titles.
     static bool bootApplied = false;
-    if (!bootApplied && bootHwReady.load()) {
-      {
-        std::lock_guard<std::mutex> lk(bootHwMu);
-        hwCache = std::move(bootHwCache);
-        hwLines = std::move(bootHwLines);
-      }
+    if (!bootApplied && bootProbe.tryConsume(hwCache, hwLines)) {
 
       state.hardwareLines = hwLines;
       state.hardwareDirty = false;
@@ -891,7 +872,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   }
 
   gpuSampler.stop();
-  if (bootHwThread.joinable()) bootHwThread.join();
+  bootProbe.stop();
   // Benchmarks are best-effort; allow them to finish before tearing down ncurses.
   ncurses::benchShutdown(benchThread);
   endwin();
