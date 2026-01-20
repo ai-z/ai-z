@@ -64,6 +64,7 @@ target_include_directories(ai-z PRIVATE ${AI_Z_GENERATED_DIR})
 find_package(Curses REQUIRED)
 target_sources(ai-z PRIVATE
   src/aiz/tui/platform_ui_ncurses.cpp
+  src/aiz/tui/ncurses_render.cpp
   src/aiz/tui/ncurses_ui.cpp
   src/aiz/tui/tui_core.cpp
 )
