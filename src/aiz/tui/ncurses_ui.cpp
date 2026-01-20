@@ -581,6 +581,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     mvhline(2, 0, ' ', cols);
     mvaddnstr(2, 0, "Initializing NVML...", cols);
     refresh();
+    // We drew directly via ncurses, so the terminal no longer matches prevFrame.
+    havePrevFrame = false;
 
     const auto n = nvmlGpuCount();
     if (n && *n > 0) {
@@ -762,6 +764,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     mvhline(2, 0, ' ', cols);
     mvaddnstr(2, 0, "Probing hardware...", cols);
     refresh();
+    // We drew directly via ncurses, so the terminal no longer matches prevFrame.
+    havePrevFrame = false;
 
     hwCache = HardwareInfo::probe();
     hwLines = hwCache.toLines();
