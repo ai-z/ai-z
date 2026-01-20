@@ -166,6 +166,7 @@ using nvmlDeviceGetPowerState_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /
 using nvmlDeviceGetPcieThroughput_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int /*counter*/, unsigned int* /*valueKBps*/);
 using nvmlDeviceGetCurrPcieLinkGeneration_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*gen*/);
 using nvmlDeviceGetCurrPcieLinkWidth_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*width*/);
+using nvmlDeviceGetName_t = nvmlReturn_t (*)(nvmlDevice_t, char* /*name*/, unsigned int /*length*/);
 using nvmlSystemGetNVMLVersion_t = nvmlReturn_t (*)(char* /*version*/, unsigned int /*length*/);
 using nvmlSystemGetDriverVersion_t = nvmlReturn_t (*)(char* /*version*/, unsigned int /*length*/);
 
@@ -183,6 +184,7 @@ struct NvmlApi {
   nvmlDeviceGetPcieThroughput_t nvmlDeviceGetPcieThroughput = nullptr;
   nvmlDeviceGetCurrPcieLinkGeneration_t nvmlDeviceGetCurrPcieLinkGeneration = nullptr;
   nvmlDeviceGetCurrPcieLinkWidth_t nvmlDeviceGetCurrPcieLinkWidth = nullptr;
+  nvmlDeviceGetName_t nvmlDeviceGetName = nullptr;
   nvmlSystemGetNVMLVersion_t nvmlSystemGetNVMLVersion = nullptr;
   nvmlSystemGetDriverVersion_t nvmlSystemGetDriverVersion = nullptr;
 
@@ -224,6 +226,7 @@ static NvmlApi& api() {
   a.nvmlDeviceGetTemperature = reinterpret_cast<nvmlDeviceGetTemperature_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetTemperature"));
   a.nvmlDeviceGetPowerState = reinterpret_cast<nvmlDeviceGetPowerState_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPowerState"));
   a.nvmlDeviceGetPcieThroughput = reinterpret_cast<nvmlDeviceGetPcieThroughput_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPcieThroughput"));
+  a.nvmlDeviceGetName = reinterpret_cast<nvmlDeviceGetName_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetName"));
 
     // Optional system queries.
     a.nvmlSystemGetNVMLVersion = reinterpret_cast<nvmlSystemGetNVMLVersion_t>(
@@ -259,6 +262,23 @@ struct NvmlSession {
 
   bool inited = false;
 };
+
+static std::optional<std::string> readNvmlGpuNameForGpuUnsafe(unsigned int index) {
+  NvmlApi& a = api();
+  if (!a.ok() || !a.nvmlDeviceGetName) return std::nullopt;
+
+  NvmlSession sess;
+  if (!sess.inited) return std::nullopt;
+
+  nvmlDevice_t dev{};
+  if (a.nvmlDeviceGetHandleByIndex_v2(index, &dev) != NVML_SUCCESS) return std::nullopt;
+
+  char buf[128]{};
+  if (a.nvmlDeviceGetName(dev, buf, static_cast<unsigned int>(sizeof(buf))) != NVML_SUCCESS) return std::nullopt;
+  const std::string s(buf);
+  if (s.empty()) return std::nullopt;
+  return s;
+}
 
 static double bytesToGiB(std::uint64_t b) {
   return static_cast<double>(b) / (1024.0 * 1024.0 * 1024.0);
@@ -514,6 +534,10 @@ std::optional<unsigned int> nvmlGpuCount() {
 #endif
 }
 
+std::optional<unsigned int> nvmlGpuCountNoFork() {
+  return nvmlGpuCountUnsafe();
+}
+
 std::optional<NvmlTelemetry> readNvmlTelemetryForGpu(unsigned int index) {
 #if defined(__linux__)
   const auto msg = callWithTimeout<OptTelemetryMsg>(
@@ -629,6 +653,30 @@ std::optional<NvmlPcieThroughput> readNvmlPcieThroughput() {
 #else
   return readNvmlPcieThroughputUnsafe();
 #endif
+}
+
+std::optional<std::string> readNvmlGpuNameForGpu(unsigned int index) {
+#if defined(__linux__)
+  const auto msg = callWithTimeout<OptStringMsg>(
+      [&](OptStringMsg& out) {
+        if (const auto r = readNvmlGpuNameForGpuUnsafe(index)) {
+          out.has = 1;
+          const std::size_t n = std::min<std::size_t>(r->size(), sizeof(out.buf) - 1);
+          std::memcpy(out.buf, r->data(), n);
+          out.buf[n] = '\0';
+          out.len = static_cast<std::uint16_t>(n);
+        }
+      },
+      kNvmlCallTimeout);
+  if (!msg || msg->has == 0) return std::nullopt;
+  return std::string(msg->buf, msg->buf + msg->len);
+#else
+  return readNvmlGpuNameForGpuUnsafe(index);
+#endif
+}
+
+std::optional<std::string> readNvmlGpuNameForGpuNoFork(unsigned int index) {
+  return readNvmlGpuNameForGpuUnsafe(index);
 }
 
 std::optional<std::string> readNvmlLibraryVersion() {

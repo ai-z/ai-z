@@ -7,6 +7,27 @@
 
 namespace aiz {
 
+struct GpuTelemetrySnapshot {
+  // Percent (0..100).
+  std::optional<double> utilPct;
+  std::optional<double> memUtilPct;
+
+  // Absolute memory.
+  std::optional<double> vramUsedGiB;
+  std::optional<double> vramTotalGiB;
+
+  // Board sensors.
+  std::optional<double> watts;
+  std::optional<double> tempC;
+
+  // Best-effort textual state.
+  std::string pstate;
+
+  // PCIe link info (if known).
+  std::optional<int> pcieLinkWidth;
+  std::optional<int> pcieLinkGen;
+};
+
 struct TelemetrySnapshot {
   std::optional<Sample> cpu;
   std::optional<Sample> disk;
@@ -15,8 +36,12 @@ struct TelemetrySnapshot {
   std::optional<Sample> netRx;
   std::optional<Sample> netTx;
   std::optional<Sample> gpu;
+  std::optional<Sample> gpuMemUtil;
   std::optional<Sample> pcieRx;
   std::optional<Sample> pcieTx;
+
+  // Optional per-GPU details for header/status rendering.
+  std::vector<GpuTelemetrySnapshot> gpus;
 
   // Percent (0..100).
   std::optional<Sample> ramPct;
@@ -24,6 +49,7 @@ struct TelemetrySnapshot {
 
   // Pre-formatted memory strings are okay for now; we can refactor to typed later.
   std::string ramText;
+  std::string vramText;
 };
 
 }  // namespace aiz

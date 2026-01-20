@@ -11,7 +11,7 @@
 
 namespace aiz {
 
-constexpr int kConfigItemCount = 11;
+constexpr int kConfigItemCount = 12;
 
 void Frame::resize(int w, int h) {
   width = std::max(0, w);
@@ -86,8 +86,30 @@ void applyCommand(TuiState& state, const Config& /*cfg*/, Command cmd) {
   // Screen-local actions.
   if (state.screen == Screen::Benchmarks) {
     const int maxSel = static_cast<int>(state.benches.size());  // +1 for "run all" (index 0)
-    if (cmd == Command::Up) state.benchmarksSel = std::max(0, state.benchmarksSel - 1);
-    if (cmd == Command::Down) state.benchmarksSel = std::min(maxSel, state.benchmarksSel + 1);
+
+    auto selectable = [&](int sel) {
+      if (sel == 0) return true;  // run-all
+      const int row = sel - 1;
+      if (row < 0 || row >= static_cast<int>(state.benches.size())) return false;
+      return state.benches[static_cast<std::size_t>(row)] != nullptr;
+    };
+
+    auto clampToSelectable = [&](int sel, int dir) {
+      sel = std::clamp(sel, 0, maxSel);
+      if (selectable(sel)) return sel;
+      // Walk in requested direction first (dir = +1 down, -1 up).
+      for (int s = sel; s >= 0 && s <= maxSel; s += dir) {
+        if (selectable(s)) return s;
+      }
+      // Fallback: try the other direction.
+      for (int s = sel; s >= 0 && s <= maxSel; s -= dir) {
+        if (selectable(s)) return s;
+      }
+      return 0;
+    };
+
+    if (cmd == Command::Up) state.benchmarksSel = clampToSelectable(state.benchmarksSel - 1, -1);
+    if (cmd == Command::Down) state.benchmarksSel = clampToSelectable(state.benchmarksSel + 1, +1);
     return;
   }
 
@@ -113,6 +135,28 @@ static std::wstring widenAscii(const std::string& s) {
   w.reserve(s.size());
   for (unsigned char ch : s) w.push_back(static_cast<wchar_t>(ch));
   return w;
+}
+
+enum class Align {
+  Left,
+  Right,
+};
+
+static std::string fit(std::string s, std::size_t w, Align a) {
+  if (s.size() > w) s.resize(w);
+  if (s.size() < w) {
+    const std::size_t pad = w - s.size();
+    if (a == Align::Right) s = std::string(pad, ' ') + s;
+    else s += std::string(pad, ' ');
+  }
+  return s;
+}
+
+static std::string fmt1(double v);
+
+static std::string fmtSampleOrDash(const std::optional<Sample>& s) {
+  if (!s) return std::string("--");
+  return fmt1(s->value) + s->unit;
 }
 
 static std::string placeholderForBenchmarkName(const std::string& n) {
@@ -250,98 +294,130 @@ static void drawScrollingBars(
       if (y < 0 || y >= out.height) continue;
       auto& c = out.at(x, y);
       c.ch = 0x2593;  // dark shade block
-      c.style = static_cast<std::uint16_t>(Style::Value);
+      // Timeline bars used to render in the default terminal color (white).
+      // Keep title values highlighted, but keep the bars neutral.
+      c.style = static_cast<std::uint16_t>(Style::Default);
     }
   }
 }
 
 static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, const Config& cfg) {
-  // This is an incremental port: start with the title bar numbers, then add scrolling graphs.
-  fillLine(out, 0, L' ', Style::Header);
+  // Multi-line header matches legacy ncurses layout:
+  // row 0: CPU/RAM/DISK/NET
+  // row 1..N: one row per GPU
+  const int headerRows = 1 + static_cast<int>(state.latest.gpus.size());
 
-  std::string title = "AI-Z  ";
+  // Row 0
+  {
+    drawBodyLine(out, 0, L"", Style::Default);
 
-  title += "CPU ";
-  title += state.latest.cpu ? (fmt0(state.latest.cpu->value) + "%") : std::string("--");
-  title += "  ";
+    int x = 0;
+    auto addLabel = [&](const std::string& label) {
+      drawText(out, x, 0, widenAscii(label), Style::Section);
+      x += static_cast<int>(label.size());
+      if (x < out.width) {
+        drawText(out, x, 0, L" ", Style::Default);
+        ++x;
+      }
+    };
+    auto addValueField = [&](std::string value, std::size_t w, Align a) {
+      value = fit(std::move(value), w, a);
+      drawText(out, x, 0, widenAscii(value), Style::Value);
+      x += static_cast<int>(value.size());
+      if (x + 1 < out.width) {
+        drawText(out, x, 0, L"  ", Style::Default);
+        x += 2;
+      }
+    };
 
-  title += "RAM ";
-  title += !state.latest.ramText.empty() ? state.latest.ramText : std::string("--");
-  title += "  ";
+    const std::string cpuStr = state.latest.cpu ? (fmt0(state.latest.cpu->value) + "%") : std::string("--");
+    addLabel("CPU:");
+    addValueField(cpuStr, 4, Align::Right);
 
-  title += "VRAM ";
-  title += state.latest.vramPct ? (fmt0(state.latest.vramPct->value) + "%") : std::string("--");
-  title += "  ";
+    addLabel("RAM:");
+    addValueField(!state.latest.ramText.empty() ? state.latest.ramText : std::string("--"), 18, Align::Left);
 
-  title += "PCIeRX ";
-  if (state.latest.pcieRx) {
-    title += fmt0(state.latest.pcieRx->value);
-    title += state.latest.pcieRx->unit;
-  } else {
-    title += "--";
+    const std::string diskStr = fmtSampleOrDash(state.latest.diskRead) + "/" + fmtSampleOrDash(state.latest.diskWrite);
+    addLabel("DISK R/W:");
+    addValueField(diskStr, 24, Align::Left);
+
+    const std::string netStr = fmtSampleOrDash(state.latest.netRx) + "/" + fmtSampleOrDash(state.latest.netTx);
+    addLabel("NET R/T:");
+    addValueField(netStr, 24, Align::Left);
   }
-  title += "  ";
 
-  title += "PCIeTX ";
-  if (state.latest.pcieTx) {
-    title += fmt0(state.latest.pcieTx->value);
-    title += state.latest.pcieTx->unit;
-  } else {
-    title += "--";
-  }
-  title += "  ";
+  // GPU rows
+  for (int i = 0; i < static_cast<int>(state.latest.gpus.size()); ++i) {
+    const int row = 1 + i;
+    if (row >= out.height) break;
+    drawBodyLine(out, row, L"", Style::Default);
 
-  if (cfg.showDiskRead) {
-    title += "Disk Read#0 ";
-    if (state.latest.diskRead) {
-      title += fmt1(state.latest.diskRead->value);
-      title += state.latest.diskRead->unit;
-    } else {
-      title += "--";
+    int x = 0;
+    auto addLabel = [&](const std::string& label) {
+      drawText(out, x, row, widenAscii(label), Style::Section);
+      x += static_cast<int>(label.size());
+      if (x < out.width) {
+        drawText(out, x, row, L" ", Style::Default);
+        ++x;
+      }
+    };
+    auto addValueField = [&](std::string value, std::size_t w, Align a) {
+      value = fit(std::move(value), w, a);
+      drawText(out, x, row, widenAscii(value), Style::Value);
+      x += static_cast<int>(value.size());
+      if (x + 1 < out.width) {
+        drawText(out, x, row, L"  ", Style::Default);
+        x += 2;
+      }
+    };
+
+    const auto& gt = state.latest.gpus[static_cast<std::size_t>(i)];
+    std::string gpuPrefix = "GPU " + std::to_string(i);
+    if (static_cast<std::size_t>(i) < state.gpuDeviceNames.size()) {
+      const std::string& n = state.gpuDeviceNames[static_cast<std::size_t>(i)];
+      if (!n.empty() && n != ("GPU" + std::to_string(i)) && n != "--" && n != "unknown") {
+        gpuPrefix += " - ";
+        gpuPrefix += n;
+      }
     }
-    title += "  ";
-  }
+    addLabel(gpuPrefix + ":");
 
-  if (cfg.showDiskWrite) {
-    title += "Disk Write#0 ";
-    if (state.latest.diskWrite) {
-      title += fmt1(state.latest.diskWrite->value);
-      title += state.latest.diskWrite->unit;
-    } else {
-      title += "--";
+    addLabel("USAGE");
+    addValueField(gt.utilPct ? (fmt0(*gt.utilPct) + "%") : std::string("--"), 4, Align::Right);
+
+    std::string vramStr = "--";
+    if (gt.vramUsedGiB && gt.vramTotalGiB) {
+      const double used = *gt.vramUsedGiB;
+      const double total = *gt.vramTotalGiB;
+      const double pct = total > 0.0 ? (100.0 * used / total) : 0.0;
+      vramStr = fmt1(used) + "/" + fmt1(total) + "G(" + fmt0(pct) + "%)";
     }
-    title += "  ";
-  }
+    addLabel("VRAM:");
+    addValueField(vramStr, 18, Align::Left);
 
-  if (cfg.showNetRx) {
-    title += "Net RX#0 ";
-    if (state.latest.netRx) {
-      title += fmt1(state.latest.netRx->value);
-      title += state.latest.netRx->unit;
-    } else {
-      title += "--";
+    addLabel("W:");
+    addValueField(gt.watts ? (fmt0(*gt.watts) + "W") : std::string("--"), 5, Align::Right);
+
+    addLabel("T:");
+    addValueField(gt.tempC ? (fmt0(*gt.tempC) + "C") : std::string("--"), 4, Align::Right);
+
+    addLabel("POWER:");
+    addValueField(!gt.pstate.empty() ? gt.pstate : std::string("--"), 4, Align::Left);
+
+    std::string linkStr = "--";
+    if (gt.pcieLinkWidth && gt.pcieLinkGen) {
+      linkStr = std::to_string(*gt.pcieLinkWidth) + "x@" + fmt1(static_cast<double>(*gt.pcieLinkGen));
     }
-    title += "  ";
+    addLabel("LINK:");
+    addValueField(linkStr, 9, Align::Left);
+
+    const std::string pcieTStr = state.latest.pcieTx ? (fmt0(state.latest.pcieTx->value) + state.latest.pcieTx->unit) : std::string("--");
+    const std::string pcieRStr = state.latest.pcieRx ? (fmt0(state.latest.pcieRx->value) + state.latest.pcieRx->unit) : std::string("--");
+    addLabel("PCIE T/R:");
+    addValueField(pcieTStr + "/" + pcieRStr, 22, Align::Left);
   }
 
-  if (cfg.showNetTx) {
-    title += "Net TX#0 ";
-    if (state.latest.netTx) {
-      title += fmt1(state.latest.netTx->value);
-      title += state.latest.netTx->unit;
-    } else {
-      title += "--";
-    }
-    title += "  ";
-  }
-
-  title += "t=";
-  title += std::to_string(state.tick);
-
-  drawText(out, 0, 0, widenAscii(title), Style::Header);
-
-  // Layout matches ncurses: start under a 2-row header, reserve 1 row footer.
-  const int top = 2;
+  const int top = headerRows;
   const int bottomReserved = 1;
   const int usable = std::max(0, (out.height - bottomReserved) - top);
 
@@ -355,21 +431,51 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
     const Timeline* tl2;
     double maxV;
     bool twoLine = false;
+    std::string device;
   };
 
+  auto gpuContext = [&](std::size_t index) -> std::string {
+    if (index >= state.gpuDeviceNames.size()) return "#" + std::to_string(index);
+    const std::string& n = state.gpuDeviceNames[index];
+    if (n.empty() || n == ("GPU" + std::to_string(index))) return "#" + std::to_string(index);
+    return n + " #" + std::to_string(index);
+  };
+
+  // Build per-GPU usage samples for title lines (USAGE: xx %).
+  std::vector<std::optional<Sample>> gpuUsageSamples;
+  gpuUsageSamples.reserve(state.latest.gpus.size());
+  for (const auto& gt : state.latest.gpus) {
+    if (gt.utilPct) gpuUsageSamples.push_back(Sample{*gt.utilPct, "%", {}});
+    else gpuUsageSamples.push_back(std::nullopt);
+  }
+
   std::vector<Panel> panels;
-  panels.push_back(Panel{"CPU", cfg.showCpu, &state.latest.cpu, &state.cpuTl, nullptr, 100.0, false});
-  panels.push_back(Panel{"RAM", cfg.showRam, &state.latest.ramPct, &state.ramTl, nullptr, 100.0, false});
-  panels.push_back(Panel{"VRAM", cfg.showVram, &state.latest.vramPct, &state.vramTl, nullptr, 100.0, false});
+  panels.push_back(Panel{"CPU", cfg.showCpu, &state.latest.cpu, &state.cpuTl, nullptr, 100.0, false, state.cpuDevice});
 
-  // PCIe before disk/network; disk and net last.
-  panels.push_back(Panel{"PCIe (RX/TX)", (cfg.showPcieRx || cfg.showPcieTx), &state.latest.pcieRx, &state.pcieRxTl, &state.pcieTxTl, 32'000.0, true});
+  // CPU/RAM first.
+  panels.push_back(Panel{"RAM", cfg.showRam, &state.latest.ramPct, &state.ramTl, nullptr, 100.0, false, {}});
 
-  panels.push_back(Panel{"Disk Read #0", cfg.showDiskRead, &state.latest.diskRead, &state.diskReadTl, nullptr, 5000.0, false});
-  panels.push_back(Panel{"Disk Write #0", cfg.showDiskWrite, &state.latest.diskWrite, &state.diskWriteTl, nullptr, 5000.0, false});
+  // GPU usage before VRAM and MemCtrl.
+  if (cfg.showGpu) {
+    const std::size_t n = std::min(state.gpuTls.size(), gpuUsageSamples.size());
+    for (std::size_t i = 0; i < n; ++i) {
+      panels.push_back(Panel{"USAGE", true, &gpuUsageSamples[i], &state.gpuTls[i], nullptr, 100.0, false, gpuContext(i)});
+    }
+  }
 
-  panels.push_back(Panel{"Net RX #0", cfg.showNetRx, &state.latest.netRx, &state.netRxTl, nullptr, 5000.0, false});
-  panels.push_back(Panel{"Net TX #0", cfg.showNetTx, &state.latest.netTx, &state.netTxTl, nullptr, 5000.0, false});
+  panels.push_back(Panel{"VRAM", cfg.showVram, &state.latest.vramPct, &state.vramTl, nullptr, 100.0, false, gpuContext(0)});
+  panels.push_back(Panel{"MemCtrl", cfg.showGpuMem, &state.latest.gpuMemUtil, &state.gpuMemUtilTl, nullptr, 100.0, false, gpuContext(0)});
+
+  // PCIe split RX/TX (tweak restored).
+  panels.push_back(Panel{"PCIe RX", cfg.showPcieRx, &state.latest.pcieRx, &state.pcieRxTl, nullptr, 32'000.0, false, gpuContext(0)});
+  panels.push_back(Panel{"PCIe TX", cfg.showPcieTx, &state.latest.pcieTx, &state.pcieTxTl, nullptr, 32'000.0, false, gpuContext(0)});
+
+  // Disk/network last.
+  panels.push_back(Panel{"Disk Read", cfg.showDiskRead, &state.latest.diskRead, &state.diskReadTl, nullptr, 5000.0, false, "#0"});
+  panels.push_back(Panel{"Disk Write", cfg.showDiskWrite, &state.latest.diskWrite, &state.diskWriteTl, nullptr, 5000.0, false, "#0"});
+
+  panels.push_back(Panel{"Net RX", cfg.showNetRx, &state.latest.netRx, &state.netRxTl, nullptr, 5000.0, false, "#0"});
+  panels.push_back(Panel{"Net TX", cfg.showNetTx, &state.latest.netTx, &state.netTxTl, nullptr, 5000.0, false, "#0"});
 
   panels.erase(
       std::remove_if(panels.begin(), panels.end(), [](const Panel& p) { return !p.enabled; }),
@@ -394,6 +500,9 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
     if (height <= 0) break;
 
     std::string section = p.name;
+    if (!p.device.empty()) {
+      section += " (" + p.device + ")";
+    }
     if (p.sample && p.sample->has_value()) {
       section += ": ";
       section += fmt1((*p.sample)->value);
@@ -402,52 +511,16 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
       if (!(*p.sample)->label.empty()) {
         section += " (" + (*p.sample)->label + ")";
       }
-    } else {
+    } else if (p.sample != nullptr) {
       section += ": unavailable";
     }
 
-    // Special-case title for two-line PCIe: show both RX and TX values.
-    if (p.twoLine && p.tl && p.tl2) {
-      std::string pcieTitle = p.name;
-      pcieTitle += ": ";
-      if (cfg.showPcieRx && state.latest.pcieRx) {
-        pcieTitle += "RX ";
-        pcieTitle += fmt1(state.latest.pcieRx->value);
-        pcieTitle += " ";
-        pcieTitle += state.latest.pcieRx->unit;
-      } else {
-        pcieTitle += "RX --";
-      }
-      pcieTitle += "  ";
-      if (cfg.showPcieTx && state.latest.pcieTx) {
-        pcieTitle += "TX ";
-        pcieTitle += fmt1(state.latest.pcieTx->value);
-        pcieTitle += " ";
-        pcieTitle += state.latest.pcieTx->unit;
-      } else {
-        pcieTitle += "TX --";
-      }
-      drawSectionTitleLine(out, y, pcieTitle);
-    } else {
-      drawSectionTitleLine(out, y, section);
-    }
+    drawSectionTitleLine(out, y, section);
 
     const int graphTop = y + 1;
     const int graphH = std::max(0, height - 1);
     if (graphH > 0 && p.tl) {
-      if (p.twoLine && p.tl2 && graphH >= 2) {
-        // Split available height into two sub-graphs (top=RX, bottom=TX).
-        const int rxH = std::max(1, graphH / 2);
-        const int txH = std::max(1, graphH - rxH);
-        if (cfg.showPcieRx) {
-          drawScrollingBars(out, graphTop, 0, rxH, out.width, *p.tl, p.maxV, cfg.timelineAgg);
-        }
-        if (cfg.showPcieTx) {
-          drawScrollingBars(out, graphTop + rxH, 0, txH, out.width, *p.tl2, p.maxV, cfg.timelineAgg);
-        }
-      } else {
-        drawScrollingBars(out, graphTop, 0, graphH, out.width, *p.tl, p.maxV, cfg.timelineAgg);
-      }
+      drawScrollingBars(out, graphTop, 0, graphH, out.width, *p.tl, p.maxV, cfg.timelineAgg);
     }
 
     y += height;
@@ -497,6 +570,7 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
   const Item items[] = {
       {L"CPU usage", cfg.showCpu},
       {L"GPU usage", cfg.showGpu},
+      {L"GPU mem ctrl", cfg.showGpuMem},
       {L"Disk Read", cfg.showDiskRead},
       {L"Disk Write", cfg.showDiskWrite},
       {L"Net RX", cfg.showNetRx},
@@ -643,146 +717,141 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
   }
 
   int y = bodyTop + 1;
-  // Two-column layout: left = benchmark names, right = results.
-  std::size_t maxNameLen = 0;
-  for (const auto& b : state.benches) {
-    if (!b) continue;
-    std::string n = b->name();
-    if (!b->isAvailable()) n += " [unavailable]";
-    // Reserve space for a 1-char spinner + a following space.
-    n = "  " + n;
-    maxNameLen = std::max(maxNameLen, n.size());
-  }
-  const int minValueCol = 24;
-  const int maxValueCol = std::max(0, out.width / 2);
-  const int valueCol = std::min(out.width - 1, std::max(minValueCol, std::min(maxValueCol, static_cast<int>(maxNameLen) + 4)));
 
-  // Inside results column, align "label: value" pairs.
-  std::size_t maxLabelLen = 0;
-  for (int i = 0; i < static_cast<int>(state.benches.size()); ++i) {
-    std::string r;
-    if (i >= 0 && i < static_cast<int>(state.benchResults.size()) && !state.benchResults[static_cast<std::size_t>(i)].empty()) {
-      r = state.benchResults[static_cast<std::size_t>(i)];
-    } else {
-      const std::string n = state.benches[static_cast<std::size_t>(i)] ? state.benches[static_cast<std::size_t>(i)]->name() : std::string{};
-      r = placeholderForBenchmarkName(n);
-    }
-    std::size_t start = 0;
-    while (start <= r.size()) {
-      const std::size_t end = r.find('\n', start);
-      const std::string line = (end == std::string::npos) ? r.substr(start) : r.substr(start, end - start);
-      const std::size_t sep = line.find(": ");
-      if (sep != std::string::npos) maxLabelLen = std::max(maxLabelLen, sep);
-      if (end == std::string::npos) break;
-      start = end + 1;
-    }
+  const auto& titles = (!state.benchRowTitles.empty() && state.benchRowTitles.size() == state.benches.size()) ? state.benchRowTitles : std::vector<std::string>{};
+  const auto& isHeader = (!state.benchRowIsHeader.empty() && state.benchRowIsHeader.size() == state.benches.size()) ? state.benchRowIsHeader : std::vector<bool>{};
+
+  std::size_t maxBenchNameLen = 0;
+  for (std::size_t i = 0; i < state.benches.size(); ++i) {
+    const bool hdr = (!isHeader.empty() ? isHeader[i] : (state.benches[i] == nullptr));
+    if (hdr) continue;
+    const std::string name = (!titles.empty() ? titles[i] : (state.benches[i] ? state.benches[i]->name() : std::string("(null)")));
+    maxBenchNameLen = std::max(maxBenchNameLen, name.size());
   }
-  maxLabelLen = std::min<std::size_t>(maxLabelLen, 8);
-  constexpr int kResultIndent = 4;
-  const int labelCol = std::min(out.width - 1, valueCol + kResultIndent);
-  const int valCol = std::min(out.width - 1, labelCol + static_cast<int>(maxLabelLen) + 2);
+
+  auto placeholderForName = [&](const std::string& n) -> std::string {
+    if (n.find("PCIe") != std::string::npos || n.find("PCI") != std::string::npos) return "-- GB/s";
+    if (n.find("FP") != std::string::npos || n.find("FLOPS") != std::string::npos) return "-- GFLOPS";
+    if (n.find("INT") != std::string::npos) return "-- GOPS";
+    return "--";
+  };
+
+  auto resultTextForRow = [&](int row) -> std::string {
+    if (row < 0 || row >= static_cast<int>(results.size())) return "--";
+    const auto& s = results[static_cast<std::size_t>(row)];
+    if (!s.empty()) return s;
+    const std::string n = (!titles.empty() && row >= 0 && static_cast<std::size_t>(row) < titles.size()) ? titles[static_cast<std::size_t>(row)] : std::string{};
+    return placeholderForName(n);
+  };
+
+  std::string lastHeaderKind;
 
   // Special entry: run all.
   {
-    // Spacer between header and the first action.
     if (y < out.height - 2) {
-      drawBodyLine(out, y, L"", Style::Value);
+      drawBodyLine(out, y, L"", Style::Default);
       ++y;
     }
 
-    std::wstring line = (state.benchmarksSel == 0 ? L"> " : L"  ");
-    line += L"Run all benchmarks";
     if (y < out.height - 2) {
+      std::wstring line = (state.benchmarksSel == 0 ? L"> " : L"  ");
+      line += L"Run all benchmarks";
       drawBodyLine(out, y, line, Style::Warning);
       ++y;
     }
 
-    // Blank spacer line.
     if (y < out.height - 2) {
-      drawBodyLine(out, y, L"", Style::Value);
+      drawBodyLine(out, y, L"", Style::Default);
       ++y;
     }
   }
 
-  for (int i = 0; i < static_cast<int>(state.benches.size()); ++i) {
-    const int rowIndex = i + 1;  // shifted by run-all
-    const auto& b = state.benches[static_cast<std::size_t>(i)];
+  for (int row = 0; row < static_cast<int>(state.benches.size()); ++row) {
+    if (y >= out.height - 2) break;
 
-    const std::wstring prefix = (rowIndex == state.benchmarksSel ? L"> " : L"  ");
-    const std::string name = b ? b->name() : std::string("(null)");
-    const bool avail = b && b->isAvailable();
-    const std::string suffix = (b && !avail) ? " [unavailable]" : std::string{};
+    const int rowIndex = row + 1;  // shifted by run-all
+    const bool hdr = (!isHeader.empty() ? isHeader[static_cast<std::size_t>(row)] : (state.benches[static_cast<std::size_t>(row)] == nullptr));
+    const auto& b = state.benches[static_cast<std::size_t>(row)];
 
-    if (y < out.height - 2) {
-      // Clear line.
-      for (int x = 0; x < out.width; ++x) {
-        auto& c = out.at(x, y);
-        c.ch = L' ';
-        c.style = static_cast<std::uint16_t>(Style::Default);
-      }
+    const std::string name = (!titles.empty() ? titles[static_cast<std::size_t>(row)] : (b ? b->name() : std::string("(null)")));
+    const bool avail = (!hdr && b && b->isAvailable());
 
-      // Left column: benchmark name.
-      drawText(out, 0, y, prefix, Style::Value);
+    const bool selected = (!hdr && rowIndex == state.benchmarksSel);
+    const std::wstring prefix = selected ? L"> " : L"  ";
 
-      wchar_t spin = L' ';
-      if (running && runningIdx == i) {
-        static const wchar_t kSpin[4] = {L'|', L'/', L'-', L'\\'};
-        spin = kSpin[static_cast<std::size_t>(state.tick % 4u)];
-      }
+    drawBodyLine(out, y, L"", Style::Default);
+    drawText(out, 0, y, prefix, selected ? Style::Hot : Style::Default);
 
-      std::wstring left;
-      left.push_back(spin);
-      left.push_back(L' ');
-      left += widenAscii(name);
-
-      drawText(out, static_cast<int>(prefix.size()), y, left, avail ? Style::Section : Style::Value);
-      if (!suffix.empty()) {
-        const int sx = static_cast<int>(prefix.size() + 2 + name.size());
-        drawText(out, sx, y, widenAscii(suffix), Style::Value);
-      }
-
-      // Right column: results are rendered on the line(s) below the benchmark name
-      // so the entry is expanded even before running.
-      const int resultTop = y + 1;
-      if (resultTop < out.height - 2) {
-        std::string r;
-        if (i >= 0 && i < static_cast<int>(results.size()) && !results[static_cast<std::size_t>(i)].empty()) {
-          r = results[static_cast<std::size_t>(i)];
-        } else {
-          r = placeholderForBenchmarkName(name);
+    if (hdr) {
+      const std::string kind = (name.rfind("GPU", 0) == 0) ? "GPU" : ((name.rfind("CPU", 0) == 0) ? "CPU" : "");
+      if (kind == "CPU" && lastHeaderKind == "GPU") {
+        if (y < out.height - 2) {
+          ++y;
+          if (y >= out.height - 2) break;
+          drawBodyLine(out, y, L"", Style::Default);
         }
-
-        std::size_t start = 0;
-        int ry = resultTop;
-        while (start <= r.size() && ry < out.height - 2) {
-          const std::size_t end = r.find('\n', start);
-          const std::string line = (end == std::string::npos) ? r.substr(start) : r.substr(start, end - start);
-
-            // Clear line.
-            for (int x = 0; x < out.width; ++x) {
-              auto& c = out.at(x, ry);
-              c.ch = L' ';
-              c.style = static_cast<std::uint16_t>(Style::Default);
-            }
-
-          const std::size_t sep = line.find(": ");
-          if (sep != std::string::npos) {
-            const std::string label = line.substr(0, sep + 1);
-            const std::string val = line.substr(sep + 2);
-            if (labelCol < out.width) drawText(out, labelCol, ry, widenAscii(label), Style::Value);
-            if (valCol < out.width) drawText(out, valCol, ry, widenAscii(val), Style::Value);
-          } else {
-            if (labelCol < out.width) drawText(out, labelCol, ry, widenAscii(line), Style::Value);
-          }
-
-          if (end == std::string::npos) break;
-          start = end + 1;
-          ++ry;
+        if (y < out.height - 2) {
+          ++y;
+          if (y >= out.height - 2) break;
+          drawBodyLine(out, y, L"", Style::Default);
         }
-        y = ry;
       }
 
+      drawText(out, static_cast<int>(prefix.size()), y, widenAscii(name), Style::Section);
+      if (!kind.empty()) lastHeaderKind = kind;
       ++y;
+      continue;
+    }
+
+    // Benchmark rows: show a 1-char spinner and "NAME: value" on a single line.
+    std::string r;
+    if (row >= 0 && row < static_cast<int>(results.size()) && !results[static_cast<std::size_t>(row)].empty()) {
+      r = results[static_cast<std::size_t>(row)];
+    } else if (b && !b->isAvailable()) {
+      r = "unavailable";
+    } else {
+      r = resultTextForRow(row);
+    }
+
+    const std::size_t end0 = r.find('\n');
+    const std::string firstLine = (end0 == std::string::npos) ? r : r.substr(0, end0);
+
+    wchar_t spin = L' ';
+    if (running && runningIdx == row) {
+      static const wchar_t kSpin[4] = {L'|', L'/', L'-', L'\\'};
+      spin = kSpin[static_cast<std::size_t>(state.tick % 4u)];
+    }
+
+    constexpr int kMetricIndent = 4;
+    std::wstring namePart(kMetricIndent, L' ');
+    namePart.push_back(spin);
+    namePart.push_back(L' ');
+    namePart += widenAscii(name);
+
+    const std::size_t targetLen = static_cast<std::size_t>(kMetricIndent) + 2u + maxBenchNameLen;
+    if (namePart.size() < targetLen) namePart.append(targetLen - namePart.size(), L' ');
+
+    const std::wstring valuePart = L": " + widenAscii(firstLine);
+
+    int x = static_cast<int>(prefix.size());
+    drawText(out, x, y, namePart, avail ? Style::Section : Style::Value);
+    x += static_cast<int>(namePart.size());
+    drawText(out, x, y, valuePart, Style::Default);
+    ++y;
+
+    // Extra result lines (errors/details) underneath, indented.
+    if (end0 != std::string::npos) {
+      std::size_t start = end0 + 1;
+      while (start <= r.size() && y < out.height - 2) {
+        const std::size_t end = r.find('\n', start);
+        const std::string extra = (end == std::string::npos) ? r.substr(start) : r.substr(start, end - start);
+        drawBodyLine(out, y, L"", Style::Default);
+        const int ix = static_cast<int>(prefix.size()) + 2;
+        drawText(out, ix, y, widenAscii(extra), Style::Default);
+        ++y;
+        if (end == std::string::npos) break;
+        start = end + 1;
+      }
     }
   }
 
@@ -797,79 +866,38 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
 
   if (out.width <= 0 || out.height <= 0) return;
 
-  // Header (Timelines overrides to show telemetry).
-  fillLine(out, 0, L' ', Style::Header);
+  // Header is drawn per-screen; avoid filling with a background color.
+  drawBodyLine(out, 0, L"", Style::Default);
 
   // Footer
   if (out.height >= 2) {
     const int y = out.height - 1;
-    fillLine(out, y, L' ', Style::FooterKey);
-    std::wstring footer;
-    // Debug: show current screen + tick.
-    const wchar_t* screenName = L"?";
-    switch (state.screen) {
-      case Screen::Timelines:
-        screenName = L"Timelines";
-        break;
-      case Screen::Help:
-        screenName = L"Help";
-        break;
-      case Screen::Hardware:
-        screenName = L"Hardware";
-        break;
-      case Screen::Benchmarks:
-        screenName = L"Benchmarks";
-        break;
-      case Screen::Config:
-        screenName = L"Config";
-        break;
-    }
-    footer += L"screen=";
-    footer += screenName;
-    footer += L" tick=";
-    footer += widenAscii(std::to_string(state.tick));
-    footer += L"  ";
-
-    footer += L"AI-Z  ";
-    footer += L"F1 Help  F2 Hardware  F3 Bench  F4 Config  F5 Timelines  F10 Quit";
-    drawText(out, 0, y, footer, Style::FooterKey);
+    drawBodyLine(out, y, L"", Style::Default);
+    drawText(out, 0, y, L"AI-Z  F1 Help  F2 Hardware  F3 Bench  F4 Config  F5 Timelines  F10 Quit", Style::FooterKey);
   }
 
   // Body
   const int bodyTop = 1;
 
-  auto titleFor = [](Screen s) {
-    switch (s) {
-      case Screen::Timelines:
-        return L"Timelines";
-      case Screen::Help:
-        return L"Help";
-      case Screen::Hardware:
-        return L"Hardware";
-      case Screen::Benchmarks:
-        return L"Benchmarks";
-      case Screen::Config:
-        return L"Config";
-    }
-    return L"";
-  };
-
-  drawText(out, 0, bodyTop, titleFor(state.screen), Style::Section);
-
   switch (state.screen) {
     case Screen::Timelines:
+      // Timelines uses the full header area, so skip the generic title row.
       renderTimelines(out, bodyTop, state, cfg);
       break;
     case Screen::Help:
+      drawText(out, 0, bodyTop, L"Help", Style::Section);
       renderHelp(out, bodyTop);
       break;
     case Screen::Config:
+      drawText(out, 0, bodyTop, L"Config", Style::Section);
       renderConfig(out, bodyTop, cfg, state);
       break;
     case Screen::Hardware:
+      drawText(out, 0, bodyTop, L"Hardware", Style::Section);
       renderHardware(out, bodyTop, state);
       break;
     case Screen::Benchmarks:
+      drawText(out, 0, bodyTop, L"Benchmarks", Style::Section);
       renderBenchmarks(out, bodyTop, state);
       break;
     default:

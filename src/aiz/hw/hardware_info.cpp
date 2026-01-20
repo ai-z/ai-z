@@ -18,6 +18,7 @@
 
 #include <dlfcn.h>
 
+#include <aiz/dyn/cuda.h>
 #include <aiz/metrics/nvidia_nvml.h>
 
 namespace aiz {
@@ -138,58 +139,43 @@ static std::string fmtGFromMiB(std::uint64_t mib) {
 }
 
 static std::vector<std::string> probePerGpuLinesNvidia() {
-  // Example output rows (csv,noheader,nounits):
-  // 0, NVIDIA GeForce RTX 4090, 24220
-  const auto out = runCommand(
-      "nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader,nounits 2>/dev/null");
-  if (!out) return {};
+  const auto n = nvmlGpuCount();
+  if (!n || *n == 0) return {};
 
-  // Match the user's requested formatting:
+  auto fmtGFromGiB = [](double gib) -> std::string {
+    const long rounded = static_cast<long>(std::llround(gib));
+    if (std::abs(gib - static_cast<double>(rounded)) < 0.05) {
+      return std::to_string(rounded) + "G";
+    }
+    std::ostringstream oss;
+    oss.setf(std::ios::fixed);
+    oss.precision(1);
+    oss << gib << "G";
+    return oss.str();
+  };
+
+  // Match the requested formatting:
   // GPU0: <name>
-  //            VRAM: 10G
+  //  VRAM: 10G
   const std::string indent = " ";
   std::vector<std::string> lines;
-  std::istringstream iss(*out);
-  std::string line;
-  while (std::getline(iss, line)) {
-    line = trim(line);
-    if (line.empty()) continue;
+  lines.reserve(static_cast<std::size_t>(*n) * 3);
 
-    // Split by commas.
-    std::string a, b, c;
-    {
-      std::istringstream ls(line);
-      if (!std::getline(ls, a, ',')) continue;
-      if (!std::getline(ls, b, ',')) continue;
-      if (!std::getline(ls, c, ',')) continue;
-    }
-    a = trim(a);
-    b = trim(b);
-    c = trim(c);
-
-    std::uint64_t mib = 0;
-    {
-      std::istringstream cs(c);
-      cs >> mib;
-    }
-    if (a.empty() || b.empty() || mib == 0) continue;
-
-    unsigned int gpuIndex = 0;
-    try {
-      gpuIndex = static_cast<unsigned int>(std::stoul(a));
-    } catch (...) {
-      continue;
-    }
+  for (unsigned int gpuIndex = 0; gpuIndex < *n; ++gpuIndex) {
+    const std::string name = readNvmlGpuNameForGpu(gpuIndex).value_or(std::string(kUnknown));
 
     {
       std::ostringstream l;
-      l << "GPU" << a << ": " << b;
+      l << "GPU" << gpuIndex << ": " << name;
       lines.push_back(l.str());
     }
-    {
-      std::ostringstream l;
-      l << indent << "VRAM: " << fmtGFromMiB(mib);
-      lines.push_back(l.str());
+
+    if (const auto t = readNvmlTelemetryForGpu(gpuIndex)) {
+      if (t->memTotalGiB > 0.0) {
+        std::ostringstream l;
+        l << indent << "VRAM: " << fmtGFromGiB(t->memTotalGiB);
+        lines.push_back(l.str());
+      }
     }
 
     if (const auto link = readNvmlPcieLinkForGpu(gpuIndex)) {
@@ -209,46 +195,40 @@ static std::string probeKernelVersion() {
 }
 
 static std::string probeCudaVersion() {
-  // nvidia-smi output usually contains "CUDA Version: X.Y".
-  const auto v = runCommand(
-      "nvidia-smi 2>/dev/null | grep -o 'CUDA Version: [0-9.]*' | head -n 1 | awk '{print $3}'");
-  return v.value_or(kUnknown);
+  std::string err;
+  const auto* cu = dyn::cuda::api(&err);
+  if (!cu) return kUnknown;
+  if (!cu->cuInit || !cu->cuDriverGetVersion) return kUnknown;
+  if (cu->cuInit(0) != dyn::cuda::CUDA_SUCCESS) return kUnknown;
+
+  int v = 0;
+  if (cu->cuDriverGetVersion(&v) != dyn::cuda::CUDA_SUCCESS || v <= 0) return kUnknown;
+  const int major = v / 1000;
+  const int minor = (v % 1000) / 10;
+  return std::to_string(major) + "." + std::to_string(minor);
 }
 
 static std::string probeNvmlVersion() {
   if (auto v = readNvmlLibraryVersion()) return *v;
-  const auto v = runCommand(
-      "nvidia-smi -q 2>/dev/null | awk -F: '/NVML Version/{gsub(/^[ \\t]+/,\"\",$2); print $2; exit}'");
-  return v.value_or(kUnknown);
+  return kUnknown;
 }
 
 static std::string probeVramSummary() {
-  // NVIDIA: sum memory.total across all GPUs (MiB).
-  const auto out = runCommand(
-      "nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null");
-  if (!out) return kUnknown;
-
-  std::istringstream iss(*out);
-  std::string line;
-  std::uint64_t sumMiB = 0;
-  int gpus = 0;
-  while (std::getline(iss, line)) {
-    line = trim(line);
-    if (line.empty()) continue;
-    std::uint64_t mib = 0;
-    std::istringstream ls(line);
-    ls >> mib;
-    if (mib == 0) continue;
-    sumMiB += mib;
-    ++gpus;
+  // NVIDIA: use NVML (no external tools).
+  if (const auto t = readNvmlTelemetry()) {
+    const auto n = nvmlGpuCount();
+    const double total = t->memTotalGiB;
+    if (total > 0.0) {
+      std::ostringstream oss;
+      oss.setf(std::ios::fixed);
+      oss.precision(1);
+      oss << total << " GiB";
+      if (n && *n > 1) oss << " (" << *n << " GPUs)";
+      return oss.str();
+    }
   }
 
-  if (gpus <= 0 || sumMiB == 0) return kUnknown;
-  if (gpus == 1) return fmtGiBFromMiB(sumMiB);
-
-  std::ostringstream oss;
-  oss << fmtGiBFromMiB(sumMiB) << " (" << gpus << " GPUs)";
-  return oss.str();
+  return kUnknown;
 }
 
 static std::string probeRocmVersion() {
@@ -902,9 +882,8 @@ static std::string probeRamSummary() {
 }
 
 static std::string probeGpuName() {
-  // Prefer vendor tools when available.
-  if (auto n = runCommand("nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n 1")) return *n;
-  if (auto a = runCommand("rocm-smi --showproductname 2>/dev/null | head -n 1")) return *a;
+  // Prefer NVML when available (no external tools).
+  if (auto n = readNvmlGpuNameForGpu(0)) return *n;
 
   // Fallback: lspci line for VGA/3D.
   if (auto l = runCommand("lspci 2>/dev/null | grep -E 'VGA|3D|Display' | head -n 1")) return *l;
@@ -913,10 +892,8 @@ static std::string probeGpuName() {
 }
 
 static std::string probeGpuDriver() {
-  // NVIDIA: nvidia-smi provides driver version.
-  if (auto v = runCommand("nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n 1")) {
-    return "nvidia " + *v;
-  }
+  // NVIDIA: NVML provides driver version.
+  if (auto v = readNvmlDriverVersion()) return "nvidia " + *v;
 
   // AMD/Intel: kernel module version via modinfo (often equals kernel version string).
   if (auto v = runCommand("modinfo -F version amdgpu 2>/dev/null | head -n 1")) return "amdgpu " + *v;

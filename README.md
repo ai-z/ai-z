@@ -18,7 +18,7 @@ cmake --build build -j
 
 CUDA benchmarks (Linux):
 
-- Runtime prerequisite: an NVIDIA driver (for `libcuda.so` + GPU access). Quick check: `nvidia-smi`.
+- Runtime prerequisite: an NVIDIA driver (for `libcuda.so` + GPU access).
 - The CUDA Toolkit (`nvcc`, headers, libraries) is **not required** to build or run ai-z's current CUDA benchmarks.
   The project uses the CUDA **driver API** and JITs small **embedded PTX** kernels at runtime.
 

@@ -58,6 +58,9 @@ struct TuiState {
 
   // Benchmarks screen.
   std::vector<std::unique_ptr<IBenchmark>> benches;
+  // Benchmarks UI rows mirror `benches` 1:1 (including header rows represented by nullptr benches).
+  std::vector<std::string> benchRowTitles;
+  std::vector<bool> benchRowIsHeader;
   std::vector<std::string> benchResults;
   std::string lastBenchResult;
 
@@ -73,8 +76,14 @@ struct TuiState {
   // Timelines screen: latest telemetry snapshot.
   TelemetrySnapshot latest;
 
+  // Device names for section titles (best-effort; may be empty until probed).
+  std::string cpuDevice;
+  std::vector<std::string> gpuDeviceNames;
+
   // Timelines history (oldest -> newest) for scrolling bars.
   Timeline cpuTl{240};
+  std::vector<Timeline> gpuTls;
+  Timeline gpuMemUtilTl{240};
   Timeline ramTl{240};
   Timeline vramTl{240};
   Timeline diskTl{240};

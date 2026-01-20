@@ -32,6 +32,11 @@ struct NvmlPcieLink {
 // Returns nullopt if NVML isn't present/usable.
 std::optional<unsigned int> nvmlGpuCount();
 
+// In-process NVML queries (no fork/timeout wrapper). These are intended for
+// lightweight, best-effort UI metadata like device names where avoiding fork
+// in a multi-threaded process matters more than guarding against rare driver hangs.
+std::optional<unsigned int> nvmlGpuCountNoFork();
+
 // Reads telemetry for a specific GPU via NVML.
 // Returns nullopt if NVML isn't present/usable or index is invalid.
 std::optional<NvmlTelemetry> readNvmlTelemetryForGpu(unsigned int index);
@@ -53,6 +58,13 @@ std::optional<NvmlPcieThroughput> readNvmlPcieThroughputForGpu(unsigned int inde
 // Reads PCIe link information (current link width + generation) for a specific GPU via NVML.
 // Returns nullopt if NVML isn't present/usable or the driver doesn't expose the fields.
 std::optional<NvmlPcieLink> readNvmlPcieLinkForGpu(unsigned int index);
+
+// Reads the GPU device name for a specific GPU via NVML.
+// Returns nullopt if NVML isn't present/usable or index is invalid.
+std::optional<std::string> readNvmlGpuNameForGpu(unsigned int index);
+
+// In-process NVML query (no fork/timeout wrapper).
+std::optional<std::string> readNvmlGpuNameForGpuNoFork(unsigned int index);
 
 // Reads aggregated PCIe throughput (RX/TX) across all NVML-visible GPUs.
 // Aggregation rules:
