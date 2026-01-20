@@ -2,7 +2,6 @@
 
 #include <aiz/bench/bench.h>
 
-#include <cstddef>
 #include <mutex>
 
 namespace aiz::ncurses {
