@@ -16,6 +16,13 @@ cmake --build build -j
 ./build/ai-z
 ```
 
+Optional (developer): enable extra compiler warnings:
+
+```bash
+cmake -S . -B build -DAI_Z_ENABLE_WARNINGS=ON
+cmake --build build -j
+```
+
 CUDA benchmarks (Linux):
 
 - Runtime prerequisite: an NVIDIA driver (for `libcuda.so` + GPU access).
