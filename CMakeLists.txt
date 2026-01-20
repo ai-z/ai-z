@@ -66,9 +66,11 @@ target_sources(ai-z PRIVATE
   src/aiz/tui/platform_ui_ncurses.cpp
   src/aiz/tui/ncurses_render.cpp
   src/aiz/tui/ncurses_probe.cpp
+  src/aiz/tui/ncurses_telemetry.cpp
   src/aiz/tui/ncurses_ui.cpp
   src/aiz/tui/tui_core.cpp
 )
+
 target_link_libraries(ai-z PRIVATE ${CURSES_LIBRARIES})
 target_include_directories(ai-z PRIVATE ${CURSES_INCLUDE_DIR})
 

@@ -21,6 +21,7 @@
 
 #include "ncurses_render.h"
 #include "ncurses_probe.h"
+#include "ncurses_telemetry.h"
 
 #include <algorithm>
 #include <array>
@@ -94,13 +95,7 @@ static void ensureTimelineCapacity(Timeline& tl, std::size_t desiredCapacity) {
   tl = std::move(resized);
 }
 
-static std::string fmt1(double v);
-static std::string fmt0(double v);
-
-static std::string formatRamText(const std::optional<RamUsage>& ram) {
-  if (!ram) return "--";
-  return fmt1(ram->usedGiB) + "/" + fmt1(ram->totalGiB) + "G(" + fmt0(ram->usedPct) + "%)";
-}
+// RAM/GPU telemetry formatting helpers live in ncurses_telemetry.{h,cpp}.
 
 // Device-name probing helpers live in ncurses_probe.{h,cpp}.
 
@@ -178,81 +173,6 @@ static std::string formatRamText(const std::optional<RamUsage>& ram) {
   addLabelWithHot("Quit", 'Q');
 
   clrtoeol();
-}
-
-struct VramUsage {
-  double usedGiB = 0.0;
-  double totalGiB = 0.0;
-  double usedPct = 0.0;
-};
-
-struct GpuTelemetry {
-  std::optional<double> utilPct;
-  std::optional<double> memUtilPct;
-  std::optional<double> vramUsedGiB;
-  std::optional<double> vramTotalGiB;
-  std::optional<double> watts;
-  std::optional<double> tempC;
-  std::string pstate;
-  std::optional<unsigned int> pcieLinkWidth;
-  std::optional<unsigned int> pcieLinkGen;
-  std::string source;
-};
-
-static std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index) {
-  GpuTelemetry t;
-  bool any = false;
-
-  if (const auto nv = readNvmlTelemetryForGpu(index)) {
-    t.utilPct = nv->gpuUtilPct;
-    t.memUtilPct = nv->memUtilPct;
-    t.vramUsedGiB = nv->memUsedGiB;
-    t.vramTotalGiB = nv->memTotalGiB;
-    t.watts = nv->powerWatts;
-    t.tempC = nv->tempC;
-    t.pstate = nv->pstate;
-    t.source = "nvml";
-    any = true;
-  }
-
-  // Query PCIe link info independently: telemetry calls can fail while link queries still work.
-  if (const auto link = readNvmlPcieLinkForGpu(index)) {
-    t.pcieLinkWidth = link->width;
-    t.pcieLinkGen = link->generation;
-    any = true;
-  }
-
-  if (any) return t;
-
-  // AMD/Intel via Linux sysfs (best-effort).
-  if (const auto lt = readLinuxGpuTelemetry(index)) {
-    t.utilPct = lt->utilPct;
-    t.vramUsedGiB = lt->vramUsedGiB;
-    t.vramTotalGiB = lt->vramTotalGiB;
-    t.watts = lt->watts;
-    t.tempC = lt->tempC;
-    t.pstate = lt->pstate;
-    t.source = lt->source;
-    return t;
-  }
-
-  return std::nullopt;
-}
-
-static std::string fmt1(double v) {
-  std::ostringstream oss;
-  oss.setf(std::ios::fixed);
-  oss.precision(1);
-  oss << v;
-  return oss.str();
-}
-
-static std::string fmt0(double v) {
-  std::ostringstream oss;
-  oss.setf(std::ios::fixed);
-  oss.precision(0);
-  oss << v;
-  return oss.str();
 }
 
 }  // namespace
@@ -425,7 +345,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   if (ncurses::hasRealDeviceNames(gpuNamesInit)) state.gpuDeviceNames = std::move(gpuNamesInit);
 
   std::mutex nvmlMu;
-  std::vector<std::optional<GpuTelemetry>> cachedGpuTel;
+  std::vector<std::optional<ncurses::GpuTelemetry>> cachedGpuTel;
   cachedGpuTel.resize(gpuCount);
   std::optional<NvmlPcieThroughput> cachedPcie;
   std::atomic<bool> nvmlStop{false};
@@ -433,16 +353,16 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   if (!debugMode) {
     nvmlThread = std::thread([&]() {
       while (!nvmlStop.load()) {
-        std::vector<std::optional<GpuTelemetry>> nextGpu;
+        std::vector<std::optional<ncurses::GpuTelemetry>> nextGpu;
         nextGpu.resize(gpuCount);
 
         for (unsigned int i = 0; i < gpuCount; ++i) {
           if (hasNvml) {
-            nextGpu[static_cast<std::size_t>(i)] = readGpuTelemetryPreferNvml(i);
+            nextGpu[static_cast<std::size_t>(i)] = ncurses::readGpuTelemetryPreferNvml(i);
           } else {
             // Avoid NVML wrapper overhead on non-NVIDIA systems.
             if (const auto lt = readLinuxGpuTelemetry(i)) {
-              GpuTelemetry t;
+              ncurses::GpuTelemetry t;
               t.utilPct = lt->utilPct;
               t.vramUsedGiB = lt->vramUsedGiB;
               t.vramTotalGiB = lt->vramTotalGiB;
@@ -813,7 +733,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     std::optional<Sample> pcieTx;
     std::vector<std::optional<Sample>> gpuSamples;
     gpuSamples.resize(gpuCount);
-    std::vector<std::optional<GpuTelemetry>> gpuTel;
+    std::vector<std::optional<ncurses::GpuTelemetry>> gpuTel;
     gpuTel.resize(gpuCount);
 
     if (debugMode) {
@@ -838,7 +758,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
       gpuMemUtil = Sample{util, "%", "debug"};
 
-      GpuTelemetry gt;
+      ncurses::GpuTelemetry gt;
       gt.utilPct = util;
       const double totalVram = 10.0;  // placeholder
       const double vramPctV = dbgVramPct.next();
@@ -943,7 +863,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     state.latest.pcieTx = pcieTx;
     state.latest.ramPct = ramPct;
     state.latest.vramPct = vramPct;
-    state.latest.ramText = formatRamText(ram);
+    state.latest.ramText = ncurses::formatRamText(ram);
 
     // Populate per-GPU details for the multi-line header.
     state.latest.gpus.clear();
