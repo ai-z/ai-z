@@ -1,7 +1,5 @@
 #include "ncurses_render.h"
 
-#include <algorithm>
-
 namespace aiz::ncurses {
 
 int styleToAttr(std::uint16_t style) {
@@ -61,13 +59,13 @@ void drawHeader(int cols, const std::string& title) {
     std::string rest = title.substr(4);
     // Ensure at least one space after the green block.
     if (rest.empty() || rest.front() != ' ') rest = " " + rest;
-    mvaddnstr(0, x, rest.c_str(), std::max(0, cols - x));
+    const int avail = cols - x;
+    mvaddnstr(0, x, rest.c_str(), (avail > 0) ? avail : 0);
   } else {
     if (colors) attron(COLOR_PAIR(3) | A_BOLD);
     mvaddnstr(0, 0, title.c_str(), cols);
     if (colors) attroff(COLOR_PAIR(3) | A_BOLD);
   }
-
 }
 
 }  // namespace aiz::ncurses
