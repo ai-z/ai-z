@@ -670,15 +670,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     });
   }
 
-  std::vector<std::string> benchRowTitles;
-  std::vector<bool> benchRowIsHeader;
-
   // Benchmark runner state: keep UI responsive while benchmarks execute.
   std::thread benchThread;
 
   auto rebuildBenchRows = [&]() {
-    benchRowTitles.clear();
-    benchRowIsHeader.clear();
     state.benches.clear();
     state.benchRowTitles.clear();
     state.benchRowIsHeader.clear();
@@ -687,8 +682,6 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     const std::vector<std::string> gpuNames = parseGpuNames(hwCache, gpuCount);
 
     auto addHeader = [&](const std::string& title) {
-      benchRowTitles.push_back(title);
-      benchRowIsHeader.push_back(true);
       state.benches.push_back(nullptr);
       state.benchRowTitles.push_back(title);
       state.benchRowIsHeader.push_back(true);
@@ -697,8 +690,6 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
     auto addBench = [&](std::unique_ptr<IBenchmark> b) {
       const std::string title = b ? b->name() : std::string("(null)");
-      benchRowTitles.push_back(title);
-      benchRowIsHeader.push_back(false);
       state.benches.push_back(std::move(b));
       state.benchRowTitles.push_back(title);
       state.benchRowIsHeader.push_back(false);
@@ -768,10 +759,6 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   state.benchmarksSel = 0;
   state.configSel = 0;
 
-  // Benchmarks navigation fast-path: map selection index -> screen y.
-  std::vector<int> benchSelectionY;
-  bool benchSelectionYValid = false;
-
   std::uint64_t uiTick = 0;
 
   int lastRows = -1;
@@ -836,9 +823,6 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
         }
       }
 
-      const int benchSelectedBeforeKeys = state.benchmarksSel;
-      Screen screenBeforeKeys = state.screen;
-
       for (const int k : queuedKeys) {
         // Sampling / scroll speed stays backend-local for now.
         if (k == '+' || k == '=') {
@@ -896,15 +880,18 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           if (benchThread.joinable() && !runningNow) benchThread.join();
 
           if (state.benchmarksSel == 0) {
-            state.lastBenchResult = "Running all...";
             {
               std::lock_guard<std::mutex> lk(state.benchMutex);
+              state.lastBenchResult = "Running all...";
               state.benchmarksRunning = true;
               state.runningBenchIndex = -1;
             }
             benchThread = std::thread([&]() {
               for (int row = 0; row < static_cast<int>(state.benches.size()); ++row) {
-                if (row >= 0 && row < static_cast<int>(benchRowIsHeader.size()) && benchRowIsHeader[static_cast<std::size_t>(row)]) continue;
+                if (row >= 0 && row < static_cast<int>(state.benchRowIsHeader.size()) &&
+                    state.benchRowIsHeader[static_cast<std::size_t>(row)]) {
+                  continue;
+                }
                 {
                   std::lock_guard<std::mutex> lk(state.benchMutex);
                   state.runningBenchIndex = row;
@@ -929,10 +916,11 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           } else {
             const int row = state.benchmarksSel - 1;
             if (row >= 0 && row < static_cast<int>(state.benches.size()) &&
-                row < static_cast<int>(benchRowIsHeader.size()) && !benchRowIsHeader[static_cast<std::size_t>(row)]) {
-              state.lastBenchResult = "Running...";
+                row < static_cast<int>(state.benchRowIsHeader.size()) &&
+                !state.benchRowIsHeader[static_cast<std::size_t>(row)]) {
               {
                 std::lock_guard<std::mutex> lk(state.benchMutex);
+                state.lastBenchResult = "Running...";
                 state.benchmarksRunning = true;
                 state.runningBenchIndex = row;
               }
@@ -950,44 +938,12 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
                 }
               });
             } else {
+              std::lock_guard<std::mutex> lk(state.benchMutex);
               state.lastBenchResult = "(not runnable)";
             }
           }
           continue;
         }
-      }
-
-      // Benchmarks navigation fast-path: if the only change is selection movement,
-      // update just the 2-character prefix on the old/new rows and skip the heavy redraw.
-      const bool stayedOnBenchmarks = (screenBeforeKeys == Screen::Benchmarks && state.screen == Screen::Benchmarks);
-      const bool selectionChanged = (state.benchmarksSel != benchSelectedBeforeKeys);
-      bool benchRunningNow = false;
-      {
-        std::lock_guard<std::mutex> lk(state.benchMutex);
-        benchRunningNow = state.benchmarksRunning;
-      }
-      if (stayedOnBenchmarks && selectionChanged && !benchRunningNow && benchSelectionYValid) {
-        auto yForSel = [&](int sel) -> int {
-          if (sel < 0) return -1;
-          const std::size_t idx = static_cast<std::size_t>(sel);
-          if (idx >= benchSelectionY.size()) return -1;
-          return benchSelectionY[idx];
-        };
-
-        const int yOld = yForSel(benchSelectedBeforeKeys);
-        const int yNew = yForSel(state.benchmarksSel);
-        if (yOld >= 0 && yNew >= 0) {
-          mvaddnstr(yOld, 0, "  ", 2);
-          mvaddnstr(yNew, 0, "> ", 2);
-          refresh();
-          continue;
-        }
-      }
-
-      // If we moved into/out of benchmarks (or we did any other action), the cached
-      // mapping is no longer trustworthy.
-      if (state.screen != Screen::Benchmarks) {
-        benchSelectionYValid = false;
       }
     }
 
