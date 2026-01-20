@@ -3,16 +3,12 @@
 #include <aiz/tui/tui_core.h>
 
 #include <aiz/bench/bench.h>
-#include <aiz/dyn/cuda.h>
 #include <aiz/hw/hardware_info.h>
 #include <aiz/metrics/cpu_usage.h>
 #include <aiz/metrics/disk_bandwidth.h>
 #include <aiz/metrics/network_bandwidth.h>
-#include <aiz/metrics/gpu_usage.h>
-#include <aiz/metrics/gpu_memory_util.h>
 #include <aiz/metrics/linux_gpu_sysfs.h>
 #include <aiz/metrics/nvidia_nvml.h>
-#include <aiz/metrics/pcie_bandwidth.h>
 #include <aiz/metrics/ram_usage.h>
 #include <aiz/metrics/timeline.h>
 #include <aiz/version.h>
@@ -29,20 +25,13 @@
 #include "ncurses_input.h"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
-#include <cmath>
-#include <cstring>
-#include <cstdio>
-#include <fstream>
-#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
-#include <atomic>
 #include <vector>
 #include <random>
 
@@ -169,16 +158,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   }
 
   CpuUsageCollector cpuCol;
-  GpuUsageCollector gpuCol;
-  GpuMemoryUtilCollector gpuMemUtilCol;
-  DiskBandwidthCollector diskCol;
   DiskBandwidthCollector diskReadCol(DiskBandwidthMode::Read);
   DiskBandwidthCollector diskWriteCol(DiskBandwidthMode::Write);
   NetworkBandwidthCollector netRxCol(NetworkBandwidthMode::Rx);
   NetworkBandwidthCollector netTxCol(NetworkBandwidthMode::Tx);
-  PcieBandwidthCollector pcieCol;
-  PcieRxBandwidthCollector pcieRxCol;
-  PcieTxBandwidthCollector pcieTxCol;
 
   // Debug generators (used only when --debug is passed)
   RandomWalk dbgCpu(0.0, 100.0, 10.0);
