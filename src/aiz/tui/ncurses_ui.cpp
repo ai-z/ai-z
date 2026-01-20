@@ -23,6 +23,7 @@
 #include "ncurses_probe.h"
 #include "ncurses_telemetry.h"
 #include "ncurses_bench.h"
+#include "ncurses_sampler.h"
 
 #include <algorithm>
 #include <array>
@@ -345,49 +346,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   if (!cpuNameFast.empty()) state.cpuDevice = cpuNameFast;
   if (ncurses::hasRealDeviceNames(gpuNamesInit)) state.gpuDeviceNames = std::move(gpuNamesInit);
 
-  std::mutex nvmlMu;
-  std::vector<std::optional<ncurses::GpuTelemetry>> cachedGpuTel;
-  cachedGpuTel.resize(gpuCount);
-  std::optional<NvmlPcieThroughput> cachedPcie;
-  std::atomic<bool> nvmlStop{false};
-  std::thread nvmlThread;
-  if (!debugMode) {
-    nvmlThread = std::thread([&]() {
-      while (!nvmlStop.load()) {
-        std::vector<std::optional<ncurses::GpuTelemetry>> nextGpu;
-        nextGpu.resize(gpuCount);
-
-        for (unsigned int i = 0; i < gpuCount; ++i) {
-          if (hasNvml) {
-            nextGpu[static_cast<std::size_t>(i)] = ncurses::readGpuTelemetryPreferNvml(i);
-          } else {
-            // Avoid NVML wrapper overhead on non-NVIDIA systems.
-            if (const auto lt = readLinuxGpuTelemetry(i)) {
-              ncurses::GpuTelemetry t;
-              t.utilPct = lt->utilPct;
-              t.vramUsedGiB = lt->vramUsedGiB;
-              t.vramTotalGiB = lt->vramTotalGiB;
-              t.watts = lt->watts;
-              t.tempC = lt->tempC;
-              t.pstate = lt->pstate;
-              t.source = lt->source;
-              nextGpu[static_cast<std::size_t>(i)] = t;
-            }
-          }
-        }
-
-        const auto nextPcie = hasNvml ? readNvmlPcieThroughput() : std::nullopt;
-
-        {
-          std::lock_guard<std::mutex> lk(nvmlMu);
-          cachedGpuTel = std::move(nextGpu);
-          cachedPcie = nextPcie;
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-      }
-    });
-  }
+  ncurses::GpuTelemetrySampler gpuSampler(gpuCount, hasNvml);
+  if (!debugMode) gpuSampler.start();
 
   // Use shared-core timelines so the Frame renderer can display them.
   ensureTimelineCapacity(state.cpuTl, cfg.timelineSamples);
@@ -710,13 +670,11 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       ram = readRamUsage();
 
       // Copy cached NVML/sysfs telemetry without doing any expensive work on the UI thread.
-      {
-        std::lock_guard<std::mutex> lk(nvmlMu);
-        gpuTel = cachedGpuTel;
-        if (cachedPcie) {
-          pcieRx = Sample{cachedPcie->rxMBps, "MB/s", "nvml"};
-          pcieTx = Sample{cachedPcie->txMBps, "MB/s", "nvml"};
-        }
+      std::optional<NvmlPcieThroughput> cachedPcie;
+      gpuSampler.snapshot(gpuTel, cachedPcie);
+      if (cachedPcie) {
+        pcieRx = Sample{cachedPcie->rxMBps, "MB/s", "nvml"};
+        pcieTx = Sample{cachedPcie->txMBps, "MB/s", "nvml"};
       }
 
       // Aggregate GPU memory-controller utilization (when available).
@@ -788,14 +746,14 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
     // Populate per-GPU details for the multi-line header.
     state.latest.gpus.clear();
-    state.latest.gpus.reserve(cachedGpuTel.size());
-    for (std::size_t i = 0; i < cachedGpuTel.size(); ++i) {
+    state.latest.gpus.reserve(gpuTel.size());
+    for (std::size_t i = 0; i < gpuTel.size(); ++i) {
       GpuTelemetrySnapshot gs;
       if (i < gpuSamples.size() && gpuSamples[i]) {
         gs.utilPct = gpuSamples[i]->value;
       }
-      if (cachedGpuTel[i]) {
-        const auto& gt = *cachedGpuTel[i];
+      if (gpuTel[i]) {
+        const auto& gt = *gpuTel[i];
         if (gt.utilPct) gs.utilPct = *gt.utilPct;
         gs.memUtilPct = gt.memUtilPct;
         gs.vramUsedGiB = gt.vramUsedGiB;
@@ -932,8 +890,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     refresh();
   }
 
-  nvmlStop.store(true);
-  if (nvmlThread.joinable()) nvmlThread.join();
+  gpuSampler.stop();
   if (bootHwThread.joinable()) bootHwThread.join();
   // Benchmarks are best-effort; allow them to finish before tearing down ncurses.
   ncurses::benchShutdown(benchThread);
