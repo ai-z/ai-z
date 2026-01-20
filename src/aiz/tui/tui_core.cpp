@@ -1,7 +1,6 @@
 #include <aiz/tui/tui_core.h>
 
 #include <aiz/bench/bench.h>
-#include <aiz/hw/hardware_info.h>
 
 #include <algorithm>
 #include <array>
