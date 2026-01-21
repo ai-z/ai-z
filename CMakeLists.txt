@@ -34,6 +34,7 @@ include(CTest)
 add_executable(ai-z
   src/main.cpp
   src/aiz/app.cpp
+  src/aiz/i18n.cpp
   src/aiz/config/config.cpp
   src/aiz/dyn/cuda.cpp
   src/aiz/dyn/opencl.cpp
@@ -62,6 +63,9 @@ add_executable(ai-z
 target_include_directories(ai-z PRIVATE include)
 target_include_directories(ai-z PRIVATE ${AI_Z_GENERATED_DIR})
 
+# Prefer wide-character ncurses for localized UI strings.
+set(CURSES_NEED_NCURSES TRUE)
+set(CURSES_NEED_WIDE TRUE)
 find_package(Curses REQUIRED)
 target_sources(ai-z PRIVATE
   src/aiz/tui/platform_ui_ncurses.cpp
@@ -77,7 +81,13 @@ target_sources(ai-z PRIVATE
   src/aiz/tui/tui_core.cpp
 )
 
-target_link_libraries(ai-z PRIVATE ${CURSES_LIBRARIES})
+find_library(AI_Z_NCURSESW_LIBRARY NAMES ncursesw)
+if (AI_Z_NCURSESW_LIBRARY)
+  target_link_libraries(ai-z PRIVATE ${AI_Z_NCURSESW_LIBRARY})
+else()
+  target_link_libraries(ai-z PRIVATE ${CURSES_LIBRARIES})
+endif()
+
 target_include_directories(ai-z PRIVATE ${CURSES_INCLUDE_DIR})
 
 target_link_libraries(ai-z PRIVATE dl)

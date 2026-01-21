@@ -1,6 +1,7 @@
 #include <aiz/tui/tui_core.h>
 
 #include <aiz/bench/bench.h>
+#include <aiz/i18n.h>
 
 #include <algorithm>
 #include <array>
@@ -8,26 +9,27 @@
 #include <cstdio>
 #include <limits>
 #include <mutex>
+#include <wchar.h>
 
 namespace aiz {
 
 struct ConfigToggleItem {
-  const wchar_t* label;
+  i18n::MsgId label;
   bool Config::*field;
 };
 
 static constexpr std::array<ConfigToggleItem, 11> kConfigToggleItems = {{
-    {L"CPU usage", &Config::showCpu},
-    {L"GPU usage", &Config::showGpu},
-    {L"GPU mem ctrl", &Config::showGpuMem},
-    {L"Disk Read", &Config::showDiskRead},
-    {L"Disk Write", &Config::showDiskWrite},
-    {L"Net RX", &Config::showNetRx},
-    {L"Net TX", &Config::showNetTx},
-    {L"PCIe RX", &Config::showPcieRx},
-    {L"PCIe TX", &Config::showPcieTx},
-    {L"RAM usage", &Config::showRam},
-    {L"VRAM usage", &Config::showVram},
+    {i18n::MsgId::ConfigToggleCpuUsage, &Config::showCpu},
+    {i18n::MsgId::ConfigToggleGpuUsage, &Config::showGpu},
+    {i18n::MsgId::ConfigToggleGpuMemCtrl, &Config::showGpuMem},
+    {i18n::MsgId::ConfigToggleDiskRead, &Config::showDiskRead},
+    {i18n::MsgId::ConfigToggleDiskWrite, &Config::showDiskWrite},
+    {i18n::MsgId::ConfigToggleNetRx, &Config::showNetRx},
+    {i18n::MsgId::ConfigToggleNetTx, &Config::showNetTx},
+    {i18n::MsgId::ConfigTogglePcieRx, &Config::showPcieRx},
+    {i18n::MsgId::ConfigTogglePcieTx, &Config::showPcieTx},
+    {i18n::MsgId::ConfigToggleRamUsage, &Config::showRam},
+    {i18n::MsgId::ConfigToggleVramUsage, &Config::showVram},
 }};
 
 static constexpr int configToggleCount() {
@@ -72,8 +74,38 @@ static void drawText(Frame& f, int x, int y, const std::wstring& s, Style style)
     auto& c = f.at(cx, y);
     c.ch = ch;
     c.style = static_cast<std::uint16_t>(style);
-    ++cx;
+
+    int w = 1;
+    if (ch != 0 && ch != L' ' && ch != kWideContinuation) {
+      const int ww = ::wcwidth(ch);
+      if (ww > 0) w = ww;
+    }
+
+    // Mark any extra columns covered by this glyph so backends avoid drawing
+    // into them (CJK characters are typically width 2).
+    for (int i = 1; i < w; ++i) {
+      if (cx + i >= f.width) break;
+      auto& cc = f.at(cx + i, y);
+      cc.ch = kWideContinuation;
+      cc.style = static_cast<std::uint16_t>(style);
+    }
+
+    cx += w;
   }
+}
+
+static std::size_t textWidth(std::wstring_view s) {
+  std::size_t w = 0;
+  for (wchar_t ch : s) {
+    if (ch == kWideContinuation) continue;
+    int ww = 1;
+    if (ch != 0 && ch != L' ') {
+      const int wcw = ::wcwidth(ch);
+      if (wcw > 0) ww = wcw;
+    }
+    w += static_cast<std::size_t>(ww);
+  }
+  return w;
 }
 
 
@@ -519,7 +551,7 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
       panels.end());
 
   if (panels.empty()) {
-    drawBodyLine(out, 2, L"No timelines enabled. Use Config (F4 / C) to enable.", Style::Value);
+    drawBodyLine(out, 2, std::wstring(i18n::tr(i18n::MsgId::TimelinesNoneEnabled)), Style::Value);
     return;
   }
 
@@ -604,27 +636,27 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
   const int kActionReset = configResetRowIndex();
 
   int y = bodyTop + 1;
-  drawBodyLine(out, y, L"Timelines", Style::Section);
+  drawBodyLine(out, y, std::wstring(i18n::tr(i18n::MsgId::ConfigSectionTimelines)), Style::Section);
   ++y;
 
-  std::size_t maxLabelLen = 0;
+  std::size_t maxLabelW = 0;
   for (const auto& it : kConfigToggleItems) {
-    maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(it.label));
+    maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(it.label)));
   }
-  maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(L"Reset to defaults"));
-  maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(L"Samples per bucket (bars)"));
-  maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(L"Value color"));
-  maxLabelLen = std::max<std::size_t>(maxLabelLen, std::wcslen(L"Metric name color"));
+  maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigResetToDefaults)));
+  maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigReadonlySamplesPerBucket)));
+  maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigReadonlyValueColor)));
+  maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigReadonlyMetricNameColor)));
 
   for (int i = 0; i < kToggleCount; ++i) {
     std::wstring line = (i == state.configSel ? L"> " : L"  ");
     const auto& it = kConfigToggleItems[static_cast<std::size_t>(i)];
-    line += it.label;
-    if (std::wcslen(it.label) < maxLabelLen) {
-      line.append(maxLabelLen - std::wcslen(it.label), L' ');
-    }
+    const std::wstring_view label = i18n::tr(it.label);
+    line += label;
+    const std::size_t labelW = textWidth(label);
+    if (labelW < maxLabelW) line.append(maxLabelW - labelW, L' ');
     line += L": ";
-    line += ((cfg.*(it.field)) ? L"ON" : L"OFF");
+    line += std::wstring((cfg.*(it.field)) ? i18n::tr(i18n::MsgId::ConfigToggleOn) : i18n::tr(i18n::MsgId::ConfigToggleOff));
     if (y >= out.height - 2) break;
     drawBodyLine(out, y, line, Style::Value);
     ++y;
@@ -633,11 +665,12 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
   // Action row.
   {
     std::wstring line = (kActionReset == state.configSel ? L"> " : L"  ");
-    line += L"Reset to defaults";
-    if (std::wcslen(L"Reset to defaults") < maxLabelLen) {
-      line.append(maxLabelLen - std::wcslen(L"Reset to defaults"), L' ');
-    }
-    line += L": RESET";
+    const std::wstring_view resetLabel = i18n::tr(i18n::MsgId::ConfigResetToDefaults);
+    line += resetLabel;
+    const std::size_t resetW = textWidth(resetLabel);
+    if (resetW < maxLabelW) line.append(maxLabelW - resetW, L' ');
+    line += L": ";
+    line += i18n::tr(i18n::MsgId::ConfigResetTag);
     if (y < out.height - 2) {
       drawBodyLine(out, y, line, Style::Value);
       ++y;
@@ -649,7 +682,8 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
     if (y >= out.height - 2) return;
     std::wstring line = L"  ";
     line += label;
-    if (label.size() < maxLabelLen) line.append(maxLabelLen - label.size(), L' ');
+    const std::size_t labelW = textWidth(label);
+    if (labelW < maxLabelW) line.append(maxLabelW - labelW, L' ');
     line += L": ";
     line += value;
     drawBodyLine(out, y, line, Style::Value);
@@ -660,7 +694,7 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
     ++y;  // spacer
   }
   if (y < out.height - 2) {
-    drawBodyLine(out, y, L"Misc", Style::Section);
+    drawBodyLine(out, y, std::wstring(i18n::tr(i18n::MsgId::ConfigSectionMisc)), Style::Section);
     ++y;
   }
 
@@ -670,12 +704,12 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
       ? ((samples + static_cast<std::uint32_t>(safeW) - 1u) / static_cast<std::uint32_t>(safeW))
       : 1u;
 
-  drawReadonly(L"Samples per bucket (bars)", std::to_wstring(bucket));
-  drawReadonly(L"Value color", L"white (default)");
-  drawReadonly(L"Metric name color", L"light blue (cyan)");
+  drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlySamplesPerBucket)), std::to_wstring(bucket));
+  drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlyValueColor)), L"white (default)");
+  drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlyMetricNameColor)), L"light blue (cyan)");
 
   if (out.height >= 3) {
-    drawBodyLine(out, out.height - 2, L"Space/Enter: toggle/activate   s: save   d: defaults   Esc: back", Style::FooterKey);
+    drawBodyLine(out, out.height - 2, std::wstring(i18n::tr(i18n::MsgId::ConfigFooterKeys)), Style::FooterKey);
   }
 }
 
@@ -718,7 +752,7 @@ static void renderHardware(Frame& out, int bodyTop, const TuiState& state) {
   }
 
   if (out.height >= 3) {
-    drawBodyLine(out, out.height - 2, L"r: refresh   Esc: back", Style::FooterKey);
+    drawBodyLine(out, out.height - 2, std::wstring(i18n::tr(i18n::MsgId::HardwareFooterKeys)), Style::FooterKey);
   }
 }
 
@@ -773,7 +807,7 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
 
     if (y < out.height - 2) {
       std::wstring line = (state.benchmarksSel == 0 ? L"> " : L"  ");
-      line += L"Run all benchmarks";
+      line += i18n::tr(i18n::MsgId::BenchRunAll);
       drawBodyLine(out, y, line, Style::Warning);
       ++y;
     }
@@ -823,16 +857,18 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
 
     // Benchmark rows: show a 1-char spinner and "NAME: value" on a single line.
     std::string r;
+    std::wstring firstLineW;
     if (row >= 0 && row < static_cast<int>(results.size()) && !results[static_cast<std::size_t>(row)].empty()) {
       r = results[static_cast<std::size_t>(row)];
     } else if (b && !b->isAvailable()) {
-      r = "unavailable";
+      firstLineW = std::wstring(i18n::tr(i18n::MsgId::BenchUnavailable));
     } else {
       r = resultTextForRow(row);
     }
 
     const std::size_t end0 = r.find('\n');
     const std::string firstLine = (end0 == std::string::npos) ? r : r.substr(0, end0);
+    if (firstLineW.empty()) firstLineW = widenAscii(firstLine);
 
     wchar_t spin = L' ';
     if (running && runningIdx == row) {
@@ -849,7 +885,7 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
     const std::size_t targetLen = static_cast<std::size_t>(kMetricIndent) + 2u + maxBenchNameLen;
     if (namePart.size() < targetLen) namePart.append(targetLen - namePart.size(), L' ');
 
-    const std::wstring valuePart = L": " + widenAscii(firstLine);
+    const std::wstring valuePart = L": " + firstLineW;
 
     int x = static_cast<int>(prefix.size());
     drawText(out, x, y, namePart, avail ? Style::Section : Style::Value);
@@ -858,7 +894,7 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
     ++y;
 
     // Extra result lines (errors/details) underneath, indented.
-    if (end0 != std::string::npos) {
+    if (!r.empty() && end0 != std::string::npos) {
       std::size_t start = end0 + 1;
       while (start <= r.size() && y < out.height - 2) {
         const std::size_t end = r.find('\n', start);
@@ -874,7 +910,7 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
   }
 
   if (out.height >= 4) {
-    drawBodyLine(out, out.height - 3, L"Enter: run   Esc: back", Style::FooterKey);
+    drawBodyLine(out, out.height - 3, std::wstring(i18n::tr(i18n::MsgId::BenchFooterKeys)), Style::FooterKey);
   }
 }
 
@@ -891,7 +927,7 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
   if (out.height >= 2) {
     const int y = out.height - 1;
     drawBodyLine(out, y, L"", Style::Default);
-    drawText(out, 0, y, L"AI-Z  F1 Help  F2 Hardware  F3 Bench  F4 Config  F5 Timelines  F10 Quit", Style::FooterKey);
+    drawText(out, 0, y, std::wstring(i18n::tr(i18n::MsgId::FooterNav)), Style::FooterKey);
   }
 
   // Body
@@ -903,19 +939,19 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
       renderTimelines(out, bodyTop, state, cfg);
       break;
     case Screen::Help:
-      drawText(out, 0, bodyTop, L"Help", Style::Section);
+      drawText(out, 0, bodyTop, std::wstring(i18n::tr(i18n::MsgId::ScreenHelpTitle)), Style::Section);
       renderHelp(out, bodyTop);
       break;
     case Screen::Config:
-      drawText(out, 0, bodyTop, L"Config", Style::Section);
+      drawText(out, 0, bodyTop, std::wstring(i18n::tr(i18n::MsgId::ScreenConfigTitle)), Style::Section);
       renderConfig(out, bodyTop, cfg, state);
       break;
     case Screen::Hardware:
-      drawText(out, 0, bodyTop, L"Hardware", Style::Section);
+      drawText(out, 0, bodyTop, std::wstring(i18n::tr(i18n::MsgId::ScreenHardwareTitle)), Style::Section);
       renderHardware(out, bodyTop, state);
       break;
     case Screen::Benchmarks:
-      drawText(out, 0, bodyTop, L"Benchmarks", Style::Section);
+      drawText(out, 0, bodyTop, std::wstring(i18n::tr(i18n::MsgId::ScreenBenchmarksTitle)), Style::Section);
       renderBenchmarks(out, bodyTop, state);
       break;
     default:

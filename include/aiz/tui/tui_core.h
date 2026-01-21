@@ -119,6 +119,11 @@ struct Frame {
   const Cell& at(int x, int y) const;
 };
 
+// Sentinel used by the shared renderer to mark columns that are covered by the
+// previous cell's wide glyph (e.g., CJK characters). Backends must avoid
+// drawing into these cells.
+constexpr wchar_t kWideContinuation = static_cast<wchar_t>(0xFFFF);
+
 // All styles are backend-defined mappings.
 enum class Style : std::uint16_t {
   Default = 0,

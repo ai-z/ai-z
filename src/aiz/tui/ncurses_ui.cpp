@@ -15,6 +15,8 @@
 
 #include <curses.h>
 
+#include <clocale>
+
 #include "ncurses_render.h"
 #include "ncurses_probe.h"
 #include "ncurses_telemetry.h"
@@ -81,6 +83,10 @@ private:
 }  // namespace
 
 int NcursesUi::run(Config& cfg, bool debugMode) {
+  // Required for correct CJK width handling (wcwidth) and wide-character output.
+  // Falls back gracefully if the environment isn't UTF-8.
+  std::setlocale(LC_ALL, "");
+
   initscr();
   cbreak();
   noecho();
@@ -137,12 +143,25 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     for (int y = 0; y < rows; ++y) {
       for (int x = 0; x < cols; ++x) {
         const auto& c = frame.at(x, y);
+        if (c.ch == kWideContinuation) continue;
         const int attr = ncurses::styleToAttr(c.style);
         if (attr != lastAttr) {
           attrset(attr);
           lastAttr = attr;
         }
-        mvaddch(y, x, ncurses::cellToChtype(c.ch));
+
+        // Prefer ASCII/ACS for conservative rendering, but allow wide glyphs
+        // for localized UI strings.
+        if (c.ch == 0x2593) {
+          mvaddch(y, x, ncurses::cellToChtype(c.ch));
+        } else if (c.ch >= 0 && c.ch <= 0x7f) {
+          mvaddch(y, x, ncurses::cellToChtype(c.ch));
+        } else if (c.ch == 0 || c.ch == L' ') {
+          mvaddch(y, x, ' ');
+        } else {
+          wchar_t buf[2] = {c.ch, 0};
+          mvaddnwstr(y, x, buf, 1);
+        }
       }
     }
     attrset(A_NORMAL);
@@ -636,12 +655,23 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       for (int y = 0; y < rows; ++y) {
         for (int x = 0; x < cols; ++x) {
           const auto& c = frame.at(x, y);
+          if (c.ch == kWideContinuation) continue;
           const int attr = ncurses::styleToAttr(c.style);
           if (attr != lastAttr) {
             attrset(attr);
             lastAttr = attr;
           }
-          mvaddch(y, x, ncurses::cellToChtype(c.ch));
+
+          if (c.ch == 0x2593) {
+            mvaddch(y, x, ncurses::cellToChtype(c.ch));
+          } else if (c.ch >= 0 && c.ch <= 0x7f) {
+            mvaddch(y, x, ncurses::cellToChtype(c.ch));
+          } else if (c.ch == 0 || c.ch == L' ') {
+            mvaddch(y, x, ' ');
+          } else {
+            wchar_t buf[2] = {c.ch, 0};
+            mvaddnwstr(y, x, buf, 1);
+          }
         }
       }
     } else {
@@ -651,6 +681,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
         const auto& prev = prevFrame.cells[i];
         if (cur.ch == prev.ch && cur.style == prev.style) continue;
 
+        if (cur.ch == kWideContinuation) continue;
+
         const int y = static_cast<int>(i / static_cast<std::size_t>(frame.width));
         const int x = static_cast<int>(i % static_cast<std::size_t>(frame.width));
 
@@ -659,7 +691,17 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           attrset(attr);
           lastAttr = attr;
         }
-        mvaddch(y, x, ncurses::cellToChtype(cur.ch));
+
+        if (cur.ch == 0x2593) {
+          mvaddch(y, x, ncurses::cellToChtype(cur.ch));
+        } else if (cur.ch >= 0 && cur.ch <= 0x7f) {
+          mvaddch(y, x, ncurses::cellToChtype(cur.ch));
+        } else if (cur.ch == 0 || cur.ch == L' ') {
+          mvaddch(y, x, ' ');
+        } else {
+          wchar_t buf[2] = {cur.ch, 0};
+          mvaddnwstr(y, x, buf, 1);
+        }
       }
     }
 
