@@ -134,7 +134,14 @@ static std::vector<std::string> probePerGpuLinesNvidia() {
 
   // Match the requested formatting:
   // GPU0: <name>
-  //  VRAM: 10G
+  //  Memory: 10G
+  //  Max Graphics Clock: 2100 MHz
+  //  Max Memory Clock: 10501 MHz
+  //  Max Memory Transfer Rate: 21000 MT/s
+  //  Max Memory Data Rate: 21.0 Gb/s
+  //  Max Power Limit: 450 W
+  //  Max Memory Bandwidth (est.): 1008.0 GB/s
+  //  SM: 8.6
   const std::string indent = " ";
   std::vector<std::string> lines;
   lines.reserve(static_cast<std::size_t>(*n) * 3);
@@ -151,7 +158,62 @@ static std::vector<std::string> probePerGpuLinesNvidia() {
     if (const auto t = readNvmlTelemetryForGpu(gpuIndex)) {
       if (t->memTotalGiB > 0.0) {
         std::ostringstream l;
-        l << indent << "VRAM: " << fmtGFromGiB(t->memTotalGiB);
+        l << indent << "Memory: " << fmtGFromGiB(t->memTotalGiB);
+        lines.push_back(l.str());
+      }
+
+      if (t->gpuClockMHz > 0) {
+        std::ostringstream l;
+        l << indent << "Max Graphics Clock: " << t->gpuClockMHz << " MHz";
+        lines.push_back(l.str());
+      }
+
+      if (t->memClockMHz > 0) {
+        std::ostringstream l;
+        l << indent << "Max Memory Clock: " << t->memClockMHz << " MHz";
+        lines.push_back(l.str());
+      }
+
+      if (t->memTransferRateMHz > 0) {
+        std::ostringstream l;
+        l << indent << "Max Memory Transfer Rate: " << t->memTransferRateMHz << " MT/s";
+        lines.push_back(l.str());
+
+        {
+          std::ostringstream lr;
+          lr.setf(std::ios::fixed);
+          lr.precision(1);
+          lr << indent << "Max Memory Data Rate: " << (static_cast<double>(t->memTransferRateMHz) / 1000.0) << " Gb/s";
+          lines.push_back(lr.str());
+        }
+      } else if (t->memClockMHz > 0) {
+        // Fallback: estimate effective data rate as 2x memory clock.
+        std::ostringstream lr;
+        lr.setf(std::ios::fixed);
+        lr.precision(1);
+        lr << indent << "Max Memory Data Rate (est.): " << (static_cast<double>(t->memClockMHz) * 2.0 / 1000.0) << " Gb/s";
+        lines.push_back(lr.str());
+      }
+
+      if (t->maxPowerLimitWatts > 0.0) {
+        std::ostringstream l;
+        l.setf(std::ios::fixed);
+        l.precision(0);
+        l << indent << "Max Power Limit: " << t->maxPowerLimitWatts << " W";
+        lines.push_back(l.str());
+      }
+
+      if (t->maxMemBandwidthGBps > 0.0) {
+        std::ostringstream l;
+        l.setf(std::ios::fixed);
+        l.precision(1);
+        l << indent << "Max Memory Bandwidth (est.): " << t->maxMemBandwidthGBps << " GB/s";
+        lines.push_back(l.str());
+      }
+
+      if (t->smMajor > 0) {
+        std::ostringstream l;
+        l << indent << "SM: " << t->smMajor << "." << t->smMinor;
         lines.push_back(l.str());
       }
     }
@@ -903,12 +965,12 @@ std::vector<std::string> HardwareInfo::toLines() const {
   lines.push_back(std::string());
 
   lines.push_back("CPU: " + (cpuName.empty() ? std::string(kUnknown) : cpuName));
-  lines.push_back("CPU Physical cores: " + (cpuPhysicalCores.empty() ? std::string(kUnknown) : cpuPhysicalCores));
-  lines.push_back("CPU Logical cores: " + (cpuLogicalCores.empty() ? std::string(kUnknown) : cpuLogicalCores));
-  lines.push_back("CPU Cache L1: " + (cpuCacheL1.empty() ? std::string(kUnknown) : cpuCacheL1));
-  lines.push_back("CPU Cache L2: " + (cpuCacheL2.empty() ? std::string(kUnknown) : cpuCacheL2));
-  lines.push_back("CPU Cache L3: " + (cpuCacheL3.empty() ? std::string(kUnknown) : cpuCacheL3));
-  lines.push_back("CPU Instructions: " + (cpuInstructions.empty() ? std::string(kUnknown) : cpuInstructions));
+  lines.push_back("Physical cores: " + (cpuPhysicalCores.empty() ? std::string(kUnknown) : cpuPhysicalCores));
+  lines.push_back("Logical cores: " + (cpuLogicalCores.empty() ? std::string(kUnknown) : cpuLogicalCores));
+  lines.push_back("Cache L1: " + (cpuCacheL1.empty() ? std::string(kUnknown) : cpuCacheL1));
+  lines.push_back("Cache L2: " + (cpuCacheL2.empty() ? std::string(kUnknown) : cpuCacheL2));
+  lines.push_back("Cache L3: " + (cpuCacheL3.empty() ? std::string(kUnknown) : cpuCacheL3));
+  lines.push_back("Instructions: " + (cpuInstructions.empty() ? std::string(kUnknown) : cpuInstructions));
   lines.push_back("RAM: " + (ramSummary.empty() ? std::string(kUnknown) : ramSummary));
 
   // GPU hardware details after CPU/RAM.
@@ -916,7 +978,7 @@ std::vector<std::string> HardwareInfo::toLines() const {
 
   if (!hasPerGpu) {
     lines.push_back("GPU: " + (gpuName.empty() ? std::string(kUnknown) : gpuName));
-    lines.push_back("VRAM: " + (vramSummary.empty() ? std::string(kUnknown) : vramSummary));
+    lines.push_back("Memory: " + (vramSummary.empty() ? std::string(kUnknown) : vramSummary));
   } else {
     for (const auto& l : perGpuLines) lines.push_back(l);
   }

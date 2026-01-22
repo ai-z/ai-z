@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstring>
 #include <chrono>
+#include <vector>
 
 namespace aiz {
 namespace {
@@ -38,6 +39,16 @@ struct OptTelemetryMsg {
   double powerWatts = 0.0;
   double tempC = 0.0;
   char pstate[16]{};
+
+  std::uint32_t gpuClockMHz = 0;
+  std::uint32_t memClockMHz = 0;
+  std::uint32_t memTransferRateMHz = 0;
+  std::uint32_t smMajor = 0;
+  std::uint32_t smMinor = 0;
+
+  double maxPowerLimitWatts = 0.0;
+  std::uint32_t memBusWidthBits = 0;
+  double maxMemBandwidthGBps = 0.0;
 };
 
 struct OptPcieThroughputMsg {
@@ -169,6 +180,16 @@ using nvmlDeviceGetCurrPcieLinkWidth_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned
 using nvmlDeviceGetName_t = nvmlReturn_t (*)(nvmlDevice_t, char* /*name*/, unsigned int /*length*/);
 using nvmlSystemGetNVMLVersion_t = nvmlReturn_t (*)(char* /*version*/, unsigned int /*length*/);
 using nvmlSystemGetDriverVersion_t = nvmlReturn_t (*)(char* /*version*/, unsigned int /*length*/);
+using nvmlDeviceGetClockInfo_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int /*clockType*/, unsigned int* /*clockMHz*/);
+using nvmlDeviceGetMaxClockInfo_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int /*clockType*/, unsigned int* /*clockMHz*/);
+using nvmlDeviceGetSupportedMemoryClocks_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*count*/, unsigned int* /*clocksMHz*/);
+using nvmlDeviceGetSupportedGraphicsClocks_t = nvmlReturn_t (*) (
+  nvmlDevice_t, unsigned int /*memoryClockMHz*/, unsigned int* /*count*/, unsigned int* /*clocksMHz*/);
+using nvmlDeviceGetPerformanceModes_t = nvmlReturn_t (*)(nvmlDevice_t, char* /*perfModes*/, unsigned int /*length*/);
+using nvmlDeviceGetCudaComputeCapability_t = nvmlReturn_t (*)(nvmlDevice_t, int* /*major*/, int* /*minor*/);
+using nvmlDeviceGetPowerManagementLimitConstraints_t = nvmlReturn_t (*)(
+  nvmlDevice_t, unsigned int* /*minLimitMilliWatts*/, unsigned int* /*maxLimitMilliWatts*/);
+using nvmlDeviceGetMemoryBusWidth_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*busWidthBits*/);
 
 struct NvmlApi {
   void* lib = nullptr;
@@ -188,12 +209,26 @@ struct NvmlApi {
   nvmlSystemGetNVMLVersion_t nvmlSystemGetNVMLVersion = nullptr;
   nvmlSystemGetDriverVersion_t nvmlSystemGetDriverVersion = nullptr;
 
+  // Optional extras.
+  nvmlDeviceGetClockInfo_t nvmlDeviceGetClockInfo = nullptr;
+  nvmlDeviceGetMaxClockInfo_t nvmlDeviceGetMaxClockInfo = nullptr;
+  nvmlDeviceGetSupportedMemoryClocks_t nvmlDeviceGetSupportedMemoryClocks = nullptr;
+  nvmlDeviceGetSupportedGraphicsClocks_t nvmlDeviceGetSupportedGraphicsClocks = nullptr;
+  nvmlDeviceGetPerformanceModes_t nvmlDeviceGetPerformanceModes = nullptr;
+  nvmlDeviceGetCudaComputeCapability_t nvmlDeviceGetCudaComputeCapability = nullptr;
+  nvmlDeviceGetPowerManagementLimitConstraints_t nvmlDeviceGetPowerManagementLimitConstraints = nullptr;
+  nvmlDeviceGetMemoryBusWidth_t nvmlDeviceGetMemoryBusWidth = nullptr;
+
   bool ok() const {
     return lib && nvmlInit_v2 && nvmlShutdown && nvmlDeviceGetCount_v2 && nvmlDeviceGetHandleByIndex_v2 &&
         nvmlDeviceGetUtilizationRates && nvmlDeviceGetMemoryInfo && nvmlDeviceGetPowerUsage &&
         nvmlDeviceGetTemperature && nvmlDeviceGetPowerState;
   }
 };
+
+// Enum values from nvml.h (nvmlClockType_t).
+constexpr unsigned int NVML_CLOCK_GRAPHICS = 0;
+constexpr unsigned int NVML_CLOCK_MEM = 2;
 
 // Counter values from nvml.h (nvmlPcieUtilCounter_t). Keep as integers to avoid including the header.
 constexpr unsigned int NVML_PCIE_UTIL_TX_BYTES = 0;
@@ -227,6 +262,23 @@ static NvmlApi& api() {
   a.nvmlDeviceGetPowerState = reinterpret_cast<nvmlDeviceGetPowerState_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPowerState"));
   a.nvmlDeviceGetPcieThroughput = reinterpret_cast<nvmlDeviceGetPcieThroughput_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPcieThroughput"));
   a.nvmlDeviceGetName = reinterpret_cast<nvmlDeviceGetName_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetName"));
+
+  // Optional extras (best-effort).
+  a.nvmlDeviceGetClockInfo = reinterpret_cast<nvmlDeviceGetClockInfo_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetClockInfo"));
+    a.nvmlDeviceGetMaxClockInfo = reinterpret_cast<nvmlDeviceGetMaxClockInfo_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetMaxClockInfo"));
+    a.nvmlDeviceGetSupportedMemoryClocks = reinterpret_cast<nvmlDeviceGetSupportedMemoryClocks_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetSupportedMemoryClocks"));
+    a.nvmlDeviceGetSupportedGraphicsClocks = reinterpret_cast<nvmlDeviceGetSupportedGraphicsClocks_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetSupportedGraphicsClocks"));
+    a.nvmlDeviceGetPerformanceModes = reinterpret_cast<nvmlDeviceGetPerformanceModes_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPerformanceModes"));
+  a.nvmlDeviceGetCudaComputeCapability = reinterpret_cast<nvmlDeviceGetCudaComputeCapability_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetCudaComputeCapability"));
+    a.nvmlDeviceGetPowerManagementLimitConstraints = reinterpret_cast<nvmlDeviceGetPowerManagementLimitConstraints_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPowerManagementLimitConstraints"));
+    a.nvmlDeviceGetMemoryBusWidth = reinterpret_cast<nvmlDeviceGetMemoryBusWidth_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetMemoryBusWidth"));
 
     // Optional system queries.
     a.nvmlSystemGetNVMLVersion = reinterpret_cast<nvmlSystemGetNVMLVersion_t>(
@@ -299,6 +351,82 @@ static std::optional<unsigned int> parsePstateNumber(const std::string& p) {
   return v;
 }
 
+static unsigned int parseMaxU32Token(const char* s, const char* key) {
+  if (!s || !key) return 0;
+  const std::size_t keyLen = std::strlen(key);
+  unsigned int best = 0;
+
+  const char* p = s;
+  while ((p = std::strstr(p, key)) != nullptr) {
+    p += keyLen;
+    char* end = nullptr;
+    const unsigned long v = std::strtoul(p, &end, 10);
+    if (end != p && v > best) best = static_cast<unsigned int>(v);
+    if (!end || *end == '\0') break;
+    p = end;
+  }
+  return best;
+}
+
+static std::optional<unsigned int> maxSupportedMemoryClockMHz(nvmlDevice_t dev, NvmlApi& a) {
+  if (!a.nvmlDeviceGetSupportedMemoryClocks) return std::nullopt;
+
+  unsigned int count = 0;
+  (void)a.nvmlDeviceGetSupportedMemoryClocks(dev, &count, nullptr);
+  if (count == 0) return std::nullopt;
+
+  std::vector<unsigned int> clocks(count);
+  if (a.nvmlDeviceGetSupportedMemoryClocks(dev, &count, clocks.data()) != NVML_SUCCESS || count == 0) return std::nullopt;
+
+  unsigned int best = 0;
+  for (unsigned int i = 0; i < count; ++i) best = std::max(best, clocks[i]);
+  return (best > 0) ? std::optional<unsigned int>(best) : std::nullopt;
+}
+
+static std::optional<unsigned int> maxSupportedGraphicsClockMHz(nvmlDevice_t dev, NvmlApi& a) {
+  if (!a.nvmlDeviceGetSupportedMemoryClocks || !a.nvmlDeviceGetSupportedGraphicsClocks) return std::nullopt;
+
+  unsigned int memCount = 0;
+  (void)a.nvmlDeviceGetSupportedMemoryClocks(dev, &memCount, nullptr);
+  if (memCount == 0) return std::nullopt;
+
+  std::vector<unsigned int> memClocks(memCount);
+  if (a.nvmlDeviceGetSupportedMemoryClocks(dev, &memCount, memClocks.data()) != NVML_SUCCESS || memCount == 0) return std::nullopt;
+
+  unsigned int best = 0;
+  for (unsigned int i = 0; i < memCount; ++i) {
+    const unsigned int memClock = memClocks[i];
+    if (memClock == 0) continue;
+
+    unsigned int gfxCount = 0;
+    (void)a.nvmlDeviceGetSupportedGraphicsClocks(dev, memClock, &gfxCount, nullptr);
+    if (gfxCount == 0) continue;
+
+    std::vector<unsigned int> gfxClocks(gfxCount);
+    if (a.nvmlDeviceGetSupportedGraphicsClocks(dev, memClock, &gfxCount, gfxClocks.data()) != NVML_SUCCESS || gfxCount == 0) {
+      continue;
+    }
+
+    for (unsigned int j = 0; j < gfxCount; ++j) best = std::max(best, gfxClocks[j]);
+  }
+
+  return (best > 0) ? std::optional<unsigned int>(best) : std::nullopt;
+}
+
+static std::optional<unsigned int> maxMemoryTransferRateMHz(nvmlDevice_t dev, NvmlApi& a) {
+  if (!a.nvmlDeviceGetPerformanceModes) return std::nullopt;
+
+  // NVML returns a semicolon-separated list of perf levels, each with token=value pairs.
+  // We prefer memtransferratemax when present (may be more comparable to spec figures).
+  char buf[8192]{};
+  if (a.nvmlDeviceGetPerformanceModes(dev, buf, static_cast<unsigned int>(sizeof(buf))) != NVML_SUCCESS) return std::nullopt;
+
+  const unsigned int maxA = parseMaxU32Token(buf, "memtransferratemax=");
+  const unsigned int maxB = parseMaxU32Token(buf, "memtransferrate=");
+  const unsigned int best = std::max(maxA, maxB);
+  return (best > 0) ? std::optional<unsigned int>(best) : std::nullopt;
+}
+
 static std::optional<NvmlTelemetry> readNvmlTelemetryWithSession(nvmlDevice_t dev, NvmlApi& a) {
   nvmlUtilization_t util{};
   nvmlMemory_t mem{};
@@ -320,6 +448,65 @@ static std::optional<NvmlTelemetry> readNvmlTelemetryWithSession(nvmlDevice_t de
   t.powerWatts = static_cast<double>(mw) / 1000.0;
   t.tempC = static_cast<double>(tc);
   t.pstate = "P" + std::to_string(ps);
+
+  // Report MAX clocks (requested). Prefer supported clock tables (more stable/spec-like),
+  // fall back to nvmlDeviceGetMaxClockInfo if needed.
+  if (const auto mhz = maxSupportedGraphicsClockMHz(dev, a)) t.gpuClockMHz = *mhz;
+  if (const auto mhz = maxSupportedMemoryClockMHz(dev, a)) t.memClockMHz = *mhz;
+
+  if ((t.gpuClockMHz == 0 || t.memClockMHz == 0) && a.nvmlDeviceGetMaxClockInfo) {
+    unsigned int mhz = 0;
+    if (t.gpuClockMHz == 0 && a.nvmlDeviceGetMaxClockInfo(dev, NVML_CLOCK_GRAPHICS, &mhz) == NVML_SUCCESS && mhz > 0) {
+      t.gpuClockMHz = mhz;
+    }
+
+    mhz = 0;
+    if (t.memClockMHz == 0 && a.nvmlDeviceGetMaxClockInfo(dev, NVML_CLOCK_MEM, &mhz) == NVML_SUCCESS && mhz > 0) {
+      t.memClockMHz = mhz;
+    }
+  }
+
+  if (const auto mt = maxMemoryTransferRateMHz(dev, a)) {
+    t.memTransferRateMHz = *mt;
+  }
+
+  if (a.nvmlDeviceGetCudaComputeCapability) {
+    int major = 0;
+    int minor = 0;
+    if (a.nvmlDeviceGetCudaComputeCapability(dev, &major, &minor) == NVML_SUCCESS && major > 0 && minor >= 0) {
+      t.smMajor = static_cast<unsigned int>(major);
+      t.smMinor = static_cast<unsigned int>(minor);
+    }
+  }
+
+  // Max power limit (W) via constraints.
+  if (a.nvmlDeviceGetPowerManagementLimitConstraints) {
+    unsigned int minMw = 0;
+    unsigned int maxMw = 0;
+    if (a.nvmlDeviceGetPowerManagementLimitConstraints(dev, &minMw, &maxMw) == NVML_SUCCESS && maxMw > 0) {
+      t.maxPowerLimitWatts = static_cast<double>(maxMw) / 1000.0;
+    }
+  }
+
+  // Max memory bandwidth (GB/s) derived from max memory clock and bus width.
+  if (a.nvmlDeviceGetMemoryBusWidth) {
+    unsigned int bits = 0;
+    if (a.nvmlDeviceGetMemoryBusWidth(dev, &bits) == NVML_SUCCESS && bits > 0) {
+      t.memBusWidthBits = bits;
+    }
+  }
+
+  if (t.memBusWidthBits > 0) {
+    // Prefer transfer rate if NVML provides it.
+    // BW(GB/s) = (transferRate(MT/s) * busWidth(bits)) / 8 / 1000.
+    if (t.memTransferRateMHz > 0) {
+      t.maxMemBandwidthGBps = (static_cast<double>(t.memTransferRateMHz) * (static_cast<double>(t.memBusWidthBits) / 8.0)) / 1000.0;
+    } else if (t.memClockMHz > 0) {
+      // DDR-style estimate: BW(GB/s) = memClock(MHz) * (busWidth/8 bytes) * 2 / 1000.
+      t.maxMemBandwidthGBps = (static_cast<double>(t.memClockMHz) * (static_cast<double>(t.memBusWidthBits) / 8.0) * 2.0) / 1000.0;
+    }
+  }
+
   return t;
 }
 
@@ -552,6 +739,16 @@ std::optional<NvmlTelemetry> readNvmlTelemetryForGpu(unsigned int index) {
           out.tempC = r->tempC;
           std::strncpy(out.pstate, r->pstate.c_str(), sizeof(out.pstate) - 1);
           out.pstate[sizeof(out.pstate) - 1] = '\0';
+
+          out.gpuClockMHz = static_cast<std::uint32_t>(r->gpuClockMHz);
+          out.memClockMHz = static_cast<std::uint32_t>(r->memClockMHz);
+          out.memTransferRateMHz = static_cast<std::uint32_t>(r->memTransferRateMHz);
+          out.smMajor = static_cast<std::uint32_t>(r->smMajor);
+          out.smMinor = static_cast<std::uint32_t>(r->smMinor);
+
+          out.maxPowerLimitWatts = r->maxPowerLimitWatts;
+          out.memBusWidthBits = static_cast<std::uint32_t>(r->memBusWidthBits);
+          out.maxMemBandwidthGBps = r->maxMemBandwidthGBps;
         }
       },
       kNvmlCallTimeout);
@@ -565,6 +762,14 @@ std::optional<NvmlTelemetry> readNvmlTelemetryForGpu(unsigned int index) {
   t.powerWatts = msg->powerWatts;
   t.tempC = msg->tempC;
   t.pstate = std::string(msg->pstate);
+  t.gpuClockMHz = static_cast<unsigned int>(msg->gpuClockMHz);
+  t.memClockMHz = static_cast<unsigned int>(msg->memClockMHz);
+  t.memTransferRateMHz = static_cast<unsigned int>(msg->memTransferRateMHz);
+  t.smMajor = static_cast<unsigned int>(msg->smMajor);
+  t.smMinor = static_cast<unsigned int>(msg->smMinor);
+  t.maxPowerLimitWatts = msg->maxPowerLimitWatts;
+  t.memBusWidthBits = static_cast<unsigned int>(msg->memBusWidthBits);
+  t.maxMemBandwidthGBps = msg->maxMemBandwidthGBps;
   return t;
 #else
   return readNvmlTelemetryForGpuUnsafe(index);
@@ -585,6 +790,16 @@ std::optional<NvmlTelemetry> readNvmlTelemetry() {
           out.tempC = r->tempC;
           std::strncpy(out.pstate, r->pstate.c_str(), sizeof(out.pstate) - 1);
           out.pstate[sizeof(out.pstate) - 1] = '\0';
+
+          out.gpuClockMHz = static_cast<std::uint32_t>(r->gpuClockMHz);
+          out.memClockMHz = static_cast<std::uint32_t>(r->memClockMHz);
+          out.memTransferRateMHz = static_cast<std::uint32_t>(r->memTransferRateMHz);
+          out.smMajor = static_cast<std::uint32_t>(r->smMajor);
+          out.smMinor = static_cast<std::uint32_t>(r->smMinor);
+
+          out.maxPowerLimitWatts = r->maxPowerLimitWatts;
+          out.memBusWidthBits = static_cast<std::uint32_t>(r->memBusWidthBits);
+          out.maxMemBandwidthGBps = r->maxMemBandwidthGBps;
         }
       },
       kNvmlCallTimeout);
@@ -598,6 +813,14 @@ std::optional<NvmlTelemetry> readNvmlTelemetry() {
   t.powerWatts = msg->powerWatts;
   t.tempC = msg->tempC;
   t.pstate = std::string(msg->pstate);
+  t.gpuClockMHz = static_cast<unsigned int>(msg->gpuClockMHz);
+  t.memClockMHz = static_cast<unsigned int>(msg->memClockMHz);
+  t.memTransferRateMHz = static_cast<unsigned int>(msg->memTransferRateMHz);
+  t.smMajor = static_cast<unsigned int>(msg->smMajor);
+  t.smMinor = static_cast<unsigned int>(msg->smMinor);
+  t.maxPowerLimitWatts = msg->maxPowerLimitWatts;
+  t.memBusWidthBits = static_cast<unsigned int>(msg->memBusWidthBits);
+  t.maxMemBandwidthGBps = msg->maxMemBandwidthGBps;
   return t;
 #else
   return readNvmlTelemetryUnsafe();

@@ -13,6 +13,20 @@ struct NvmlTelemetry {
   double powerWatts = 0.0;
   double tempC = 0.0;
   std::string pstate;          // e.g. "P8"
+
+  // Best-effort extra metadata (not always available on all drivers/devices).
+  unsigned int gpuClockMHz = 0;  // current graphics clock
+  unsigned int memClockMHz = 0;  // current memory clock
+  // Memory transfer rate (MT/s) is the spec-style way memory speed is often expressed.
+  // When available, this may be more comparable to vendor specs than memClockMHz.
+  unsigned int memTransferRateMHz = 0;
+  unsigned int smMajor = 0;      // CUDA compute capability major
+  unsigned int smMinor = 0;      // CUDA compute capability minor
+
+  // Power and bandwidth (best-effort).
+  double maxPowerLimitWatts = 0.0;
+  unsigned int memBusWidthBits = 0;
+  double maxMemBandwidthGBps = 0.0;
 };
 
 struct NvmlPcieThroughput {
