@@ -37,12 +37,14 @@ static constexpr int configToggleCount() {
   return static_cast<int>(kConfigToggleItems.size());
 }
 
-static constexpr int configResetRowIndex() {
-  return configToggleCount();
+static constexpr int configItemCount() {
+  return configToggleCount() + 4;  // read-only misc rows
 }
 
-static constexpr int configItemCount() {
-  return configToggleCount() + 1;
+static constexpr int configMetricNameColorRowIndex() {
+  // Read-only misc rows follow toggles in order:
+  // Samples per bucket, Sampling rate, Value color, Metric name color.
+  return configToggleCount() + 3;
 }
 
 void Frame::resize(int w, int h) {
@@ -208,8 +210,10 @@ void applyCommand(TuiState& state, Config& cfg, Command cmd) {
       if (state.configSel >= 0 && state.configSel < configToggleCount()) {
         const auto& it = kConfigToggleItems[static_cast<std::size_t>(state.configSel)];
         cfg.*(it.field) = !(cfg.*(it.field));
-      } else if (state.configSel == configResetRowIndex()) {
-        cfg = Config{};
+      } else if (state.configSel == configMetricNameColorRowIndex()) {
+        cfg.metricNameColor = (cfg.metricNameColor == MetricNameColor::Cyan)
+            ? MetricNameColor::Green
+            : MetricNameColor::Cyan;
       }
       return;
     }
@@ -226,7 +230,6 @@ void applyCommand(TuiState& state, Config& cfg, Command cmd) {
 
     if (cmd == Command::Activate) {
       // Enter only activates the action row to avoid accidental toggles.
-      if (state.configSel == configResetRowIndex()) cfg = Config{};
       return;
     }
 
@@ -273,6 +276,34 @@ static std::string fmtSampleOrDash(const std::optional<Sample>& s) {
   return fmt1(s->value) + s->unit;
 }
 
+static Style metricNameStyle(const Config& cfg) {
+  switch (cfg.metricNameColor) {
+    case MetricNameColor::White:
+      return Style::Default;
+    case MetricNameColor::Green:
+      return Style::Value;
+    case MetricNameColor::Yellow:
+      return Style::Hot;
+    case MetricNameColor::Cyan:
+    default:
+      return Style::Section;
+  }
+}
+
+static std::wstring metricNameColorLabel(const Config& cfg) {
+  switch (cfg.metricNameColor) {
+    case MetricNameColor::White:
+      return L"white";
+    case MetricNameColor::Green:
+      return L"light green";
+    case MetricNameColor::Yellow:
+      return L"yellow";
+    case MetricNameColor::Cyan:
+    default:
+      return L"cyan";
+  }
+}
+
 
 static std::string fmt0(double v) {
   char buf[64]{};
@@ -291,7 +322,8 @@ static void drawSectionTitleLineSplit(
     int y,
     const std::string& left,
     const std::string& value,
-    const std::string& right) {
+  const std::string& right,
+  Style nameStyle) {
   if (y < 0 || y >= out.height) return;
 
   // Clear line.
@@ -306,7 +338,7 @@ static void drawSectionTitleLineSplit(
   // Left side: section label in Section style, numeric value in Default (white).
   {
     const std::wstring wtitle = widenAscii(title);
-    std::vector<Style> styles(wtitle.size(), Style::Section);
+    std::vector<Style> styles(wtitle.size(), nameStyle);
     for (std::size_t i = left.size(); i < styles.size(); ++i) styles[i] = Style::Default;
     drawTextStyled(out, 0, y, wtitle, styles);
   }
@@ -326,7 +358,7 @@ static void drawSectionTitleLineSplit(
         rightFit = rightFit.substr(rightFit.size() - maxRight);
       }
       rightStart = std::max(0, out.width - static_cast<int>(rightFit.size()));
-      drawText(out, rightStart, y, widenAscii(rightFit), Style::Section);
+      drawText(out, rightStart, y, widenAscii(rightFit), nameStyle);
     }
   }
 
@@ -336,7 +368,7 @@ static void drawSectionTitleLineSplit(
   for (int x = dashStart; x < dashEnd; ++x) {
     auto& c = out.at(x, y);
     c.ch = L'-';
-    c.style = static_cast<std::uint16_t>(Style::Section);
+    c.style = static_cast<std::uint16_t>(nameStyle);
   }
 }
 
@@ -692,12 +724,12 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
     if (p.sample && p.sample->has_value()) {
       section += ": ";
       const std::string value = fmt1((*p.sample)->value) + " " + (*p.sample)->unit;
-      drawSectionTitleLineSplit(out, y, section, value, right);
+      drawSectionTitleLineSplit(out, y, section, value, right, metricNameStyle(cfg));
     } else if (p.sample != nullptr) {
       section += ": ";
-      drawSectionTitleLineSplit(out, y, section, "unavailable", right);
+      drawSectionTitleLineSplit(out, y, section, "unavailable", right, metricNameStyle(cfg));
     } else {
-      drawSectionTitleLineSplit(out, y, section, std::string{}, right);
+      drawSectionTitleLineSplit(out, y, section, std::string{}, right, metricNameStyle(cfg));
     }
 
     const int graphTop = y + 1;
@@ -908,9 +940,11 @@ static void renderHelp(Frame& out, int bodyTop) {
 
 static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiState& state) {
   const int kToggleCount = configToggleCount();
-  const int kActionReset = configResetRowIndex();
 
   int y = bodyTop + 1;
+  if (y < out.height - 2) {
+    ++y;  // spacer before Timelines
+  }
   drawBodyLine(out, y, std::wstring(i18n::tr(i18n::MsgId::ConfigSectionTimelines)), Style::Section);
   ++y;
 
@@ -918,8 +952,8 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
   for (const auto& it : kConfigToggleItems) {
     maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(it.label)));
   }
-  maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigResetToDefaults)));
   maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigReadonlySamplesPerBucket)));
+  maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigReadonlySamplingRate)));
   maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigReadonlyValueColor)));
   maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigReadonlyMetricNameColor)));
 
@@ -941,32 +975,22 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
     ++y;
   }
 
-  // Action row.
-  {
-    std::wstring line = (kActionReset == state.configSel ? L"> " : L"  ");
-    const std::wstring_view resetLabel = i18n::tr(i18n::MsgId::ConfigResetToDefaults);
-    line += resetLabel;
-    const std::size_t resetW = textWidth(resetLabel);
-    if (resetW < maxLabelW) line.append(maxLabelW - resetW, L' ');
-    line += L": ";
-    line += i18n::tr(i18n::MsgId::ConfigResetTag);
-    if (y < out.height - 2) {
-      drawBodyLine(out, y, line, Style::Value);
-      ++y;
-    }
-  }
-
   // Read-only misc info under Timelines.
+  int readonlyIndex = configToggleCount();
   auto drawReadonly = [&](const std::wstring& label, const std::wstring& value) {
     if (y >= out.height - 2) return;
-    std::wstring line = L"  ";
+    const bool selected = (state.configSel == readonlyIndex);
+    std::wstring line = selected ? L"> " : L"  ";
     line += label;
     const std::size_t labelW = textWidth(label);
     if (labelW < maxLabelW) line.append(maxLabelW - labelW, L' ');
     line += L": ";
     line += value;
     drawBodyLine(out, y, line, Style::Value);
+    const std::size_t valueStart = textWidth(std::wstring_view(line).substr(0, line.size() - value.size()));
+    drawText(out, static_cast<int>(valueStart), y, value, Style::Default);
     ++y;
+    ++readonlyIndex;
   };
 
   if (y < out.height - 2) {
@@ -984,8 +1008,10 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
       : 1u;
 
   drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlySamplesPerBucket)), std::to_wstring(bucket));
+  drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlySamplingRate)),
+               std::to_wstring(cfg.refreshMs) + L"ms");
   drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlyValueColor)), L"white (default)");
-  drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlyMetricNameColor)), L"light blue (cyan)");
+  drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlyMetricNameColor)), metricNameColorLabel(cfg));
 
 }
 
@@ -1022,7 +1048,7 @@ static void renderHardware(Frame& out, int bodyTop, const TuiState& state) {
     if (y >= yEnd) break;
     drawBodyLine(out, y, widenAscii(it.key), Style::Section);
     if (!it.value.empty() && valueCol < out.width) {
-      drawText(out, valueCol, y, widenAscii(it.value), Style::Value);
+      drawText(out, valueCol, y, widenAscii(it.value), Style::Default);
     }
     ++y;
   }
@@ -1324,17 +1350,28 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
       break;
     case Screen::Config:
       {
-        const std::wstring hint = L"Space:Toggle Save Defaults";
+        const std::wstring hint = L"Space:Toggle  S:Save  R:Reset to Defaults";
         std::vector<Style> hintStyles(hint.size(), Style::Section);
+
+        const std::size_t togglePos = hint.find(L"Toggle");
+        if (togglePos != std::wstring::npos) {
+          for (std::size_t i = 0; i < 6 && togglePos + i < hintStyles.size(); ++i) {
+            hintStyles[togglePos + i] = Style::FooterBlock;
+          }
+        }
 
         const std::size_t savePos = hint.find(L"Save");
         if (savePos != std::wstring::npos) {
-          hintStyles[savePos] = Style::FooterBlock;
+          for (std::size_t i = savePos; i < savePos + 4 && i < hintStyles.size(); ++i) {
+            hintStyles[i] = Style::FooterBlock;
+          }
         }
 
-        const std::size_t defaultsPos = hint.find(L"Defaults");
-        if (defaultsPos != std::wstring::npos) {
-          hintStyles[defaultsPos] = Style::FooterBlock;
+        const std::size_t resetPos = hint.find(L"Reset to Defaults");
+        if (resetPos != std::wstring::npos) {
+          for (std::size_t i = resetPos; i < resetPos + 18 && i < hintStyles.size(); ++i) {
+            hintStyles[i] = Style::FooterBlock;
+          }
         }
 
         drawTextStyled(out, 0, bodyTop, hint, hintStyles);

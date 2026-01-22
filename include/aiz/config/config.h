@@ -9,6 +9,13 @@ enum class TimelineAgg {
   Avg,  // average in bucket
 };
 
+enum class MetricNameColor {
+  Cyan,
+  White,
+  Green,
+  Yellow,
+};
+
 struct Config {
   // Display toggles
   bool showCpu = true;
@@ -31,6 +38,9 @@ struct Config {
 
   // Timeline rendering
   TimelineAgg timelineAgg = TimelineAgg::Max;
+
+  // UI colors
+  MetricNameColor metricNameColor = MetricNameColor::Cyan;
 
   static Config load();
   void save() const;

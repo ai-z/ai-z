@@ -12,15 +12,37 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
   message(FATAL_ERROR "ai-z currently supports Linux only")
 endif()
 
+# Backend defaults
+#
+# These backends are runtime-loaded, but building the benchmarks requires headers.
+# We auto-enable them when headers are available to improve the out-of-box
+# experience on systems with the relevant dev packages installed.
+set(AI_Z_ENABLE_OPENCL_DEFAULT OFF)
+find_package(OpenCL QUIET)
+if (OpenCL_FOUND)
+  set(AI_Z_ENABLE_OPENCL_DEFAULT ON)
+endif()
+
+set(AI_Z_ENABLE_VULKAN_DEFAULT OFF)
+find_package(Vulkan QUIET)
+if (Vulkan_FOUND)
+  set(AI_Z_ENABLE_VULKAN_DEFAULT ON)
+endif()
+
 option(AI_Z_ENABLE_NVML "Enable NVIDIA NVML backend" ON)
 option(AI_Z_ENABLE_CUDA "Enable CUDA benchmarks/backends" ON)
-option(AI_Z_ENABLE_OPENCL "Enable OpenCL benchmarks/backends" OFF)
-option(AI_Z_ENABLE_VULKAN "Enable Vulkan benchmarks/backends" OFF)
+option(AI_Z_ENABLE_OPENCL "Enable OpenCL benchmarks/backends" ${AI_Z_ENABLE_OPENCL_DEFAULT})
+option(AI_Z_ENABLE_VULKAN "Enable Vulkan benchmarks/backends" ${AI_Z_ENABLE_VULKAN_DEFAULT})
 option(AI_Z_ENABLE_HIP "Enable HIP benchmarks/backends" OFF)
 option(AI_Z_ENABLE_LIBTORCH "Enable LibTorch (PyTorch C++ API) benchmark" OFF)
 option(AI_Z_ENABLE_LEVEL_ZERO "Enable Intel Level Zero backend" OFF)
 option(AI_Z_ENABLE_SYCL "Enable SYCL/oneAPI backend" OFF)
 option(AI_Z_ENABLE_WARNINGS "Enable -Wall/-Wextra style warnings" OFF)
+
+# Optional: ONNX Runtime headers.
+# ai-z runtime-loads libonnxruntime via dlopen(), but a real ORT model-execution
+# benchmark needs the C API header to safely call the function table.
+set(AI_Z_ONNXRUNTIME_ROOT "" CACHE PATH "ONNX Runtime root (contains include/ and lib/) for enabling real ORT benchmarks")
 
 set(AI_Z_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 configure_file(
@@ -91,6 +113,27 @@ endif()
 target_include_directories(ai-z PRIVATE ${CURSES_INCLUDE_DIR})
 
 target_link_libraries(ai-z PRIVATE dl)
+
+# Enable real ONNX Runtime benchmarks when headers are available.
+set(AI_Z_ONNXRUNTIME_INCLUDE_HINTS "")
+list(APPEND AI_Z_ONNXRUNTIME_INCLUDE_HINTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime")
+if (AI_Z_ONNXRUNTIME_ROOT)
+  list(APPEND AI_Z_ONNXRUNTIME_INCLUDE_HINTS "${AI_Z_ONNXRUNTIME_ROOT}/include")
+endif()
+
+find_path(AI_Z_ONNXRUNTIME_INCLUDE_DIR
+  NAMES onnxruntime_c_api.h
+  HINTS ${AI_Z_ONNXRUNTIME_INCLUDE_HINTS}
+  PATHS /usr/local/include /usr/include
+)
+
+if (AI_Z_ONNXRUNTIME_INCLUDE_DIR)
+  target_include_directories(ai-z PRIVATE ${AI_Z_ONNXRUNTIME_INCLUDE_DIR})
+  target_compile_definitions(ai-z PRIVATE AI_Z_HAS_ONNXRUNTIME_C_API=1)
+  message(STATUS "ONNX Runtime C API headers found: ${AI_Z_ONNXRUNTIME_INCLUDE_DIR} (real ORT benchmarks enabled)")
+else()
+  message(STATUS "ONNX Runtime C API headers not found; ORT benchmarks will use lightweight proxy loops. Set -DAI_Z_ONNXRUNTIME_ROOT=... to enable real ORT execution.")
+endif()
 
 if (AI_Z_ENABLE_LIBTORCH)
   find_package(Torch REQUIRED)

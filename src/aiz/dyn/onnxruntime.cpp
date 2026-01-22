@@ -24,7 +24,12 @@ namespace onnxruntime {
 
 namespace {
 
-constexpr uint32_t ORT_API_VERSION = 18;
+// We don't include ORT headers here (to keep build deps light), so we can't use
+// the ORT_API_VERSION macro. Instead, try a few recent versions and fall back.
+//
+// ORT guarantees the API is backwards-compatible; requesting an older version
+// should succeed on newer runtimes.
+constexpr uint32_t kOrtApiVersionsToTry[] = {22, 21, 20, 19, 18};
 
 std::vector<std::string> getOrtSearchPaths() {
   std::vector<std::string> paths;
@@ -137,10 +142,16 @@ struct OrtLoader {
       return false;
     }
 
-    api_ptr = api_base->GetApi(ORT_API_VERSION);
+    api_ptr = nullptr;
+    for (uint32_t version : kOrtApiVersionsToTry) {
+      api_ptr = api_base->GetApi(version);
+      if (api_ptr) {
+        break;
+      }
+    }
     if (!api_ptr) {
       if (err) {
-        *err = "Failed to get ORT API version " + std::to_string(ORT_API_VERSION);
+        *err = "Failed to get a compatible ORT API version.";
       }
       dlclose(handle);
       handle = nullptr;

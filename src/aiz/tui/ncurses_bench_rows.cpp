@@ -54,16 +54,12 @@ void rebuildBenchRows(TuiState& state, const HardwareInfo& hw, unsigned int gpuC
 
     // Inference benchmarks: currently device-0 only.
     if (gi == 0) {
-      addBench(makeOrtCudaMatMulBenchmark());
-      addBench(makeOrtCudaMemoryBandwidthBenchmark());
     }
   }
 
   // If no GPUs are detected, still group GPU inference benches under a GPU header.
   if (gpuCount == 0) {
     addHeader("GPU0 - (no GPU detected)");
-    addBench(makeOrtCudaMatMulBenchmark());
-    addBench(makeOrtCudaMemoryBandwidthBenchmark());
   }
 
   addHeader("CPU0 - " + (hw.cpuName.empty() ? std::string("unknown") : hw.cpuName));

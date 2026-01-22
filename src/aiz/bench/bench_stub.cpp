@@ -10,9 +10,7 @@ namespace aiz {
 
 // Forward declarations for ONNX Runtime benchmarks
 std::unique_ptr<IBenchmark> makeOrtCpuMatMulBenchmark();
-std::unique_ptr<IBenchmark> makeOrtCudaMatMulBenchmark();
 std::unique_ptr<IBenchmark> makeOrtCpuMemoryBandwidthBenchmark();
-std::unique_ptr<IBenchmark> makeOrtCudaMemoryBandwidthBenchmark();
 
 #ifdef AI_Z_ENABLE_CUDA
 std::unique_ptr<IBenchmark> makePcieBandwidthBenchmarkCuda();
@@ -200,7 +198,9 @@ std::unique_ptr<IBenchmark> makeGpuVulkanPcieBandwidthBenchmark(unsigned int gpu
   return makeGpuPcieBandwidthBenchmarkVulkanBackend(gpuIndex);
 #else
   (void)gpuIndex;
-  return std::make_unique<UnavailableStub>("Vulkan PCIe bandwidth", "Not built with Vulkan backend. Reconfigure with -DAI_Z_ENABLE_VULKAN=ON (and install Vulkan SDK/dev packages)." );
+  return std::make_unique<UnavailableStub>(
+      "Vulkan PCIe bandwidth",
+      "Not built with Vulkan backend. Reconfigure with -DAI_Z_ENABLE_VULKAN=ON (and install Vulkan headers/loader dev packages, e.g. libvulkan-dev)." );
 #endif
 }
 
@@ -209,7 +209,9 @@ std::unique_ptr<IBenchmark> makeGpuOpenclPcieBandwidthBenchmark(unsigned int gpu
   return makeGpuPcieBandwidthBenchmarkOpenclBackend(gpuIndex);
 #else
   (void)gpuIndex;
-  return std::make_unique<UnavailableStub>("OpenCL PCIe bandwidth", "Not built with OpenCL backend. Reconfigure with -DAI_Z_ENABLE_OPENCL=ON (and install OpenCL ICD loader + headers)." );
+  return std::make_unique<UnavailableStub>(
+      "OpenCL PCIe bandwidth",
+      "Not built with OpenCL backend. Reconfigure with -DAI_Z_ENABLE_OPENCL=ON (and install OpenCL headers/ICD loader dev packages, e.g. ocl-icd-opencl-dev)." );
 #endif
 }
 

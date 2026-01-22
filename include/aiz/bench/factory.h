@@ -34,8 +34,6 @@ std::unique_ptr<IBenchmark> makeCpuFp32FlopsBenchmark();
 
 // ONNX Runtime benchmarks
 std::unique_ptr<IBenchmark> makeOrtCpuMatMulBenchmark();
-std::unique_ptr<IBenchmark> makeOrtCudaMatMulBenchmark();
 std::unique_ptr<IBenchmark> makeOrtCpuMemoryBandwidthBenchmark();
-std::unique_ptr<IBenchmark> makeOrtCudaMemoryBandwidthBenchmark();
 
 }  // namespace aiz

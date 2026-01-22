@@ -39,7 +39,8 @@ OpenCL benchmarks (PCIe bandwidth + FP32 FLOPS):
 
 - Requires OpenCL headers + an ICD loader.
 	- Ubuntu/Debian: `sudo apt-get install -y ocl-icd-opencl-dev`
-- Enable with:
+- Auto-enabled by default when OpenCL dev packages are detected.
+- Force-enable/disable with:
 
 ```bash
 cmake -S . -B build -DAI_Z_ENABLE_OPENCL=ON
@@ -50,18 +51,23 @@ Vulkan benchmarks (PCIe bandwidth + FP32 FLOPS):
 
 - Requires Vulkan headers + loader.
 	- Ubuntu/Debian: `sudo apt-get install -y libvulkan-dev`
-- Enable with:
+- Auto-enabled by default when Vulkan dev packages are detected.
+- Force-enable/disable with:
 
 ```bash
 cmake -S . -B build -DAI_Z_ENABLE_VULKAN=ON
 cmake --build build -j
 ```
 
-ONNX Runtime benchmarks (CPU + GPU inference):
+ONNX Runtime benchmarks (CPU inference):
 
-- Detected at runtime via `dlopen`—**no build-time dependency**.
-- Provides CPU and CUDA (if available) benchmarks:
-	- FP32 MatMul GFLOPS
+- Runtime-loaded via `dlopen` (no link-time dependency), so the Debian/Ubuntu package stays Launchpad/PPA-friendly.
+- ai-z vendors the ONNX Runtime C API headers (MIT-licensed) to build the real MatMul benchmark without external dev packages.
+- Optional: use a specific ONNX Runtime release header set via:
+	`-DAI_Z_ONNXRUNTIME_ROOT=/path/to/onnxruntime-linux-x64-*/`
+
+- Provides CPU benchmarks:
+	- FP32 MatMul GFLOPS (real ORT execution when headers are available)
 	- Memory bandwidth (GB/s)
 - **Easy installation** (choose one method):
 

@@ -52,6 +52,31 @@ static const char* timelineAggToString(TimelineAgg v) {
   }
 }
 
+static MetricNameColor parseMetricNameColor(std::string v, MetricNameColor fallback) {
+  for (char& c : v) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  if (v == "cyan" || v == "lightblue" || v == "light-blue" || v == "light blue") return MetricNameColor::Cyan;
+  if (v == "white" || v == "gray" || v == "grey") return MetricNameColor::White;
+  if (v == "green") return MetricNameColor::Green;
+  if (v == "yellow" || v == "amber") return MetricNameColor::Yellow;
+  return fallback;
+}
+
+static const char* metricNameColorToString(MetricNameColor v) {
+  switch (v) {
+    case MetricNameColor::White:
+      return "white";
+    case MetricNameColor::Green:
+      return "green";
+    case MetricNameColor::Yellow:
+      return "yellow";
+    case MetricNameColor::Cyan:
+    default:
+      return "cyan";
+  }
+}
+
 Config Config::load() {
   Config cfg;
   std::ifstream in(configPath());
@@ -100,6 +125,7 @@ Config Config::load() {
     else if (key == "refreshMs") cfg.refreshMs = static_cast<std::uint32_t>(std::stoul(val));
     else if (key == "timelineSamples") cfg.timelineSamples = static_cast<std::uint32_t>(std::stoul(val));
     else if (key == "timelineAgg") cfg.timelineAgg = parseTimelineAgg(val, cfg.timelineAgg);
+    else if (key == "metricNameColor") cfg.metricNameColor = parseMetricNameColor(val, cfg.metricNameColor);
   }
   return cfg;
 }
@@ -125,6 +151,7 @@ void Config::save() const {
   out << "refreshMs=" << refreshMs << "\n";
   out << "timelineSamples=" << timelineSamples << "\n";
   out << "timelineAgg=" << timelineAggToString(timelineAgg) << "\n";
+  out << "metricNameColor=" << metricNameColorToString(metricNameColor) << "\n";
 }
 
 }  // namespace aiz

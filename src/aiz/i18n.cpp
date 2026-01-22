@@ -64,13 +64,14 @@ constexpr std::wstring_view en(MsgId id) {
 
     case MsgId::ConfigToggleOn: return L"ON";
     case MsgId::ConfigToggleOff: return L"OFF";
-    case MsgId::ConfigResetToDefaults: return L"Reset to defaults";
+    case MsgId::ConfigResetToDefaults: return L"Reset to Defaults";
     case MsgId::ConfigResetTag: return L"RESET";
     case MsgId::ConfigReadonlySamplesPerBucket: return L"Samples per bucket (bars)";
+    case MsgId::ConfigReadonlySamplingRate: return L"Sampling rate";
     case MsgId::ConfigReadonlyValueColor: return L"Value color";
     case MsgId::ConfigReadonlyMetricNameColor: return L"Metric name color";
     case MsgId::ConfigFooterKeys:
-      return L"Space/Enter: toggle/activate   s: save   d: defaults   Esc: back";
+      return L"Space/Enter: toggle/activate   S: save   R: reset to defaults   Esc: back";
 
     case MsgId::HardwareFooterKeys:
       return L"r: refresh   Esc: back";
@@ -117,6 +118,7 @@ constexpr std::wstring_view zhCN(MsgId id) {
     case MsgId::ConfigResetToDefaults: return L"恢复默认设置";
     case MsgId::ConfigResetTag: return L"重置";
     case MsgId::ConfigReadonlySamplesPerBucket: return L"每桶采样（柱）";
+    case MsgId::ConfigReadonlySamplingRate: return L"采样间隔";
     case MsgId::ConfigReadonlyValueColor: return L"数值颜色";
     case MsgId::ConfigReadonlyMetricNameColor: return L"指标名称颜色";
     case MsgId::ConfigFooterKeys:

@@ -39,6 +39,7 @@ enum class MsgId {
   ConfigResetToDefaults,
   ConfigResetTag,
   ConfigReadonlySamplesPerBucket,
+  ConfigReadonlySamplingRate,
   ConfigReadonlyValueColor,
   ConfigReadonlyMetricNameColor,
   ConfigFooterKeys,
