@@ -215,6 +215,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     init_pair(6, COLOR_RED, -1);
     // Pair 7: highlighted hot letter inside footer labels (yellow on blue).
     init_pair(7, COLOR_YELLOW, COLOR_BLUE);
+    // Pair 8: active footer page (white on red).
+    init_pair(8, COLOR_WHITE, COLOR_RED);
   }
 
   TuiState state;

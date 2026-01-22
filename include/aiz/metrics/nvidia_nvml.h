@@ -22,6 +22,7 @@ struct NvmlTelemetry {
   unsigned int memTransferRateMHz = 0;
   unsigned int smMajor = 0;      // CUDA compute capability major
   unsigned int smMinor = 0;      // CUDA compute capability minor
+  unsigned int multiprocessorCount = 0;  // number of SMs (streaming multiprocessors)
 
   // Power and bandwidth (best-effort).
   double maxPowerLimitWatts = 0.0;

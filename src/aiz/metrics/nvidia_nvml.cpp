@@ -45,6 +45,7 @@ struct OptTelemetryMsg {
   std::uint32_t memTransferRateMHz = 0;
   std::uint32_t smMajor = 0;
   std::uint32_t smMinor = 0;
+  std::uint32_t multiprocessorCount = 0;
 
   double maxPowerLimitWatts = 0.0;
   std::uint32_t memBusWidthBits = 0;
@@ -190,6 +191,7 @@ using nvmlDeviceGetCudaComputeCapability_t = nvmlReturn_t (*)(nvmlDevice_t, int*
 using nvmlDeviceGetPowerManagementLimitConstraints_t = nvmlReturn_t (*)(
   nvmlDevice_t, unsigned int* /*minLimitMilliWatts*/, unsigned int* /*maxLimitMilliWatts*/);
 using nvmlDeviceGetMemoryBusWidth_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*busWidthBits*/);
+using nvmlDeviceGetMultiProcessorCount_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*count*/);
 
 struct NvmlApi {
   void* lib = nullptr;
@@ -218,6 +220,7 @@ struct NvmlApi {
   nvmlDeviceGetCudaComputeCapability_t nvmlDeviceGetCudaComputeCapability = nullptr;
   nvmlDeviceGetPowerManagementLimitConstraints_t nvmlDeviceGetPowerManagementLimitConstraints = nullptr;
   nvmlDeviceGetMemoryBusWidth_t nvmlDeviceGetMemoryBusWidth = nullptr;
+  nvmlDeviceGetMultiProcessorCount_t nvmlDeviceGetMultiProcessorCount = nullptr;
 
   bool ok() const {
     return lib && nvmlInit_v2 && nvmlShutdown && nvmlDeviceGetCount_v2 && nvmlDeviceGetHandleByIndex_v2 &&
@@ -275,6 +278,8 @@ static NvmlApi& api() {
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPerformanceModes"));
   a.nvmlDeviceGetCudaComputeCapability = reinterpret_cast<nvmlDeviceGetCudaComputeCapability_t>(
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetCudaComputeCapability"));
+      a.nvmlDeviceGetMultiProcessorCount = reinterpret_cast<nvmlDeviceGetMultiProcessorCount_t>(
+        loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetMultiProcessorCount"));
     a.nvmlDeviceGetPowerManagementLimitConstraints = reinterpret_cast<nvmlDeviceGetPowerManagementLimitConstraints_t>(
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPowerManagementLimitConstraints"));
     a.nvmlDeviceGetMemoryBusWidth = reinterpret_cast<nvmlDeviceGetMemoryBusWidth_t>(
@@ -476,6 +481,13 @@ static std::optional<NvmlTelemetry> readNvmlTelemetryWithSession(nvmlDevice_t de
     if (a.nvmlDeviceGetCudaComputeCapability(dev, &major, &minor) == NVML_SUCCESS && major > 0 && minor >= 0) {
       t.smMajor = static_cast<unsigned int>(major);
       t.smMinor = static_cast<unsigned int>(minor);
+    }
+  }
+
+  if (a.nvmlDeviceGetMultiProcessorCount) {
+    unsigned int count = 0;
+    if (a.nvmlDeviceGetMultiProcessorCount(dev, &count) == NVML_SUCCESS && count > 0) {
+      t.multiprocessorCount = count;
     }
   }
 
@@ -745,6 +757,7 @@ std::optional<NvmlTelemetry> readNvmlTelemetryForGpu(unsigned int index) {
           out.memTransferRateMHz = static_cast<std::uint32_t>(r->memTransferRateMHz);
           out.smMajor = static_cast<std::uint32_t>(r->smMajor);
           out.smMinor = static_cast<std::uint32_t>(r->smMinor);
+          out.multiprocessorCount = static_cast<std::uint32_t>(r->multiprocessorCount);
 
           out.maxPowerLimitWatts = r->maxPowerLimitWatts;
           out.memBusWidthBits = static_cast<std::uint32_t>(r->memBusWidthBits);
@@ -767,6 +780,7 @@ std::optional<NvmlTelemetry> readNvmlTelemetryForGpu(unsigned int index) {
   t.memTransferRateMHz = static_cast<unsigned int>(msg->memTransferRateMHz);
   t.smMajor = static_cast<unsigned int>(msg->smMajor);
   t.smMinor = static_cast<unsigned int>(msg->smMinor);
+  t.multiprocessorCount = static_cast<unsigned int>(msg->multiprocessorCount);
   t.maxPowerLimitWatts = msg->maxPowerLimitWatts;
   t.memBusWidthBits = static_cast<unsigned int>(msg->memBusWidthBits);
   t.maxMemBandwidthGBps = msg->maxMemBandwidthGBps;
@@ -796,6 +810,7 @@ std::optional<NvmlTelemetry> readNvmlTelemetry() {
           out.memTransferRateMHz = static_cast<std::uint32_t>(r->memTransferRateMHz);
           out.smMajor = static_cast<std::uint32_t>(r->smMajor);
           out.smMinor = static_cast<std::uint32_t>(r->smMinor);
+          out.multiprocessorCount = static_cast<std::uint32_t>(r->multiprocessorCount);
 
           out.maxPowerLimitWatts = r->maxPowerLimitWatts;
           out.memBusWidthBits = static_cast<std::uint32_t>(r->memBusWidthBits);
@@ -818,6 +833,7 @@ std::optional<NvmlTelemetry> readNvmlTelemetry() {
   t.memTransferRateMHz = static_cast<unsigned int>(msg->memTransferRateMHz);
   t.smMajor = static_cast<unsigned int>(msg->smMajor);
   t.smMinor = static_cast<unsigned int>(msg->smMinor);
+  t.multiprocessorCount = static_cast<unsigned int>(msg->multiprocessorCount);
   t.maxPowerLimitWatts = msg->maxPowerLimitWatts;
   t.memBusWidthBits = static_cast<unsigned int>(msg->memBusWidthBits);
   t.maxMemBandwidthGBps = msg->maxMemBandwidthGBps;

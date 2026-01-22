@@ -489,16 +489,13 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
         }
       };
       auto addLabel = [&](const std::string& label) {
-        drawText(f, x, 0, widenAscii(label), Style::Section);
+        drawText(f, x, 0, widenAscii(label), Style::FooterBlock);
         x += static_cast<int>(label.size());
-        if (x < f.width) {
-          drawText(f, x, 0, L" ", Style::Default);
-          ++x;
-        }
       };
       auto addValueField = [&](std::string value, std::size_t w, Align a) {
-        value = fit(std::move(value), w, a);
-        drawText(f, x, 0, widenAscii(value), Style::Value);
+        (void)a;
+        if (value.size() > w) value.resize(w);
+        drawText(f, x, 0, widenAscii(value), Style::Default);
         x += static_cast<int>(value.size());
         if (x + 1 < f.width) {
           drawText(f, x, 0, L"  ", Style::Default);
@@ -549,16 +546,13 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
         }
       };
       auto addLabel = [&](const std::string& label) {
-        drawText(f, x, row, widenAscii(label), Style::Section);
+        drawText(f, x, row, widenAscii(label), Style::FooterBlock);
         x += static_cast<int>(label.size());
-        if (x < f.width) {
-          drawText(f, x, row, L" ", Style::Default);
-          ++x;
-        }
       };
       auto addValueField = [&](std::string value, std::size_t w, Align a) {
-        value = fit(std::move(value), w, a);
-        drawText(f, x, row, widenAscii(value), Style::Value);
+        (void)a;
+        if (value.size() > w) value.resize(w);
+        drawText(f, x, row, widenAscii(value), Style::Default);
         x += static_cast<int>(value.size());
         if (x + 1 < f.width) {
           drawText(f, x, row, L"  ", Style::Default);
@@ -572,7 +566,6 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
       addBadge(gpuId);
       addPunct(L":", Style::Section);
 
-      addLabel("USAGE");
       addValueField(gt.utilPct ? (fmt0(*gt.utilPct) + "%") : std::string("--"), 4, Align::Right);
 
       std::string vramStr = "--";
@@ -730,8 +723,12 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
     drawBodyLine(out, 0, L"", Style::Default);
 
     int x = 0;
-    auto addLabel = [&](const std::string& label) {
-      drawText(out, x, 0, widenAscii(label), Style::Section);
+    auto addLabelTight = [&](const std::string& label) {
+      drawText(out, x, 0, widenAscii(label), Style::FooterBlock);
+      x += static_cast<int>(label.size());
+    };
+    auto addLabelSpaced = [&](const std::string& label) {
+      drawText(out, x, 0, widenAscii(label), Style::FooterBlock);
       x += static_cast<int>(label.size());
       if (x < out.width) {
         drawText(out, x, 0, L" ", Style::Default);
@@ -739,8 +736,9 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
       }
     };
     auto addValueField = [&](std::string value, std::size_t w, Align a) {
-      value = fit(std::move(value), w, a);
-      drawText(out, x, 0, widenAscii(value), Style::Value);
+      (void)a;
+      if (value.size() > w) value.resize(w);
+      drawText(out, x, 0, widenAscii(value), Style::Default);
       x += static_cast<int>(value.size());
       if (x + 1 < out.width) {
         drawText(out, x, 0, L"  ", Style::Default);
@@ -749,18 +747,18 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
     };
 
     const std::string cpuStr = state.latest.cpu ? (fmt0(state.latest.cpu->value) + "%") : std::string("--");
-    addLabel("CPU:");
+    addLabelTight("CPU:");
     addValueField(cpuStr, 4, Align::Right);
 
-    addLabel("RAM:");
+    addLabelTight("RAM:");
     addValueField(!state.latest.ramText.empty() ? state.latest.ramText : std::string("--"), 18, Align::Left);
 
     const std::string diskStr = fmtSampleOrDash(state.latest.diskRead) + "/" + fmtSampleOrDash(state.latest.diskWrite);
-    addLabel("DISK R/W:");
+    addLabelTight("DISK R/W:");
     addValueField(diskStr, 24, Align::Left);
 
     const std::string netStr = fmtSampleOrDash(state.latest.netRx) + "/" + fmtSampleOrDash(state.latest.netTx);
-    addLabel("NET R/T:");
+    addLabelTight("NET R/T:");
     addValueField(netStr, 24, Align::Left);
   }
 
@@ -770,8 +768,12 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
     drawBodyLine(out, row, L"", Style::Default);
 
     int x = 0;
-    auto addLabel = [&](const std::string& label) {
-      drawText(out, x, row, widenAscii(label), Style::Section);
+    auto addLabelTight = [&](const std::string& label) {
+      drawText(out, x, row, widenAscii(label), Style::FooterBlock);
+      x += static_cast<int>(label.size());
+    };
+    auto addLabelSpaced = [&](const std::string& label) {
+      drawText(out, x, row, widenAscii(label), Style::FooterBlock);
       x += static_cast<int>(label.size());
       if (x < out.width) {
         drawText(out, x, row, L" ", Style::Default);
@@ -779,8 +781,9 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
       }
     };
     auto addValueField = [&](std::string value, std::size_t w, Align a) {
-      value = fit(std::move(value), w, a);
-      drawText(out, x, row, widenAscii(value), Style::Value);
+      (void)a;
+      if (value.size() > w) value.resize(w);
+      drawText(out, x, row, widenAscii(value), Style::Default);
       x += static_cast<int>(value.size());
       if (x + 1 < out.width) {
         drawText(out, x, row, L"  ", Style::Default);
@@ -797,9 +800,8 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
         gpuPrefix += n;
       }
     }
-    addLabel(gpuPrefix + ":");
+    addLabelSpaced(gpuPrefix);
 
-    addLabel("USAGE");
     addValueField(gt.utilPct ? (fmt0(*gt.utilPct) + "%") : std::string("--"), 4, Align::Right);
 
     std::string vramStr = "--";
@@ -809,35 +811,31 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
       const double pct = total > 0.0 ? (100.0 * used / total) : 0.0;
       vramStr = fmt1(used) + "/" + fmt1(total) + "G(" + fmt0(pct) + "%)";
     }
-    addLabel("VRAM:");
+    addLabelTight("VRAM:");
     addValueField(vramStr, 18, Align::Left);
 
-    addLabel("W:");
+    addLabelTight("W:");
     addValueField(gt.watts ? (fmt0(*gt.watts) + "W") : std::string("--"), 5, Align::Right);
 
-    addLabel("T:");
+    addLabelTight("T:");
     addValueField(gt.tempC ? (fmt0(*gt.tempC) + "C") : std::string("--"), 4, Align::Right);
 
-    addLabel("POWER:");
+    addLabelTight("POWER:");
     addValueField(!gt.pstate.empty() ? gt.pstate : std::string("--"), 4, Align::Left);
 
     std::string linkStr = "--";
     if (gt.pcieLinkWidth && gt.pcieLinkGen) {
       linkStr = std::to_string(*gt.pcieLinkWidth) + "x@" + fmt1(static_cast<double>(*gt.pcieLinkGen));
     }
-    addLabel("LINK:");
+    addLabelTight("LINK:");
     addValueField(linkStr, 9, Align::Left);
 
     const std::string pcieTStr = state.latest.pcieTx ? (fmt0(state.latest.pcieTx->value) + state.latest.pcieTx->unit) : std::string("--");
     const std::string pcieRStr = state.latest.pcieRx ? (fmt0(state.latest.pcieRx->value) + state.latest.pcieRx->unit) : std::string("--");
-    addLabel("PCIE T/R:");
+    addLabelTight("PCIE T/R:");
     addValueField(pcieTStr + "/" + pcieRStr, 22, Align::Left);
   }
 
-  const int noteY = headerRows + 1;
-  if (noteY < out.height - 2) {
-    drawBodyLine(out, noteY, L"Minimal: stats only (no timelines). Press Esc for timelines.", Style::Value);
-  }
 }
 
 static void renderHelp(Frame& out, int bodyTop) {
@@ -933,9 +931,13 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
     const std::size_t labelW = textWidth(label);
     if (labelW < maxLabelW) line.append(maxLabelW - labelW, L' ');
     line += L": ";
-    line += std::wstring((cfg.*(it.field)) ? i18n::tr(i18n::MsgId::ConfigToggleOn) : i18n::tr(i18n::MsgId::ConfigToggleOff));
+    const std::wstring_view onOff = (cfg.*(it.field)) ? i18n::tr(i18n::MsgId::ConfigToggleOn)
+                                                      : i18n::tr(i18n::MsgId::ConfigToggleOff);
+    line += std::wstring(onOff);
     if (y >= out.height - 2) break;
     drawBodyLine(out, y, line, Style::Value);
+    const std::size_t valueStart = textWidth(std::wstring_view(line).substr(0, line.size() - onOff.size()));
+    drawText(out, static_cast<int>(valueStart), y, std::wstring(onOff), Style::Default);
     ++y;
   }
 
@@ -985,9 +987,6 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
   drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlyValueColor)), L"white (default)");
   drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlyMetricNameColor)), L"light blue (cyan)");
 
-  if (out.height >= 3) {
-    drawBodyLine(out, out.height - 2, std::wstring(i18n::tr(i18n::MsgId::ConfigFooterKeys)), Style::FooterKey);
-  }
 }
 
 static void renderHardware(Frame& out, int bodyTop, const TuiState& state) {
@@ -1014,7 +1013,7 @@ static void renderHardware(Frame& out, int bodyTop, const TuiState& state) {
     maxKeyLen = std::max(maxKeyLen, key.size());
   }
 
-  const int yStart = bodyTop + 1;
+  const int yStart = bodyTop;
   const int yEnd = out.height - 2;
   const int valueCol = std::min(out.width - 1, static_cast<int>(maxKeyLen) + 2);
 
@@ -1028,9 +1027,6 @@ static void renderHardware(Frame& out, int bodyTop, const TuiState& state) {
     ++y;
   }
 
-  if (out.height >= 3) {
-    drawBodyLine(out, out.height - 2, std::wstring(i18n::tr(i18n::MsgId::HardwareFooterKeys)), Style::FooterKey);
-  }
 }
 
 static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
@@ -1045,7 +1041,7 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
     results = state.benchResults;
   }
 
-  int y = bodyTop + 1;
+  int y = bodyTop;
 
   const auto& titles = (!state.benchRowTitles.empty() && state.benchRowTitles.size() == state.benches.size()) ? state.benchRowTitles : std::vector<std::string>{};
   const auto& isHeader = (!state.benchRowIsHeader.empty() && state.benchRowIsHeader.size() == state.benches.size()) ? state.benchRowIsHeader : std::vector<bool>{};
@@ -1085,6 +1081,7 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
     if (y < out.height - 2) {
       std::wstring line = (state.benchmarksSel == 0 ? L"> " : L"  ");
       line += i18n::tr(i18n::MsgId::BenchRunAll);
+      line += L" (Press Enter)";
       drawBodyLine(out, y, line, Style::Warning);
       ++y;
     }
@@ -1186,9 +1183,6 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
     }
   }
 
-  if (out.height >= 4) {
-    drawBodyLine(out, out.height - 3, std::wstring(i18n::tr(i18n::MsgId::BenchFooterKeys)), Style::FooterKey);
-  }
 }
 
 void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Config& cfg, bool /*debugMode*/) {
@@ -1223,9 +1217,15 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
         st[k] = Style::FooterBlock;
       }
 
+      if (state.screen == Screen::Timelines) {
+        for (std::size_t k = labelStart; k < labelEnd; ++k) {
+          st[k] = Style::FooterActive;
+        }
+      }
+
       for (std::size_t k = labelStart; k < labelEnd; ++k) {
         if (footer[k] == L'a' || footer[k] == L'A') {
-          st[k] = Style::FooterHot;
+          if (state.screen != Screen::Timelines) st[k] = Style::FooterHot;
           break;
         }
       }
@@ -1271,17 +1271,25 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
         fnum = (fnum * 10) + static_cast<int>(footer[p] - L'0');
       }
       wchar_t hot = 0;
+      Screen target = Screen::Timelines;
       switch (fnum) {
-        case 1: hot = L'H'; break;   // Help
-        case 2: hot = L'W'; break;   // Hardware (the 'w' in HardWare)
-        case 3: hot = L'B'; break;   // Bench
-        case 4: hot = L'C'; break;   // Config
-        case 5: hot = L'M'; break;   // Minimal
+        case 1: hot = L'H'; target = Screen::Help; break;        // Help
+        case 2: hot = L'W'; target = Screen::Hardware; break;    // Hardware (the 'w' in HardWare)
+        case 3: hot = L'B'; target = Screen::Benchmarks; break;  // Bench
+        case 4: hot = L'C'; target = Screen::Config; break;      // Config
+        case 5: hot = L'M'; target = Screen::Minimal; break;     // Minimal
         case 10: hot = L'Q'; break;  // Quit
         default: break;
       }
 
-      if (hot != 0) {
+      const bool isActive = (state.screen == target && target != Screen::Timelines);
+      if (isActive) {
+        for (std::size_t k = labelStart; k < labelEnd; ++k) {
+          st[k] = Style::FooterActive;
+        }
+      }
+
+      if (hot != 0 && !isActive) {
         for (std::size_t k = labelStart; k < labelEnd; ++k) {
           const wchar_t ch = footer[k];
           if (ch == hot || ch == static_cast<wchar_t>(std::towlower(static_cast<wint_t>(hot))) ||
@@ -1315,15 +1323,28 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
       renderHelp(out, bodyTop);
       break;
     case Screen::Config:
-      drawText(out, 0, bodyTop, std::wstring(i18n::tr(i18n::MsgId::ScreenConfigTitle)), Style::Section);
+      {
+        const std::wstring hint = L"Space:Toggle Save Defaults";
+        std::vector<Style> hintStyles(hint.size(), Style::Section);
+
+        const std::size_t savePos = hint.find(L"Save");
+        if (savePos != std::wstring::npos) {
+          hintStyles[savePos] = Style::FooterBlock;
+        }
+
+        const std::size_t defaultsPos = hint.find(L"Defaults");
+        if (defaultsPos != std::wstring::npos) {
+          hintStyles[defaultsPos] = Style::FooterBlock;
+        }
+
+        drawTextStyled(out, 0, bodyTop, hint, hintStyles);
+      }
       renderConfig(out, bodyTop, cfg, state);
       break;
     case Screen::Hardware:
-      drawText(out, 0, bodyTop, std::wstring(i18n::tr(i18n::MsgId::ScreenHardwareTitle)), Style::Section);
       renderHardware(out, bodyTop, state);
       break;
     case Screen::Benchmarks:
-      drawText(out, 0, bodyTop, std::wstring(i18n::tr(i18n::MsgId::ScreenBenchmarksTitle)), Style::Section);
       renderBenchmarks(out, bodyTop, state);
       break;
     default:

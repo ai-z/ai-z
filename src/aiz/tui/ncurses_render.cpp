@@ -17,6 +17,9 @@ int styleToAttr(std::uint16_t style) {
     case Style::FooterHot:
       // Hot letter inside the footer block.
       return COLOR_PAIR(7) | A_BOLD;
+    case Style::FooterActive:
+      // Current page highlight in footer.
+      return COLOR_PAIR(8) | A_BOLD;
     case Style::FooterKey:
       return COLOR_PAIR(4) | A_BOLD;
     case Style::Hot:

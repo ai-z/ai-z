@@ -116,6 +116,32 @@ static std::optional<std::string> runCommand(const std::string& cmd) {
   return out;
 }
 
+static std::optional<unsigned int> cudaCoresPerSm(unsigned int major, unsigned int minor) {
+  // Best-effort mapping from CUDA compute capability to FP32 "CUDA cores" per SM.
+  // This is not an NVML-provided attribute; it is derived from NVIDIA architecture.
+  // If an unknown/unsupported architecture is encountered, return nullopt.
+  switch (major) {
+    case 2:  // Fermi
+      return (minor == 1) ? 48u : 32u;
+    case 3:  // Kepler
+      return 192u;
+    case 5:  // Maxwell
+      return 128u;
+    case 6:  // Pascal
+      return (minor == 0) ? 64u : 128u;
+    case 7:  // Volta/Turing
+      return 64u;
+    case 8:  // Ampere/Ada
+      if (minor == 0) return 64u;  // A100-class
+      if (minor == 6 || minor == 7 || minor == 9) return 128u;  // GA10x/Orin/Ada
+      return std::nullopt;
+    case 9:  // Hopper
+      return 128u;
+    default:
+      return std::nullopt;
+  }
+}
+
 static std::vector<std::string> probePerGpuLinesNvidia() {
   const auto n = nvmlGpuCount();
   if (!n || *n == 0) return {};
@@ -159,6 +185,20 @@ static std::vector<std::string> probePerGpuLinesNvidia() {
       if (t->memTotalGiB > 0.0) {
         std::ostringstream l;
         l << indent << "Memory: " << fmtGFromGiB(t->memTotalGiB);
+        lines.push_back(l.str());
+      }
+
+      {
+        std::string cudaCoresStr = "not available";
+        if (t->multiprocessorCount > 0 && t->smMajor > 0) {
+          if (const auto cpsm = cudaCoresPerSm(t->smMajor, t->smMinor)) {
+            const unsigned long long cores =
+                static_cast<unsigned long long>(t->multiprocessorCount) * static_cast<unsigned long long>(*cpsm);
+            if (cores > 0) cudaCoresStr = std::to_string(cores);
+          }
+        }
+        std::ostringstream l;
+        l << indent << "CUDA Cores: " << cudaCoresStr;
         lines.push_back(l.str());
       }
 
@@ -216,6 +256,10 @@ static std::vector<std::string> probePerGpuLinesNvidia() {
         l << indent << "SM: " << t->smMajor << "." << t->smMinor;
         lines.push_back(l.str());
       }
+    } else {
+      std::ostringstream l;
+      l << indent << "CUDA Cores: not available";
+      lines.push_back(l.str());
     }
 
     if (const auto link = readNvmlPcieLinkForGpu(gpuIndex)) {
@@ -962,6 +1006,7 @@ std::vector<std::string> HardwareInfo::toLines() const {
   const bool hasPerGpu = !perGpuLines.empty();
   const bool hasPerNic = !perNicLines.empty();
   const bool hasPerDisk = !perDiskLines.empty();
+  const std::string indent = " ";
   std::vector<std::string> lines;
   lines.reserve(48);
 
@@ -980,13 +1025,13 @@ std::vector<std::string> HardwareInfo::toLines() const {
   lines.push_back(std::string());
 
   lines.push_back("CPU: " + (cpuName.empty() ? std::string(kUnknown) : cpuName));
-  lines.push_back("Physical cores: " + (cpuPhysicalCores.empty() ? std::string(kUnknown) : cpuPhysicalCores));
-  lines.push_back("Logical cores: " + (cpuLogicalCores.empty() ? std::string(kUnknown) : cpuLogicalCores));
-  lines.push_back("Cache L1: " + (cpuCacheL1.empty() ? std::string(kUnknown) : cpuCacheL1));
-  lines.push_back("Cache L2: " + (cpuCacheL2.empty() ? std::string(kUnknown) : cpuCacheL2));
-  lines.push_back("Cache L3: " + (cpuCacheL3.empty() ? std::string(kUnknown) : cpuCacheL3));
-  lines.push_back("Instructions: " + (cpuInstructions.empty() ? std::string(kUnknown) : cpuInstructions));
-  lines.push_back("RAM: " + (ramSummary.empty() ? std::string(kUnknown) : ramSummary));
+  lines.push_back(indent + "Physical cores: " + (cpuPhysicalCores.empty() ? std::string(kUnknown) : cpuPhysicalCores));
+  lines.push_back(indent + "Logical cores: " + (cpuLogicalCores.empty() ? std::string(kUnknown) : cpuLogicalCores));
+  lines.push_back(indent + "Cache L1: " + (cpuCacheL1.empty() ? std::string(kUnknown) : cpuCacheL1));
+  lines.push_back(indent + "Cache L2: " + (cpuCacheL2.empty() ? std::string(kUnknown) : cpuCacheL2));
+  lines.push_back(indent + "Cache L3: " + (cpuCacheL3.empty() ? std::string(kUnknown) : cpuCacheL3));
+  lines.push_back(indent + "Instructions: " + (cpuInstructions.empty() ? std::string(kUnknown) : cpuInstructions));
+  lines.push_back(indent + "RAM: " + (ramSummary.empty() ? std::string(kUnknown) : ramSummary));
 
   // GPU hardware details after CPU/RAM.
   lines.push_back(std::string());

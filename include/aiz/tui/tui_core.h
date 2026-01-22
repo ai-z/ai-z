@@ -135,6 +135,7 @@ enum class Style : std::uint16_t {
   FooterKey = 2,
   FooterBlock = 7,
   FooterHot = 8,
+  FooterActive = 9,
   Hot = 3,
   Section = 4,
   Value = 5,
