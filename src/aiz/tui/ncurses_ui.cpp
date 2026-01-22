@@ -16,6 +16,7 @@
 #include <curses.h>
 
 #include <clocale>
+#include <cctype>
 
 #include "ncurses_render.h"
 #include "ncurses_probe.h"
@@ -47,6 +48,103 @@ static void ensureTimelineCapacity(Timeline& tl, std::size_t desiredCapacity) {
     resized.push(v);
   }
   tl = std::move(resized);
+}
+
+static std::string trimAscii(std::string s) {
+  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
+  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
+  return s;
+}
+
+static std::string afterColonSpace(const std::string& s) {
+  const std::size_t pos = s.find(": ");
+  if (pos == std::string::npos) return s;
+  return s.substr(pos + 2);
+}
+
+static int parseFirstInt(const std::string& s) {
+  int cur = 0;
+  bool inNum = false;
+  for (char ch : s) {
+    if (std::isdigit(static_cast<unsigned char>(ch))) {
+      inNum = true;
+      cur = cur * 10 + (ch - '0');
+    } else if (inNum) {
+      break;
+    }
+  }
+  return inNum ? cur : 0;
+}
+
+static std::string formatTimelineRamDevice(const HardwareInfo& hw) {
+  // Example: "31.9 GiB DDR4 (speed: 3200 MT/s, channels: likely >=2)"
+  const std::string& s = hw.ramSummary;
+  if (s.empty() || s == "--" || s == "unknown") return {};
+
+  std::string type;
+  {
+    // Look for common DDR tokens.
+    const char* kTypes[] = {"DDR5", "DDR4", "DDR3", "DDR2", "LPDDR5", "LPDDR4", "LPDDR3"};
+    for (const char* t : kTypes) {
+      if (s.find(t) != std::string::npos) {
+        type = t;
+        break;
+      }
+    }
+  }
+
+  int speed = 0;
+  {
+    const std::size_t sp = s.find("speed:");
+    if (sp != std::string::npos) {
+      speed = parseFirstInt(s.substr(sp));
+    }
+  }
+
+  if (!type.empty() && speed > 0) return type + " " + std::to_string(speed) + " MT/s";
+  if (speed > 0) return std::to_string(speed) + " MT/s";
+  if (!type.empty()) return type;
+  return {};
+}
+
+static std::string formatTimelineDiskDevice(const HardwareInfo& hw) {
+  if (hw.perDiskLines.empty()) return {};
+  std::string first = afterColonSpace(hw.perDiskLines.front());
+  first = trimAscii(first);
+  if (hw.perDiskLines.size() > 1) {
+    first += " +" + std::to_string(hw.perDiskLines.size() - 1);
+  }
+  return first;
+}
+
+static std::string formatTimelineNetDevice(const HardwareInfo& hw) {
+  if (hw.perNicLines.empty()) return {};
+  std::string first = afterColonSpace(hw.perNicLines.front());
+  first = trimAscii(first);
+  // Convert "Realtek ... (1000 Mb/s)" -> "Realtek ... 1000 Mb/s"
+  const std::size_t open = first.find(" (");
+  const std::size_t close = first.rfind(")");
+  if (open != std::string::npos && close != std::string::npos && close > open) {
+    std::string inParens = first.substr(open + 2, close - (open + 2));
+    first.erase(open);
+    first = trimAscii(first);
+    inParens = trimAscii(inParens);
+    if (!inParens.empty()) first += " " + inParens;
+  }
+  if (hw.perNicLines.size() > 1) {
+    first += " +" + std::to_string(hw.perNicLines.size() - 1);
+  }
+  return first;
+}
+
+static void applyTimelineDevicesFromHw(TuiState& state, const HardwareInfo& hw) {
+  const std::string ramDev = formatTimelineRamDevice(hw);
+  const std::string diskDev = formatTimelineDiskDevice(hw);
+  const std::string netDev = formatTimelineNetDevice(hw);
+
+  if (!ramDev.empty() && state.ramDevice.empty()) state.ramDevice = ramDev;
+  if (!diskDev.empty() && state.diskDevice.empty()) state.diskDevice = diskDev;
+  if (!netDev.empty() && state.netDevice.empty()) state.netDevice = netDev;
 }
 
 // RAM/GPU telemetry formatting helpers live in ncurses_telemetry.{h,cpp}.
@@ -104,7 +202,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     start_color();
     use_default_colors();
     // Pair 1: F-key blocks with background color.
-    init_pair(1, COLOR_BLACK, COLOR_CYAN);
+    init_pair(1, COLOR_WHITE, COLOR_BLUE);
     // Pair 2: highlighted hot letters.
     init_pair(2, COLOR_YELLOW, -1);
     // Pair 3: top title bar background (AI-Z).
@@ -115,6 +213,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     init_pair(5, COLOR_GREEN, -1);
     // Pair 6: warning / emphasis (light red).
     init_pair(6, COLOR_RED, -1);
+    // Pair 7: highlighted hot letter inside footer labels (yellow on blue).
+    init_pair(7, COLOR_YELLOW, COLOR_BLUE);
   }
 
   TuiState state;
@@ -285,6 +385,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     hwLines = hwCache.toLines();
     state.hardwareLines = hwLines;
     state.hardwareDirty = false;
+    applyTimelineDevicesFromHw(state, hwCache);
     hwReady = true;
     ncurses::rebuildBenchRows(state, hwCache, gpuCount);
     benchReady = true;
@@ -356,7 +457,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
         // Navigation + selection changes are centralized.
         if (cmd == Command::NavHelp || cmd == Command::NavHardware || cmd == Command::NavBenchmarks || cmd == Command::NavConfig ||
-            cmd == Command::NavTimelines || cmd == Command::Back || cmd == Command::Up || cmd == Command::Down) {
+            cmd == Command::NavMinimal || cmd == Command::Back || cmd == Command::Up || cmd == Command::Down) {
           applyCommand(state, cfg, cmd);
           if (state.screen == Screen::Hardware || state.screen == Screen::Benchmarks) {
             ensureHardwareAndBenches();
@@ -605,6 +706,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
         std::vector<std::string> fromHw = ncurses::parseGpuNames(hwCache, gpuCount);
         if (ncurses::hasRealDeviceNames(fromHw)) state.gpuDeviceNames = std::move(fromHw);
       }
+      applyTimelineDevicesFromHw(state, hwCache);
 
       bootApplied = true;
     }
@@ -621,6 +723,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
         state.gpuDeviceNames = std::move(fromHw);
       }
     }
+
+    applyTimelineDevicesFromHw(state, hwCache);
 
     // Per-GPU utilization history.
     if (state.gpuTls.size() != gpuCount) {

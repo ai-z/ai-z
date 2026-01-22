@@ -11,6 +11,12 @@ int styleToAttr(std::uint16_t style) {
     case Style::Header:
       // Prefer colored text on default background (avoid full-row backgrounds).
       return COLOR_PAIR(5) | A_BOLD;
+    case Style::FooterBlock:
+      // Colored block behind F-key tokens (htop-style).
+      return COLOR_PAIR(1) | A_BOLD;
+    case Style::FooterHot:
+      // Hot letter inside the footer block.
+      return COLOR_PAIR(7) | A_BOLD;
     case Style::FooterKey:
       return COLOR_PAIR(4) | A_BOLD;
     case Style::Hot:

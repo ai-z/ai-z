@@ -19,6 +19,7 @@ class IBenchmark;
 
 enum class Screen {
   Timelines,
+  Minimal,
   Help,
   Benchmarks,
   Config,
@@ -34,7 +35,7 @@ enum class Command {
   NavHardware,
   NavBenchmarks,
   NavConfig,
-  NavTimelines,
+  NavMinimal,
 
   Up,
   Down,
@@ -79,6 +80,9 @@ struct TuiState {
   // Device names for section titles (best-effort; may be empty until probed).
   std::string cpuDevice;
   std::vector<std::string> gpuDeviceNames;
+  std::string ramDevice;
+  std::string diskDevice;
+  std::string netDevice;
 
   // Timelines history (oldest -> newest) for scrolling bars.
   Timeline cpuTl{240};
@@ -129,6 +133,8 @@ enum class Style : std::uint16_t {
   Default = 0,
   Header = 1,
   FooterKey = 2,
+  FooterBlock = 7,
+  FooterHot = 8,
   Hot = 3,
   Section = 4,
   Value = 5,

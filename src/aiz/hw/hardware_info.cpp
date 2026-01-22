@@ -878,9 +878,20 @@ static std::string probeRamSummary() {
   int populatedDimms = 0;
   int speedsFound = 0;
   int maxMhz = 0;
+  std::string ramType;
 
   while (std::getline(dmiStream, dmiLine)) {
     dmiLine = trim(dmiLine);
+    if (ramType.empty() && dmiLine.rfind("Type:", 0) == 0) {
+      // Examples: "Type: DDR4", "Type: LPDDR5", "Type: Unknown"
+      std::string t = trim(dmiLine.substr(std::string("Type:").size()));
+      if (!t.empty() && t != "Unknown" && t != "Other") {
+        // Prefer DDR*/LPDDR* type tokens.
+        if (t.rfind("DDR", 0) == 0 || t.rfind("LPDDR", 0) == 0) {
+          ramType = t;
+        }
+      }
+    }
     if (dmiLine.rfind("Size:", 0) == 0) {
       if (dmiLine.find("No Module Installed") == std::string::npos) {
         ++populatedDimms;
@@ -904,6 +915,10 @@ static std::string probeRamSummary() {
         }
       }
     }
+  }
+
+  if (!ramType.empty()) {
+    oss << " " << ramType;
   }
 
   oss << " (speed: ";
