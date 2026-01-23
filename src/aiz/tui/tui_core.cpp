@@ -435,6 +435,7 @@ static void drawScrollingBars(
     int width,
     const Timeline& tl,
     double maxV,
+  int sampleWindow,
     TimelineAgg agg) {
   if (height <= 0 || width <= 0) return;
 
@@ -457,52 +458,82 @@ static void drawScrollingBars(
 
   if (available <= 0 || maxV <= 0.0) return;
 
-  // If we have more samples than columns, downsample into buckets.
+  // Map samples to full width using a stable bucket size based on capacity.
   const int cols = colsToDraw;
-  const int count = std::min(cols, available);
-  const int xOffset = cols - count;
+  const int totalSamples = std::max(available, std::max(sampleWindow, width));
 
-  const bool needsBucketing = available > cols;
-  const int bucket = needsBucketing ? static_cast<int>((available + cols - 1) / cols) : 1;
+  const bool needsBucketing = totalSamples > cols;
 
-  for (int i = 0; i < count; ++i) {
-    const int x = leftX + xOffset + i;
-    if (x < 0 || x >= out.width) continue;
+  if (!needsBucketing) {
+    // 1:1 mapping for the most recent samples, right-aligned.
+    const int count = std::min(cols, available);
+    const int xOffset = cols - count;
+    const int startIdx = std::max(0, available - count);
 
-    double v = 0.0;
-    if (!needsBucketing) {
-      // 1:1 mapping for the most recent samples.
-      const int startIdx = std::max(0, available - count);
+    for (int i = 0; i < count; ++i) {
+      const int x = leftX + xOffset + i;
+      if (x < 0 || x >= out.width) continue;
+
       const int idx = startIdx + i;
       if (idx < 0 || idx >= available) continue;
-      v = vals[static_cast<std::size_t>(idx)];
-    } else {
-      // Map the full history into the available columns.
-      const int start = i * bucket;
-      const int end = std::min(available, start + bucket);
-      if (start >= end) continue;
+      double v = vals[static_cast<std::size_t>(idx)];
+      if (!std::isfinite(v)) v = 0.0;
+      v = std::clamp(v, 0.0, maxV);
 
-      if (agg == TimelineAgg::Avg) {
-        double sum = 0.0;
-        int n = 0;
-        for (int j = start; j < end; ++j) {
-          double s = vals[static_cast<std::size_t>(j)];
-          if (!std::isfinite(s)) continue;
-          sum += s;
-          ++n;
-        }
-        v = (n > 0) ? (sum / static_cast<double>(n)) : 0.0;
-      } else {
-        // Default: max in bucket (preserves spikes).
-        double maxBucket = -std::numeric_limits<double>::infinity();
-        for (int j = start; j < end; ++j) {
-          double s = vals[static_cast<std::size_t>(j)];
-          if (!std::isfinite(s)) continue;
-          maxBucket = std::max(maxBucket, s);
-        }
-        if (!std::isfinite(maxBucket)) maxBucket = 0.0;
-        v = maxBucket;
+      const int barH = static_cast<int>(std::round((v / maxV) * static_cast<double>(height)));
+      const int clampedH = std::clamp(barH, 0, height);
+
+      for (int r = 0; r < clampedH; ++r) {
+        const int y = topY + (height - 1 - r);
+        if (y < 0 || y >= out.height) continue;
+        auto& c = out.at(x, y);
+        c.ch = 0x2593;  // dark shade block
+        // Timeline bars used to render in the default terminal color (white).
+        // Keep title values highlighted, but keep the bars neutral.
+        c.style = static_cast<std::uint16_t>(Style::Default);
       }
+    }
+    return;
+  }
+
+  const int missing = totalSamples - available;  // leading samples not yet available
+
+  for (int i = 0; i < cols; ++i) {
+    const int x = leftX + i;
+    if (x < 0 || x >= out.width) continue;
+
+    const int start = static_cast<int>((static_cast<long long>(i) * totalSamples) / cols);
+    const int end = static_cast<int>((static_cast<long long>(i + 1) * totalSamples) / cols);
+    if (start >= end) continue;
+
+    int dataStart = start - missing;
+    int dataEnd = end - missing;
+    if (dataEnd <= 0 || dataStart >= available) continue;
+    dataStart = std::max(0, dataStart);
+    dataEnd = std::min(available, dataEnd);
+    if (dataStart >= dataEnd) continue;
+
+    double v = 0.0;
+    if (agg == TimelineAgg::Avg) {
+      double sum = 0.0;
+      int n = 0;
+      for (int j = dataStart; j < dataEnd; ++j) {
+        double s = vals[static_cast<std::size_t>(j)];
+        if (!std::isfinite(s)) continue;
+        sum += s;
+        ++n;
+      }
+      v = (n > 0) ? (sum / static_cast<double>(n)) : 0.0;
+    } else {
+      // Default: max in bucket (preserves spikes).
+      double maxBucket = -std::numeric_limits<double>::infinity();
+      for (int j = dataStart; j < dataEnd; ++j) {
+        double s = vals[static_cast<std::size_t>(j)];
+        if (!std::isfinite(s)) continue;
+        maxBucket = std::max(maxBucket, s);
+      }
+      if (!std::isfinite(maxBucket)) maxBucket = 0.0;
+      v = maxBucket;
     }
 
     if (!std::isfinite(v)) v = 0.0;
@@ -778,7 +809,8 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
     const int graphTop = y + 1;
     const int graphH = std::max(0, height - 1);
     if (graphH > 0 && p.tl) {
-      drawScrollingBars(out, graphTop, 0, graphH, out.width, *p.tl, p.maxV, cfg.timelineAgg);
+      const int sampleWindow = std::max(static_cast<int>(cfg.timelineSamples), out.width);
+      drawScrollingBars(out, graphTop, 0, graphH, out.width, *p.tl, p.maxV, sampleWindow, cfg.timelineAgg);
     }
 
     y += height;
