@@ -185,7 +185,8 @@ You can change the aggregation mode via config:
 - `F2` or `W`: Hardware info
 - `F3` or `B`: Benchmarks
 - `F4` or `C`: Config display
-- `F5` or `T`: Timelines
+- `F5` or `M`: Minimal
+- `F6` or `P`: Processes
 - `F10` or `Q`: Quit
 
 ## Config

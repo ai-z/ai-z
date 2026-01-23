@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace aiz {
 
@@ -45,6 +46,13 @@ struct NvmlPcieLink {
   unsigned int width = 0;
   // PCIe generation as an integer (e.g. 4 for Gen4).
   unsigned int generation = 0;
+};
+
+struct NvmlProcessInfo {
+  unsigned int pid = 0;
+  unsigned int gpuIndex = 0;
+  double vramUsedGiB = 0.0;
+  std::optional<double> gpuUtilPct;
 };
 
 // Returns the number of NVML-visible GPUs.
@@ -98,5 +106,9 @@ std::optional<std::string> readNvmlLibraryVersion();
 // Reads the NVIDIA driver version string via NVML (e.g. "550.54.14").
 // Returns nullopt if NVML isn't present/usable or the symbol isn't available.
 std::optional<std::string> readNvmlDriverVersion();
+
+// Reads per-process GPU usage (best-effort). Each entry is tagged with a GPU index.
+// Returns an empty vector if NVML isn't present/usable or no data is available.
+std::vector<NvmlProcessInfo> readNvmlProcessInfo();
 
 }  // namespace aiz

@@ -31,6 +31,7 @@ std::optional<Command> keyToCommand(int key, Screen screen) {
   if (key == KEY_F(3)) return Command::NavBenchmarks;
   if (key == KEY_F(4)) return Command::NavConfig;
   if (key == KEY_F(5)) return Command::NavMinimal;
+  if (key == KEY_F(6)) return Command::NavProcesses;
   if (key == KEY_F(10)) return Command::Quit;
 
   // Letter shortcuts
@@ -39,6 +40,7 @@ std::optional<Command> keyToCommand(int key, Screen screen) {
   if (key == 'b' || key == 'B') return Command::NavBenchmarks;
   if (key == 'c' || key == 'C') return Command::NavConfig;
   if (key == 'm' || key == 'M') return Command::NavMinimal;
+  if (key == 'p' || key == 'P') return Command::NavProcesses;
   if (key == 'q' || key == 'Q') return Command::Quit;
 
   // Global back

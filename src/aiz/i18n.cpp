@@ -35,12 +35,13 @@ bool isZhCnTag(const std::string& tag) {
 constexpr std::wstring_view en(MsgId id) {
   switch (id) {
     case MsgId::FooterNav:
-      return L"ESCMain F1Help F2Hardware F3Bench F4Config F5Minimal F10Quit";
+      return L"ESCMain F1Help F2Hardware F3Bench F4Config F5Minimal F6Process F10Quit";
 
     case MsgId::ScreenHelpTitle: return L"Help";
     case MsgId::ScreenConfigTitle: return L"Config";
     case MsgId::ScreenHardwareTitle: return L"Hardware";
     case MsgId::ScreenBenchmarksTitle: return L"Benchmarks";
+    case MsgId::ScreenProcessesTitle: return L"Processes";
 
     case MsgId::TimelinesTitle: return L"Timelines";
     case MsgId::TimelinesNoneEnabled:
@@ -90,12 +91,13 @@ constexpr std::wstring_view en(MsgId id) {
 constexpr std::wstring_view zhCN(MsgId id) {
   switch (id) {
     case MsgId::FooterNav:
-      return L"ESCMain F1帮助 F2硬件 F3基准 F4配置 F5精简 F10退出";
+      return L"ESCMain F1帮助 F2硬件 F3基准 F4配置 F5精简 F6进程 F10退出";
 
     case MsgId::ScreenHelpTitle: return L"帮助";
     case MsgId::ScreenConfigTitle: return L"配置";
     case MsgId::ScreenHardwareTitle: return L"硬件";
     case MsgId::ScreenBenchmarksTitle: return L"基准测试";
+    case MsgId::ScreenProcessesTitle: return L"进程";
 
     case MsgId::TimelinesTitle: return L"时间线";
     case MsgId::TimelinesNoneEnabled:

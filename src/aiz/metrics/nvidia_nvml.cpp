@@ -14,6 +14,8 @@
 #include <cstdint>
 #include <cstring>
 #include <chrono>
+#include <limits>
+#include <unordered_map>
 #include <vector>
 
 namespace aiz {
@@ -168,6 +170,22 @@ struct nvmlMemory_t {
   std::uint64_t used;
 };
 
+struct nvmlProcessInfo_t {
+  unsigned int pid;
+  unsigned long long usedGpuMemory;
+  unsigned int gpuInstanceId;
+  unsigned int computeInstanceId;
+};
+
+struct nvmlProcessUtilizationSample_t {
+  unsigned int pid;
+  unsigned long long timeStamp;
+  unsigned int smUtil;
+  unsigned int memUtil;
+  unsigned int encUtil;
+  unsigned int decUtil;
+};
+
 using nvmlInit_v2_t = nvmlReturn_t (*)();
 using nvmlShutdown_t = nvmlReturn_t (*)();
 using nvmlDeviceGetCount_v2_t = nvmlReturn_t (*)(unsigned int*);
@@ -196,6 +214,10 @@ using nvmlDeviceGetMemoryBusWidth_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned in
 using nvmlDeviceGetMultiProcessorCount_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*count*/);
 using nvmlDeviceGetEncoderUtilization_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*util*/, unsigned int* /*samplingPeriodUs*/);
 using nvmlDeviceGetDecoderUtilization_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*util*/, unsigned int* /*samplingPeriodUs*/);
+using nvmlDeviceGetGraphicsRunningProcesses_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*count*/, nvmlProcessInfo_t* /*infos*/);
+using nvmlDeviceGetComputeRunningProcesses_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*count*/, nvmlProcessInfo_t* /*infos*/);
+using nvmlDeviceGetProcessUtilization_t = nvmlReturn_t (*) (
+  nvmlDevice_t, nvmlProcessUtilizationSample_t* /*samples*/, unsigned int* /*count*/, unsigned long long /*lastSeen*/);
 
 struct NvmlApi {
   void* lib = nullptr;
@@ -227,6 +249,13 @@ struct NvmlApi {
   nvmlDeviceGetMultiProcessorCount_t nvmlDeviceGetMultiProcessorCount = nullptr;
   nvmlDeviceGetEncoderUtilization_t nvmlDeviceGetEncoderUtilization = nullptr;
   nvmlDeviceGetDecoderUtilization_t nvmlDeviceGetDecoderUtilization = nullptr;
+  nvmlDeviceGetGraphicsRunningProcesses_t nvmlDeviceGetGraphicsRunningProcesses = nullptr;
+  nvmlDeviceGetGraphicsRunningProcesses_t nvmlDeviceGetGraphicsRunningProcesses_v2 = nullptr;
+  nvmlDeviceGetGraphicsRunningProcesses_t nvmlDeviceGetGraphicsRunningProcesses_v3 = nullptr;
+  nvmlDeviceGetComputeRunningProcesses_t nvmlDeviceGetComputeRunningProcesses = nullptr;
+  nvmlDeviceGetComputeRunningProcesses_t nvmlDeviceGetComputeRunningProcesses_v2 = nullptr;
+  nvmlDeviceGetComputeRunningProcesses_t nvmlDeviceGetComputeRunningProcesses_v3 = nullptr;
+  nvmlDeviceGetProcessUtilization_t nvmlDeviceGetProcessUtilization = nullptr;
 
   bool ok() const {
     return lib && nvmlInit_v2 && nvmlShutdown && nvmlDeviceGetCount_v2 && nvmlDeviceGetHandleByIndex_v2 &&
@@ -294,6 +323,20 @@ static NvmlApi& api() {
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetEncoderUtilization"));
   a.nvmlDeviceGetDecoderUtilization = reinterpret_cast<nvmlDeviceGetDecoderUtilization_t>(
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetDecoderUtilization"));
+    a.nvmlDeviceGetGraphicsRunningProcesses_v3 = reinterpret_cast<nvmlDeviceGetGraphicsRunningProcesses_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetGraphicsRunningProcesses_v3"));
+    a.nvmlDeviceGetGraphicsRunningProcesses_v2 = reinterpret_cast<nvmlDeviceGetGraphicsRunningProcesses_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetGraphicsRunningProcesses_v2"));
+    a.nvmlDeviceGetGraphicsRunningProcesses = reinterpret_cast<nvmlDeviceGetGraphicsRunningProcesses_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetGraphicsRunningProcesses"));
+    a.nvmlDeviceGetComputeRunningProcesses_v3 = reinterpret_cast<nvmlDeviceGetComputeRunningProcesses_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetComputeRunningProcesses_v3"));
+    a.nvmlDeviceGetComputeRunningProcesses_v2 = reinterpret_cast<nvmlDeviceGetComputeRunningProcesses_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetComputeRunningProcesses_v2"));
+    a.nvmlDeviceGetComputeRunningProcesses = reinterpret_cast<nvmlDeviceGetComputeRunningProcesses_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetComputeRunningProcesses"));
+    a.nvmlDeviceGetProcessUtilization = reinterpret_cast<nvmlDeviceGetProcessUtilization_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetProcessUtilization"));
 
   // Optional system queries.
   a.nvmlSystemGetNVMLVersion = reinterpret_cast<nvmlSystemGetNVMLVersion_t>(
@@ -966,6 +1009,151 @@ std::optional<std::string> readNvmlGpuNameForGpu(unsigned int index) {
 
 std::optional<std::string> readNvmlGpuNameForGpuNoFork(unsigned int index) {
   return readNvmlGpuNameForGpuUnsafe(index);
+}
+
+static nvmlDeviceGetGraphicsRunningProcesses_t chooseGraphicsProcFn(const NvmlApi& a) {
+  if (a.nvmlDeviceGetGraphicsRunningProcesses_v3) return a.nvmlDeviceGetGraphicsRunningProcesses_v3;
+  if (a.nvmlDeviceGetGraphicsRunningProcesses_v2) return a.nvmlDeviceGetGraphicsRunningProcesses_v2;
+  return a.nvmlDeviceGetGraphicsRunningProcesses;
+}
+
+static nvmlDeviceGetComputeRunningProcesses_t chooseComputeProcFn(const NvmlApi& a) {
+  if (a.nvmlDeviceGetComputeRunningProcesses_v3) return a.nvmlDeviceGetComputeRunningProcesses_v3;
+  if (a.nvmlDeviceGetComputeRunningProcesses_v2) return a.nvmlDeviceGetComputeRunningProcesses_v2;
+  return a.nvmlDeviceGetComputeRunningProcesses;
+}
+
+static std::unordered_map<unsigned int, double> readNvmlProcessUtilMap(const NvmlApi& a, nvmlDevice_t dev) {
+  std::unordered_map<unsigned int, double> out;
+  if (!a.nvmlDeviceGetProcessUtilization) return out;
+
+  unsigned int count = 0;
+  nvmlReturn_t r = a.nvmlDeviceGetProcessUtilization(dev, nullptr, &count, 0);
+  if (count == 0) return out;
+  if (r != NVML_SUCCESS && count == 0) return out;
+
+  std::vector<nvmlProcessUtilizationSample_t> samples(count);
+  r = a.nvmlDeviceGetProcessUtilization(dev, samples.data(), &count, 0);
+  if (r != NVML_SUCCESS) return out;
+
+  for (unsigned int i = 0; i < count; ++i) {
+    const auto& s = samples[i];
+    out[s.pid] = static_cast<double>(s.smUtil);
+  }
+  return out;
+}
+
+std::vector<NvmlProcessInfo> readNvmlProcessInfo() {
+  std::vector<NvmlProcessInfo> out;
+  NvmlApi& a = api();
+  if (!a.ok()) return out;
+
+  NvmlSession sess;
+  if (!sess.inited) return out;
+
+  unsigned int gpuCount = 0;
+  if (a.nvmlDeviceGetCount_v2(&gpuCount) != NVML_SUCCESS || gpuCount == 0) return out;
+
+  const auto graphicsFn = chooseGraphicsProcFn(a);
+  const auto computeFn = chooseComputeProcFn(a);
+
+  std::unordered_map<unsigned int, NvmlProcessInfo> merged;
+
+  for (unsigned int gi = 0; gi < gpuCount; ++gi) {
+    nvmlDevice_t dev{};
+    if (a.nvmlDeviceGetHandleByIndex_v2(gi, &dev) != NVML_SUCCESS) continue;
+
+    const auto utilMap = readNvmlProcessUtilMap(a, dev);
+
+    auto addProcessListGraphics = [&](nvmlDeviceGetGraphicsRunningProcesses_t fn) {
+      if (!fn) return;
+      unsigned int count = 0;
+      nvmlReturn_t r = fn(dev, &count, nullptr);
+      if (count == 0) return;
+      if (r != NVML_SUCCESS && count == 0) return;
+
+      std::vector<nvmlProcessInfo_t> infos(count);
+      r = fn(dev, &count, infos.data());
+      if (r != NVML_SUCCESS) return;
+
+      for (unsigned int i = 0; i < count; ++i) {
+        const auto& info = infos[i];
+        if (info.pid == 0) continue;
+
+        double vramGiB = 0.0;
+        if (info.usedGpuMemory != 0 && info.usedGpuMemory != std::numeric_limits<unsigned long long>::max()) {
+          vramGiB = static_cast<double>(info.usedGpuMemory) / (1024.0 * 1024.0 * 1024.0);
+        }
+
+        auto it = merged.find(info.pid);
+        if (it == merged.end()) {
+          NvmlProcessInfo entry;
+          entry.pid = info.pid;
+          entry.gpuIndex = gi;
+          entry.vramUsedGiB = vramGiB;
+          const auto utilIt = utilMap.find(info.pid);
+          if (utilIt != utilMap.end()) entry.gpuUtilPct = utilIt->second;
+          merged.emplace(info.pid, std::move(entry));
+        } else {
+          if (vramGiB > it->second.vramUsedGiB) {
+            it->second.vramUsedGiB = vramGiB;
+            it->second.gpuIndex = gi;
+          }
+          const auto utilIt = utilMap.find(info.pid);
+          if (utilIt != utilMap.end()) it->second.gpuUtilPct = utilIt->second;
+        }
+      }
+    };
+
+    auto addProcessListCompute = [&](nvmlDeviceGetComputeRunningProcesses_t fn) {
+      if (!fn) return;
+      unsigned int count = 0;
+      nvmlReturn_t r = fn(dev, &count, nullptr);
+      if (count == 0) return;
+      if (r != NVML_SUCCESS && count == 0) return;
+
+      std::vector<nvmlProcessInfo_t> infos(count);
+      r = fn(dev, &count, infos.data());
+      if (r != NVML_SUCCESS) return;
+
+      for (unsigned int i = 0; i < count; ++i) {
+        const auto& info = infos[i];
+        if (info.pid == 0) continue;
+
+        double vramGiB = 0.0;
+        if (info.usedGpuMemory != 0 && info.usedGpuMemory != std::numeric_limits<unsigned long long>::max()) {
+          vramGiB = static_cast<double>(info.usedGpuMemory) / (1024.0 * 1024.0 * 1024.0);
+        }
+
+        auto it = merged.find(info.pid);
+        if (it == merged.end()) {
+          NvmlProcessInfo entry;
+          entry.pid = info.pid;
+          entry.gpuIndex = gi;
+          entry.vramUsedGiB = vramGiB;
+          const auto utilIt = utilMap.find(info.pid);
+          if (utilIt != utilMap.end()) entry.gpuUtilPct = utilIt->second;
+          merged.emplace(info.pid, std::move(entry));
+        } else {
+          if (vramGiB > it->second.vramUsedGiB) {
+            it->second.vramUsedGiB = vramGiB;
+            it->second.gpuIndex = gi;
+          }
+          const auto utilIt = utilMap.find(info.pid);
+          if (utilIt != utilMap.end()) it->second.gpuUtilPct = utilIt->second;
+        }
+      }
+    };
+
+    addProcessListGraphics(graphicsFn);
+    addProcessListCompute(computeFn);
+  }
+
+  out.reserve(merged.size());
+  for (auto& kv : merged) {
+    out.push_back(std::move(kv.second));
+  }
+  return out;
 }
 
 std::optional<std::string> readNvmlLibraryVersion() {

@@ -14,6 +14,7 @@ enum class MsgId {
   ScreenConfigTitle,
   ScreenHardwareTitle,
   ScreenBenchmarksTitle,
+  ScreenProcessesTitle,
 
   TimelinesTitle,
   TimelinesNoneEnabled,

@@ -169,6 +169,9 @@ void applyCommand(TuiState& state, Config& cfg, Command cmd) {
     case Command::NavMinimal:
       state.screen = Screen::Minimal;
       return;
+    case Command::NavProcesses:
+      state.screen = Screen::Processes;
+      return;
     case Command::Back:
       state.screen = Screen::Timelines;
       return;
@@ -324,6 +327,16 @@ static std::string fmt1(double v) {
   char buf[64]{};
   std::snprintf(buf, sizeof(buf), "%.1f", v);
   return std::string(buf);
+}
+
+static std::string fmtBytes(std::uint64_t bytes) {
+  const double gib = static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0);
+  if (gib >= 1.0) return fmt1(gib) + "G";
+  const double mib = static_cast<double>(bytes) / (1024.0 * 1024.0);
+  if (mib >= 1.0) return fmt0(mib) + "M";
+  const double kib = static_cast<double>(bytes) / 1024.0;
+  if (kib >= 1.0) return fmt0(kib) + "K";
+  return fmt0(static_cast<double>(bytes)) + "B";
 }
 
 static void drawSectionTitleLineSplit(
@@ -982,6 +995,7 @@ static void renderHelp(Frame& out, int bodyTop) {
       "  F3  Benchmarks  (B)",
       "  F4  Config      (C)",
       "  F5  Minimal     (M)",
+      "  F6  Processes   (P)",
       "  F10 Quit        (Q)",
         "  Esc Main",
   };
@@ -1144,6 +1158,65 @@ static void renderHardware(Frame& out, int bodyTop, const TuiState& state) {
     ++y;
   }
 
+}
+
+static void renderProcesses(Frame& out, int bodyTop, const TuiState& state) {
+  const int headerY = bodyTop;
+  const int listStart = bodyTop + 1;
+  const int listEnd = out.height - 2;
+
+  if (headerY < out.height) {
+    const int pidW = 6;
+    const int whereW = 8;
+    const int cpuW = 7;
+    const int ramW = 9;
+    const int gpuW = 7;
+    const int vramW = 9;
+    const int fixed = pidW + whereW + cpuW + ramW + gpuW + vramW + 6;
+    const int nameW = std::max(0, out.width - fixed);
+
+    std::string header =
+        fit("PID", pidW, Align::Right) + " " +
+        fit("Where", whereW, Align::Left) + " " +
+        fit("Process", static_cast<std::size_t>(nameW), Align::Left) + " " +
+        fit("CPU", cpuW, Align::Right) + " " +
+        fit("RAM", ramW, Align::Right) + " " +
+        fit("GPU", gpuW, Align::Right) + " " +
+        fit("VRAM", vramW, Align::Right);
+    drawBodyLine(out, headerY, widenAscii(header), Style::Section);
+  }
+
+  int y = listStart;
+  if (y >= listEnd) return;
+
+  if (state.processes.empty()) {
+    drawBodyLine(out, y, L"No process data available.", Style::Value);
+    return;
+  }
+
+  for (const auto& p : state.processes) {
+    if (y >= listEnd) break;
+    const int pidW = 6;
+    const int whereW = 8;
+    const int cpuW = 7;
+    const int ramW = 9;
+    const int gpuW = 7;
+    const int vramW = 9;
+    const int fixed = pidW + whereW + cpuW + ramW + gpuW + vramW + 6;
+    const int nameW = std::max(0, out.width - fixed);
+
+    const std::string pidStr = fit(std::to_string(p.pid), pidW, Align::Right);
+    const std::string whereStr = fit(p.gpuIndex ? ("GPU" + std::to_string(*p.gpuIndex)) : "CPU", whereW, Align::Left);
+    const std::string nameStr = fit(p.name.empty() ? std::string("?") : p.name, static_cast<std::size_t>(nameW), Align::Left);
+    const std::string cpuStr = fit((p.cpuPct > 0.0) ? (fmt1(p.cpuPct) + "%") : std::string("--"), cpuW, Align::Right);
+    const std::string ramStr = fit(p.ramBytes > 0 ? fmtBytes(p.ramBytes) : std::string("--"), ramW, Align::Right);
+    const std::string gpuStr = fit(p.gpuUtilPct ? (fmt1(*p.gpuUtilPct) + "%") : std::string("--"), gpuW, Align::Right);
+    const std::string vramStr = fit(p.vramUsedGiB ? (fmt1(*p.vramUsedGiB) + "G") : std::string("--"), vramW, Align::Right);
+
+    const std::string line = pidStr + " " + whereStr + " " + nameStr + " " + cpuStr + " " + ramStr + " " + gpuStr + " " + vramStr;
+    drawBodyLine(out, y, widenAscii(line), Style::Value);
+    ++y;
+  }
 }
 
 static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
@@ -1395,6 +1468,7 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
         case 3: hot = L'B'; target = Screen::Benchmarks; break;  // Bench
         case 4: hot = L'C'; target = Screen::Config; break;      // Config
         case 5: hot = L'M'; target = Screen::Minimal; break;     // Minimal
+        case 6: hot = L'P'; target = Screen::Processes; break;   // Processes
         case 10: hot = L'Q'; break;  // Quit
         default: break;
       }
@@ -1474,6 +1548,10 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
       break;
     case Screen::Benchmarks:
       renderBenchmarks(out, bodyTop, state);
+      break;
+    case Screen::Processes:
+      drawText(out, 0, bodyTop, std::wstring(i18n::tr(i18n::MsgId::ScreenProcessesTitle)), Style::Section);
+      renderProcesses(out, bodyTop + 1, state);
       break;
     default:
       drawText(out, 0, bodyTop + 1, L"(Screen not yet ported to shared core)", Style::Value);

@@ -24,6 +24,7 @@ enum class Screen {
   Benchmarks,
   Config,
   Hardware,
+  Processes,
 };
 
 enum class Command {
@@ -36,6 +37,7 @@ enum class Command {
   NavBenchmarks,
   NavConfig,
   NavMinimal,
+  NavProcesses,
 
   Up,
   Down,
@@ -73,6 +75,18 @@ struct TuiState {
 
   // UI messages.
   std::optional<std::string> statusLine;
+
+  // Processes screen: latest snapshot of top processes.
+  struct ProcessEntry {
+    int pid = 0;
+    std::string name;
+    double cpuPct = 0.0;
+    std::uint64_t ramBytes = 0;
+    std::optional<double> gpuUtilPct;
+    std::optional<double> vramUsedGiB;
+    std::optional<int> gpuIndex;
+  };
+  std::vector<ProcessEntry> processes;
 
   // Timelines screen: latest telemetry snapshot.
   TelemetrySnapshot latest;

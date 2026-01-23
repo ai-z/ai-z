@@ -9,6 +9,7 @@
 #include <aiz/metrics/network_bandwidth.h>
 #include <aiz/metrics/linux_gpu_sysfs.h>
 #include <aiz/metrics/nvidia_nvml.h>
+#include <aiz/metrics/process_list.h>
 #include <aiz/metrics/ram_usage.h>
 #include <aiz/metrics/timeline.h>
 #include <aiz/version.h>
@@ -32,6 +33,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <unordered_map>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -284,6 +286,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   DiskBandwidthCollector diskWriteCol(DiskBandwidthMode::Write);
   NetworkBandwidthCollector netRxCol(NetworkBandwidthMode::Rx);
   NetworkBandwidthCollector netTxCol(NetworkBandwidthMode::Tx);
+  ProcessSampler procSampler;
 
   // Debug generators (used only when --debug is passed)
   RandomWalk dbgCpu(0.0, 100.0, 10.0);
@@ -466,7 +469,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
         // Navigation + selection changes are centralized.
         if (cmd == Command::NavHelp || cmd == Command::NavHardware || cmd == Command::NavBenchmarks || cmd == Command::NavConfig ||
-            cmd == Command::NavMinimal || cmd == Command::Back || cmd == Command::Up || cmd == Command::Down) {
+          cmd == Command::NavMinimal || cmd == Command::NavProcesses || cmd == Command::Back || cmd == Command::Up || cmd == Command::Down) {
           applyCommand(state, cfg, cmd);
           if (state.screen == Screen::Hardware || state.screen == Screen::Benchmarks) {
             ensureHardwareAndBenches();
@@ -729,6 +732,66 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
     // Keep hardware lines available for the core renderer.
     state.hardwareLines = hwLines;
+
+    // Processes screen (best-effort snapshot).
+    if (state.screen == Screen::Processes) {
+      const int availRows = std::max(0, rows - 4);
+      const std::size_t maxCount = (availRows > 0) ? static_cast<std::size_t>(availRows) : 0u;
+      const std::size_t cpuCount = (maxCount > 0) ? (maxCount * 2) : 0u;
+
+      std::vector<CpuProcessInfo> cpuTop = procSampler.sampleTop(cpuCount);
+      std::vector<NvmlProcessInfo> gpuTop = readNvmlProcessInfo();
+
+      std::unordered_map<int, TuiState::ProcessEntry> merged;
+      merged.reserve(cpuTop.size() + gpuTop.size());
+
+      for (const auto& p : cpuTop) {
+        TuiState::ProcessEntry entry;
+        entry.pid = p.pid;
+        entry.name = p.name;
+        entry.cpuPct = p.cpuPct;
+        entry.ramBytes = p.ramBytes;
+        merged.emplace(p.pid, std::move(entry));
+      }
+
+      for (const auto& gp : gpuTop) {
+        const int pid = static_cast<int>(gp.pid);
+        auto it = merged.find(pid);
+        if (it == merged.end()) {
+          TuiState::ProcessEntry entry;
+          entry.pid = pid;
+          if (const auto id = readProcessIdentity(pid)) {
+            entry.name = id->name;
+            entry.ramBytes = id->ramBytes;
+          }
+          entry.gpuIndex = static_cast<int>(gp.gpuIndex);
+          if (gp.vramUsedGiB > 0.0) entry.vramUsedGiB = gp.vramUsedGiB;
+          if (gp.gpuUtilPct) entry.gpuUtilPct = gp.gpuUtilPct;
+          merged.emplace(pid, std::move(entry));
+        } else {
+          it->second.gpuIndex = static_cast<int>(gp.gpuIndex);
+          if (gp.vramUsedGiB > 0.0) it->second.vramUsedGiB = gp.vramUsedGiB;
+          if (gp.gpuUtilPct) it->second.gpuUtilPct = gp.gpuUtilPct;
+        }
+      }
+
+      std::vector<TuiState::ProcessEntry> rows;
+      rows.reserve(merged.size());
+      for (auto& kv : merged) rows.push_back(std::move(kv.second));
+
+      std::sort(rows.begin(), rows.end(), [](const TuiState::ProcessEntry& a, const TuiState::ProcessEntry& b) {
+        const double aGpu = a.gpuUtilPct.value_or(0.0);
+        const double bGpu = b.gpuUtilPct.value_or(0.0);
+        const double aScore = std::max(a.cpuPct, aGpu);
+        const double bScore = std::max(b.cpuPct, bGpu);
+        if (aScore != bScore) return aScore > bScore;
+        if (a.vramUsedGiB && b.vramUsedGiB && *a.vramUsedGiB != *b.vramUsedGiB) return *a.vramUsedGiB > *b.vramUsedGiB;
+        return a.pid < b.pid;
+      });
+
+      if (maxCount > 0 && rows.size() > maxCount) rows.resize(maxCount);
+      state.processes = std::move(rows);
+    }
 
     // If the background boot probe finished, apply it once.
     // This makes device names available for Timelines section titles.
