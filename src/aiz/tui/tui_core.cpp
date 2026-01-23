@@ -233,6 +233,7 @@ void applyCommand(TuiState& state, Config& cfg, Command cmd) {
 
     if (cmd == Command::Save) {
       cfg.save();
+      state.statusLine = "Config saved to " + Config::path();
       return;
     }
 
@@ -1588,7 +1589,8 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
   }
 
   // Status line (one row above footer).
-  if (state.screen == Screen::Benchmarks && out.height >= 2 && state.statusLine && !state.statusLine->empty()) {
+  if ((state.screen == Screen::Benchmarks || state.screen == Screen::Config) &&
+      out.height >= 2 && state.statusLine && !state.statusLine->empty()) {
     const int y = out.height - 2;
     drawBodyLine(out, y, L"", Style::Default);
     drawText(out, 0, y, widenAscii(*state.statusLine), Style::Warning);

@@ -142,6 +142,10 @@ Config Config::load() {
   return cfg;
 }
 
+std::string Config::path() {
+  return configPath().string();
+}
+
 void Config::save() const {
   const fs::path path = configPath();
   fs::create_directories(path.parent_path());

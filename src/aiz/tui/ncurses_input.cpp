@@ -60,7 +60,7 @@ std::optional<Command> keyToCommand(int key, Screen screen) {
     if (key == ' ') return Command::Toggle;
     if (key == '\n' || key == KEY_ENTER) return Command::Activate;
     if (key == 's' || key == 'S') return Command::Save;
-    if (key == 'd' || key == 'D') return Command::Defaults;
+    if (key == 'r' || key == 'R' || key == 'd' || key == 'D') return Command::Defaults;
   }
 
   if (screen == Screen::Hardware) {

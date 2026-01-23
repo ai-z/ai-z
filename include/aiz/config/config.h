@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace aiz {
 
@@ -21,21 +22,21 @@ struct Config {
   bool showCpu = true;
   bool showCpuHot = true;
   bool showGpu = true;
-  bool showGpuMem = true;
-  bool showGpuClock = true;
-  bool showGpuMemClock = true;
-  bool showGpuEnc = true;
-  bool showGpuDec = true;
+  bool showGpuMem = false;
+  bool showGpuClock = false;
+  bool showGpuMemClock = false;
+  bool showGpuEnc = false;
+  bool showGpuDec = false;
   // Backward-compat aggregate toggle (controls both read+write).
-  bool showDisk = true;
-  bool showDiskRead = true;
-  bool showDiskWrite = true;
-  bool showNetRx = true;
-  bool showNetTx = true;
+  bool showDisk = false;
+  bool showDiskRead = false;
+  bool showDiskWrite = false;
+  bool showNetRx = false;
+  bool showNetTx = false;
   bool showPcieRx = true;
-  bool showPcieTx = true;
-  bool showRam = true;
-  bool showVram = true;
+  bool showPcieTx = false;
+  bool showRam = false;
+  bool showVram = false;
 
   // Sampling
   std::uint32_t refreshMs = 500;
@@ -48,6 +49,7 @@ struct Config {
   MetricNameColor metricNameColor = MetricNameColor::Cyan;
 
   static Config load();
+  static std::string path();
   void save() const;
 };
 
