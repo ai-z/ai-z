@@ -279,6 +279,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   }
 
   CpuUsageCollector cpuCol;
+  CpuMaxCoreUsageCollector cpuMaxCol;
   DiskBandwidthCollector diskReadCol(DiskBandwidthMode::Read);
   DiskBandwidthCollector diskWriteCol(DiskBandwidthMode::Write);
   NetworkBandwidthCollector netRxCol(NetworkBandwidthMode::Rx);
@@ -286,6 +287,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
   // Debug generators (used only when --debug is passed)
   RandomWalk dbgCpu(0.0, 100.0, 10.0);
+  RandomWalk dbgCpuMax(0.0, 100.0, 12.0);
   RandomWalk dbgGpu(0.0, 100.0, 12.0);
   RandomWalk dbgDisk(0.0, 3000.0, 250.0);     // MB/s
   RandomWalk dbgDiskR(0.0, 3000.0, 250.0);    // MB/s
@@ -340,6 +342,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
   // Use shared-core timelines so the Frame renderer can display them.
   ensureTimelineCapacity(state.cpuTl, cfg.timelineSamples);
+  ensureTimelineCapacity(state.cpuMaxTl, cfg.timelineSamples);
   ensureTimelineCapacity(state.gpuMemUtilTl, cfg.timelineSamples);
   ensureTimelineCapacity(state.ramTl, cfg.timelineSamples);
   ensureTimelineCapacity(state.vramTl, cfg.timelineSamples);
@@ -495,6 +498,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     const std::size_t desiredSamples =
       std::max<std::size_t>(cfg.timelineSamples, static_cast<std::size_t>(std::max(0, cols)));
     ensureTimelineCapacity(state.cpuTl, desiredSamples);
+    ensureTimelineCapacity(state.cpuMaxTl, desiredSamples);
     ensureTimelineCapacity(state.gpuMemUtilTl, desiredSamples);
     ensureTimelineCapacity(state.ramTl, desiredSamples);
     ensureTimelineCapacity(state.vramTl, desiredSamples);
@@ -507,6 +511,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     ensureTimelineCapacity(state.pcieTxTl, desiredSamples);
 
     std::optional<Sample> cpu;
+    std::optional<Sample> cpuMax;
     std::optional<Sample> disk;
     std::optional<Sample> diskRead;
     std::optional<Sample> diskWrite;
@@ -524,7 +529,9 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     gpuTel.resize(gpuCount);
 
     if (debugMode) {
-      cpu = Sample{dbgCpu.next(), "%", "debug"};
+      const double cpuVal = dbgCpu.next();
+      cpu = Sample{cpuVal, "%", "debug"};
+      cpuMax = Sample{std::max(cpuVal, dbgCpuMax.next()), "%", "debug"};
       // Keep disk labels empty in debug so titles don't show "(debug)".
       diskRead = Sample{dbgDiskR.next(), "MB/s", ""};
       diskWrite = Sample{dbgDiskW.next(), "MB/s", ""};
@@ -569,6 +576,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       gpuTel[0] = gt;
     } else {
       cpu = cpuCol.sample();
+      cpuMax = cpuMaxCol.sample();
       diskRead = diskReadCol.sample();
       diskWrite = diskWriteCol.sample();
       netRx = netRxCol.sample();
@@ -636,6 +644,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     // Update shared-core snapshot + timelines.
     state.tick = uiTick;
     state.latest.cpu = cpu;
+    state.latest.cpuMax = cpuMax;
     state.latest.disk = disk;
     state.latest.diskRead = diskRead;
     state.latest.diskWrite = diskWrite;
@@ -674,6 +683,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     }
 
     state.cpuTl.push(cpu ? cpu->value : 0.0);
+    state.cpuMaxTl.push(cpuMax ? cpuMax->value : 0.0);
     state.gpuMemUtilTl.push((gpuMemUtil && cfg.showGpuMem) ? gpuMemUtil->value : 0.0);
     state.ramTl.push(ramPct ? ramPct->value : 0.0);
     state.vramTl.push(vramPct ? vramPct->value : 0.0);

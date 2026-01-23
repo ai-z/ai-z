@@ -39,6 +39,7 @@ OpenCL benchmarks (PCIe bandwidth + FP32 FLOPS):
 
 - Requires OpenCL headers + an ICD loader.
 	- Ubuntu/Debian: `sudo apt-get install -y ocl-icd-opencl-dev`
+	- Ubuntu/Debian (apt install): `sudo apt install -y ocl-icd-opencl-dev`
 - Auto-enabled by default when OpenCL dev packages are detected.
 - Force-enable/disable with:
 
@@ -51,6 +52,7 @@ Vulkan benchmarks (PCIe bandwidth + FP32 FLOPS):
 
 - Requires Vulkan headers + loader.
 	- Ubuntu/Debian: `sudo apt-get install -y libvulkan-dev`
+	- Ubuntu/Debian (apt install): `sudo apt install -y libvulkan-dev`
 - Auto-enabled by default when Vulkan dev packages are detected.
 - Force-enable/disable with:
 

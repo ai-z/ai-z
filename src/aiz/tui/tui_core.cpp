@@ -276,6 +276,11 @@ static std::string fmtSampleOrDash(const std::optional<Sample>& s) {
   return fmt1(s->value) + s->unit;
 }
 
+static std::string fmtSampleOrDashSpaced(const std::optional<Sample>& s) {
+  if (!s) return std::string("--");
+  return fmt1(s->value) + " " + s->unit;
+}
+
 static Style metricNameStyle(const Config& cfg) {
   switch (cfg.metricNameColor) {
     case MetricNameColor::White:
@@ -543,13 +548,15 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
       addLabel("RAM:");
       addValueField(!state.latest.ramText.empty() ? state.latest.ramText : std::string("--"), 18, Align::Left);
 
-      const std::string diskStr = fmtSampleOrDash(state.latest.diskRead) + "/" + fmtSampleOrDash(state.latest.diskWrite);
-      addLabel("DISK R/W:");
-      addValueField(diskStr, 24, Align::Left);
+        const std::string diskStr = "R: " + fmtSampleOrDashSpaced(state.latest.diskRead)
+          + " W: " + fmtSampleOrDashSpaced(state.latest.diskWrite);
+        addLabel("DISK:");
+        addValueField(diskStr, 32, Align::Left);
 
-      const std::string netStr = fmtSampleOrDash(state.latest.netRx) + "/" + fmtSampleOrDash(state.latest.netTx);
-      addLabel("NET R/T:");
-      addValueField(netStr, 24, Align::Left);
+        const std::string netStr = "RX: " + fmtSampleOrDashSpaced(state.latest.netRx)
+          + " TX: " + fmtSampleOrDashSpaced(state.latest.netTx);
+        addLabel("NET:");
+        addValueField(netStr, 32, Align::Left);
     }
 
     // GPU rows
@@ -621,15 +628,13 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
 
       std::string linkStr = "--";
       if (gt.pcieLinkWidth && gt.pcieLinkGen) {
-        linkStr = std::to_string(*gt.pcieLinkWidth) + "x@" + fmt1(static_cast<double>(*gt.pcieLinkGen));
+        linkStr = "GEN " + std::to_string(*gt.pcieLinkGen) + "@" + std::to_string(*gt.pcieLinkWidth) + "x";
       }
-      addLabel("LINK:");
-      addValueField(linkStr, 9, Align::Left);
-
-      const std::string pcieTStr = state.latest.pcieTx ? (fmt0(state.latest.pcieTx->value) + state.latest.pcieTx->unit) : std::string("--");
-      const std::string pcieRStr = state.latest.pcieRx ? (fmt0(state.latest.pcieRx->value) + state.latest.pcieRx->unit) : std::string("--");
-      addLabel("PCIE T/R:");
-      addValueField(pcieTStr + "/" + pcieRStr, 22, Align::Left);
+      const std::string pcieStr = linkStr
+          + " RX: " + fmtSampleOrDashSpaced(state.latest.pcieRx)
+          + " TX: " + fmtSampleOrDashSpaced(state.latest.pcieTx);
+      addLabel("PCIE:");
+      addValueField(pcieStr, 40, Align::Left);
     }
 
     return headerRows;
@@ -661,6 +666,10 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
     return n + " #" + std::to_string(index);
   };
 
+  auto gpuPrefix = [&](std::size_t index) -> std::string {
+    return "GPU" + std::to_string(index);
+  };
+
   // Build per-GPU usage samples for title lines (USAGE: xx %).
   std::vector<std::optional<Sample>> gpuUsageSamples;
   gpuUsageSamples.reserve(state.latest.gpus.size());
@@ -671,6 +680,7 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
 
   std::vector<Panel> panels;
   panels.push_back(Panel{"CPU", cfg.showCpu, &state.latest.cpu, &state.cpuTl, nullptr, 100.0, false, state.cpuDevice});
+  panels.push_back(Panel{"Hottest Core", cfg.showCpu, &state.latest.cpuMax, &state.cpuMaxTl, nullptr, 100.0, false, state.cpuDevice});
 
   // CPU/RAM first.
   panels.push_back(Panel{"RAM", cfg.showRam, &state.latest.ramPct, &state.ramTl, nullptr, 100.0, false, state.ramDevice});
@@ -679,16 +689,16 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   if (cfg.showGpu) {
     const std::size_t n = std::min(state.gpuTls.size(), gpuUsageSamples.size());
     for (std::size_t i = 0; i < n; ++i) {
-      panels.push_back(Panel{"USAGE", true, &gpuUsageSamples[i], &state.gpuTls[i], nullptr, 100.0, false, gpuContext(i)});
+      panels.push_back(Panel{gpuPrefix(i) + " USAGE", true, &gpuUsageSamples[i], &state.gpuTls[i], nullptr, 100.0, false, gpuContext(i)});
     }
   }
 
-  panels.push_back(Panel{"VRAM", cfg.showVram, &state.latest.vramPct, &state.vramTl, nullptr, 100.0, false, gpuContext(0)});
-  panels.push_back(Panel{"MemCtrl", cfg.showGpuMem, &state.latest.gpuMemUtil, &state.gpuMemUtilTl, nullptr, 100.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " VRAM", cfg.showVram, &state.latest.vramPct, &state.vramTl, nullptr, 100.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " MemCtrl", cfg.showGpuMem, &state.latest.gpuMemUtil, &state.gpuMemUtilTl, nullptr, 100.0, false, gpuContext(0)});
 
   // PCIe split RX/TX (tweak restored).
-  panels.push_back(Panel{"PCIe RX", cfg.showPcieRx, &state.latest.pcieRx, &state.pcieRxTl, nullptr, 32'000.0, false, gpuContext(0)});
-  panels.push_back(Panel{"PCIe TX", cfg.showPcieTx, &state.latest.pcieTx, &state.pcieTxTl, nullptr, 32'000.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " PCIe RX", cfg.showPcieRx, &state.latest.pcieRx, &state.pcieRxTl, nullptr, 32'000.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " PCIe TX", cfg.showPcieTx, &state.latest.pcieTx, &state.pcieTxTl, nullptr, 32'000.0, false, gpuContext(0)});
 
   // Disk/network last.
   panels.push_back(Panel{"Disk Read", cfg.showDiskRead, &state.latest.diskRead, &state.diskReadTl, nullptr, 5000.0, false, state.diskDevice});
@@ -785,13 +795,15 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
     addLabelTight("RAM:");
     addValueField(!state.latest.ramText.empty() ? state.latest.ramText : std::string("--"), 18, Align::Left);
 
-    const std::string diskStr = fmtSampleOrDash(state.latest.diskRead) + "/" + fmtSampleOrDash(state.latest.diskWrite);
-    addLabelTight("DISK R/W:");
-    addValueField(diskStr, 24, Align::Left);
+    const std::string diskStr = "R: " + fmtSampleOrDashSpaced(state.latest.diskRead)
+      + " W: " + fmtSampleOrDashSpaced(state.latest.diskWrite);
+    addLabelTight("DISK:");
+    addValueField(diskStr, 32, Align::Left);
 
-    const std::string netStr = fmtSampleOrDash(state.latest.netRx) + "/" + fmtSampleOrDash(state.latest.netTx);
-    addLabelTight("NET R/T:");
-    addValueField(netStr, 24, Align::Left);
+    const std::string netStr = "RX: " + fmtSampleOrDashSpaced(state.latest.netRx)
+      + " TX: " + fmtSampleOrDashSpaced(state.latest.netTx);
+    addLabelTight("NET:");
+    addValueField(netStr, 32, Align::Left);
   }
 
   for (int i = 0; i < static_cast<int>(state.latest.gpus.size()); ++i) {
@@ -857,15 +869,13 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
 
     std::string linkStr = "--";
     if (gt.pcieLinkWidth && gt.pcieLinkGen) {
-      linkStr = std::to_string(*gt.pcieLinkWidth) + "x@" + fmt1(static_cast<double>(*gt.pcieLinkGen));
+      linkStr = "GEN " + std::to_string(*gt.pcieLinkGen) + "@" + std::to_string(*gt.pcieLinkWidth) + "x";
     }
-    addLabelTight("LINK:");
-    addValueField(linkStr, 9, Align::Left);
-
-    const std::string pcieTStr = state.latest.pcieTx ? (fmt0(state.latest.pcieTx->value) + state.latest.pcieTx->unit) : std::string("--");
-    const std::string pcieRStr = state.latest.pcieRx ? (fmt0(state.latest.pcieRx->value) + state.latest.pcieRx->unit) : std::string("--");
-    addLabelTight("PCIE T/R:");
-    addValueField(pcieTStr + "/" + pcieRStr, 22, Align::Left);
+    const std::string pcieStr = linkStr
+        + " RX: " + fmtSampleOrDashSpaced(state.latest.pcieRx)
+        + " TX: " + fmtSampleOrDashSpaced(state.latest.pcieTx);
+    addLabelTight("PCIE:");
+    addValueField(pcieStr, 40, Align::Left);
   }
 
 }

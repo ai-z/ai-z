@@ -30,6 +30,7 @@ struct GpuTelemetrySnapshot {
 
 struct TelemetrySnapshot {
   std::optional<Sample> cpu;
+  std::optional<Sample> cpuMax;
   std::optional<Sample> disk;
   std::optional<Sample> diskRead;
   std::optional<Sample> diskWrite;

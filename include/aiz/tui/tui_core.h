@@ -86,6 +86,7 @@ struct TuiState {
 
   // Timelines history (oldest -> newest) for scrolling bars.
   Timeline cpuTl{240};
+  Timeline cpuMaxTl{240};
   std::vector<Timeline> gpuTls;
   Timeline gpuMemUtilTl{240};
   Timeline ramTl{240};
