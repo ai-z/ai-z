@@ -495,6 +495,18 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           ncurses::benchHandleActivate(benchThread, state);
           continue;
         }
+
+        if (state.screen == Screen::Benchmarks && cmd == Command::BenchRunAll) {
+          state.benchmarksSel = 0;
+          ncurses::benchHandleActivate(benchThread, state);
+          continue;
+        }
+
+        if (state.screen == Screen::Benchmarks && cmd == Command::BenchReport) {
+          ensureHardwareAndBenches();
+          (void)ncurses::benchGenerateHtmlReport(benchThread, state);
+          continue;
+        }
       }
     }
 
@@ -779,14 +791,42 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       rows.reserve(merged.size());
       for (auto& kv : merged) rows.push_back(std::move(kv.second));
 
-      std::sort(rows.begin(), rows.end(), [](const TuiState::ProcessEntry& a, const TuiState::ProcessEntry& b) {
-        const double aGpu = a.gpuUtilPct.value_or(0.0);
-        const double bGpu = b.gpuUtilPct.value_or(0.0);
-        const double aScore = std::max(a.cpuPct, aGpu);
-        const double bScore = std::max(b.cpuPct, bGpu);
-        if (aScore != bScore) return aScore > bScore;
-        if (a.vramUsedGiB && b.vramUsedGiB && *a.vramUsedGiB != *b.vramUsedGiB) return *a.vramUsedGiB > *b.vramUsedGiB;
-        return a.pid < b.pid;
+      auto toLower = [](const std::string& s) {
+        std::string out;
+        out.reserve(s.size());
+        for (unsigned char ch : s) out.push_back(static_cast<char>(std::tolower(ch)));
+        return out;
+      };
+
+      std::sort(rows.begin(), rows.end(), [&](const TuiState::ProcessEntry& a, const TuiState::ProcessEntry& b) {
+        switch (state.processSort) {
+          case TuiState::ProcessSort::Name: {
+            const std::string aName = toLower(a.name);
+            const std::string bName = toLower(b.name);
+            if (aName != bName) return aName < bName;
+            return a.pid < b.pid;
+          }
+          case TuiState::ProcessSort::Cpu:
+            if (a.cpuPct != b.cpuPct) return a.cpuPct > b.cpuPct;
+            return a.pid < b.pid;
+          case TuiState::ProcessSort::Gpu: {
+            const double aGpu = a.gpuUtilPct.value_or(0.0);
+            const double bGpu = b.gpuUtilPct.value_or(0.0);
+            if (aGpu != bGpu) return aGpu > bGpu;
+            return a.pid < b.pid;
+          }
+          case TuiState::ProcessSort::Ram:
+            if (a.ramBytes != b.ramBytes) return a.ramBytes > b.ramBytes;
+            return a.pid < b.pid;
+          case TuiState::ProcessSort::Vram: {
+            const double aVram = a.vramUsedGiB.value_or(0.0);
+            const double bVram = b.vramUsedGiB.value_or(0.0);
+            if (aVram != bVram) return aVram > bVram;
+            return a.pid < b.pid;
+          }
+          default:
+            return a.pid < b.pid;
+        }
       });
 
       if (maxCount > 0 && rows.size() > maxCount) rows.resize(maxCount);

@@ -24,6 +24,7 @@ enum class MsgId {
   ConfigSectionMisc,
 
   ConfigToggleCpuUsage,
+  ConfigToggleCpuHotCoreUsage,
   ConfigToggleGpuUsage,
   ConfigToggleGpuMemCtrl,
   ConfigToggleGpuClock,

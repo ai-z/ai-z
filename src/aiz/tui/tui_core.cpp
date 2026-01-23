@@ -19,22 +19,23 @@ struct ConfigToggleItem {
   bool Config::*field;
 };
 
-static constexpr std::array<ConfigToggleItem, 15> kConfigToggleItems = {{
-    {i18n::MsgId::ConfigToggleCpuUsage, &Config::showCpu},
-    {i18n::MsgId::ConfigToggleGpuUsage, &Config::showGpu},
-    {i18n::MsgId::ConfigToggleGpuMemCtrl, &Config::showGpuMem},
+static constexpr std::array<ConfigToggleItem, 16> kConfigToggleItems = {{
+  {i18n::MsgId::ConfigToggleCpuUsage, &Config::showCpu},
+  {i18n::MsgId::ConfigToggleCpuHotCoreUsage, &Config::showCpuHot},
+  {i18n::MsgId::ConfigToggleRamUsage, &Config::showRam},
+  {i18n::MsgId::ConfigToggleGpuUsage, &Config::showGpu},
+  {i18n::MsgId::ConfigToggleGpuMemCtrl, &Config::showGpuMem},
+  {i18n::MsgId::ConfigToggleVramUsage, &Config::showVram},
   {i18n::MsgId::ConfigToggleGpuClock, &Config::showGpuClock},
   {i18n::MsgId::ConfigToggleGpuMemClock, &Config::showGpuMemClock},
   {i18n::MsgId::ConfigToggleGpuEnc, &Config::showGpuEnc},
   {i18n::MsgId::ConfigToggleGpuDec, &Config::showGpuDec},
-    {i18n::MsgId::ConfigToggleDiskRead, &Config::showDiskRead},
-    {i18n::MsgId::ConfigToggleDiskWrite, &Config::showDiskWrite},
-    {i18n::MsgId::ConfigToggleNetRx, &Config::showNetRx},
-    {i18n::MsgId::ConfigToggleNetTx, &Config::showNetTx},
-    {i18n::MsgId::ConfigTogglePcieRx, &Config::showPcieRx},
-    {i18n::MsgId::ConfigTogglePcieTx, &Config::showPcieTx},
-    {i18n::MsgId::ConfigToggleRamUsage, &Config::showRam},
-    {i18n::MsgId::ConfigToggleVramUsage, &Config::showVram},
+  {i18n::MsgId::ConfigTogglePcieRx, &Config::showPcieRx},
+  {i18n::MsgId::ConfigTogglePcieTx, &Config::showPcieTx},
+  {i18n::MsgId::ConfigToggleDiskRead, &Config::showDiskRead},
+  {i18n::MsgId::ConfigToggleDiskWrite, &Config::showDiskWrite},
+  {i18n::MsgId::ConfigToggleNetRx, &Config::showNetRx},
+  {i18n::MsgId::ConfigToggleNetTx, &Config::showNetTx},
 }};
 
 static constexpr int configToggleCount() {
@@ -240,6 +241,15 @@ void applyCommand(TuiState& state, Config& cfg, Command cmd) {
       return;
     }
 
+    return;
+  }
+
+  if (state.screen == Screen::Processes) {
+    if (cmd == Command::SortProcessName) state.processSort = TuiState::ProcessSort::Name;
+    if (cmd == Command::SortCpu) state.processSort = TuiState::ProcessSort::Cpu;
+    if (cmd == Command::SortGpu) state.processSort = TuiState::ProcessSort::Gpu;
+    if (cmd == Command::SortRam) state.processSort = TuiState::ProcessSort::Ram;
+    if (cmd == Command::SortVram) state.processSort = TuiState::ProcessSort::Vram;
     return;
   }
 }
@@ -697,7 +707,7 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
 
   std::vector<Panel> panels;
   panels.push_back(Panel{"CPU", cfg.showCpu, &state.latest.cpu, &state.cpuTl, nullptr, 100.0, false, state.cpuDevice});
-  panels.push_back(Panel{"Hottest Core", cfg.showCpu, &state.latest.cpuMax, &state.cpuMaxTl, nullptr, 100.0, false, state.cpuDevice});
+  panels.push_back(Panel{"Hottest Core", cfg.showCpuHot, &state.latest.cpuMax, &state.cpuMaxTl, nullptr, 100.0, false, state.cpuDevice});
 
   // CPU/RAM first.
   panels.push_back(Panel{"RAM", cfg.showRam, &state.latest.ramPct, &state.ramTl, nullptr, 100.0, false, state.ramDevice});
@@ -1161,9 +1171,29 @@ static void renderHardware(Frame& out, int bodyTop, const TuiState& state) {
 }
 
 static void renderProcesses(Frame& out, int bodyTop, const TuiState& state) {
-  const int headerY = bodyTop;
-  const int listStart = bodyTop + 1;
+  const int sortY = bodyTop;
+  const int headerY = bodyTop + 1;
+  const int listStart = bodyTop + 2;
   const int listEnd = out.height - 2;
+
+  if (sortY < out.height) {
+    const std::wstring sortLine = L"SORT BY: 1PROCESS NAME 2CPU 3GPU 4RAM 5VRAM";
+    std::vector<Style> styles(sortLine.size(), Style::Default);
+    auto mark = [&](std::wstring_view needle) {
+      const std::size_t pos = sortLine.find(needle);
+      if (pos == std::wstring::npos) return;
+      const std::size_t end = std::min(sortLine.size(), pos + needle.size());
+      for (std::size_t i = pos; i < end; ++i) styles[i] = Style::FooterBlock;
+    };
+    mark(L"SORT BY:");
+    mark(L"PROCESS NAME");
+    mark(L"CPU");
+    mark(L"GPU");
+    mark(L"RAM");
+    mark(L"VRAM");
+
+    drawTextStyled(out, 0, sortY, sortLine, styles);
+  }
 
   if (headerY < out.height) {
     const int pidW = 6;
@@ -1265,19 +1295,19 @@ static void renderBenchmarks(Frame& out, int bodyTop, const TuiState& state) {
   {
     if (y < out.height - 2) {
       drawBodyLine(out, y, L"", Style::Default);
-      ++y;
-    }
+      const std::wstring prefix = L"1";
+      const std::wstring runAll = L"RUN ALL BENCHMARKS";
+      const std::wstring mid = L" 2";
+      const std::wstring gen = L"GENERATE HTML REPORT";
 
-    if (y < out.height - 2) {
-      std::wstring line = (state.benchmarksSel == 0 ? L"> " : L"  ");
-      line += i18n::tr(i18n::MsgId::BenchRunAll);
-      line += L" (Press Enter)";
-      drawBodyLine(out, y, line, Style::Warning);
-      ++y;
-    }
-
-    if (y < out.height - 2) {
-      drawBodyLine(out, y, L"", Style::Default);
+      int x = 0;
+      drawText(out, x, y, prefix, Style::Default);
+      x += static_cast<int>(prefix.size());
+      drawText(out, x, y, runAll, Style::FooterActive);
+      x += static_cast<int>(runAll.size());
+      drawText(out, x, y, mid, Style::Default);
+      x += static_cast<int>(mid.size());
+      drawText(out, x, y, gen, Style::FooterActive);
       ++y;
     }
   }
@@ -1550,12 +1580,18 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
       renderBenchmarks(out, bodyTop, state);
       break;
     case Screen::Processes:
-      drawText(out, 0, bodyTop, std::wstring(i18n::tr(i18n::MsgId::ScreenProcessesTitle)), Style::Section);
-      renderProcesses(out, bodyTop + 1, state);
+      renderProcesses(out, bodyTop, state);
       break;
     default:
       drawText(out, 0, bodyTop + 1, L"(Screen not yet ported to shared core)", Style::Value);
       break;
+  }
+
+  // Status line (one row above footer).
+  if (state.screen == Screen::Benchmarks && out.height >= 2 && state.statusLine && !state.statusLine->empty()) {
+    const int y = out.height - 2;
+    drawBodyLine(out, y, L"", Style::Default);
+    drawText(out, 0, y, widenAscii(*state.statusLine), Style::Warning);
   }
 }
 

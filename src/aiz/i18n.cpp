@@ -52,6 +52,7 @@ constexpr std::wstring_view en(MsgId id) {
     case MsgId::ConfigSectionMisc: return L"Misc";
 
     case MsgId::ConfigToggleCpuUsage: return L"CPU usage";
+    case MsgId::ConfigToggleCpuHotCoreUsage: return L"CPU hot core usage";
     case MsgId::ConfigToggleGpuUsage: return L"GPU usage";
     case MsgId::ConfigToggleGpuMemCtrl: return L"GPU mem ctrl";
     case MsgId::ConfigToggleGpuClock: return L"GPU MHz";
@@ -108,6 +109,7 @@ constexpr std::wstring_view zhCN(MsgId id) {
     case MsgId::ConfigSectionMisc: return L"其他";
 
     case MsgId::ConfigToggleCpuUsage: return L"CPU 使用率";
+    case MsgId::ConfigToggleCpuHotCoreUsage: return L"CPU 最热核心使用率";
     case MsgId::ConfigToggleGpuUsage: return L"GPU 使用率";
     case MsgId::ConfigToggleGpuMemCtrl: return L"GPU 显存控制";
     case MsgId::ConfigToggleGpuClock: return L"GPU 频率";

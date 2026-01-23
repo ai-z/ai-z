@@ -15,6 +15,10 @@ void benchJoinIfDone(std::thread& benchThread, TuiState& state);
 // - If selection is a header/non-runnable row, sets lastBenchResult accordingly.
 void benchHandleActivate(std::thread& benchThread, TuiState& state);
 
+// Generates a static HTML report of benchmark results (runs all benches if needed).
+// Returns the output path on success, or std::nullopt on failure.
+std::optional<std::string> benchGenerateHtmlReport(std::thread& benchThread, TuiState& state);
+
 void benchShutdown(std::thread& benchThread);
 
 }  // namespace aiz::ncurses

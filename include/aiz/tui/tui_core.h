@@ -46,6 +46,15 @@ enum class Command {
   Save,
   Defaults,
   Refresh,
+
+  SortProcessName,
+  SortCpu,
+  SortGpu,
+  SortRam,
+  SortVram,
+
+  BenchRunAll,
+  BenchReport,
 };
 
 struct KeyEvent {
@@ -53,6 +62,14 @@ struct KeyEvent {
 };
 
 struct TuiState {
+  enum class ProcessSort {
+    Name,
+    Cpu,
+    Gpu,
+    Ram,
+    Vram,
+  };
+
   Screen screen = Screen::Timelines;
 
   // Simple per-screen cursors.
@@ -77,6 +94,7 @@ struct TuiState {
   std::optional<std::string> statusLine;
 
   // Processes screen: latest snapshot of top processes.
+  ProcessSort processSort = ProcessSort::Cpu;
   struct ProcessEntry {
     int pid = 0;
     std::string name;

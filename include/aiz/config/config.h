@@ -19,6 +19,7 @@ enum class MetricNameColor {
 struct Config {
   // Display toggles
   bool showCpu = true;
+  bool showCpuHot = true;
   bool showGpu = true;
   bool showGpuMem = true;
   bool showGpuClock = true;

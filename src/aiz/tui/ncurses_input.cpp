@@ -51,6 +51,8 @@ std::optional<Command> keyToCommand(int key, Screen screen) {
   if (key == KEY_DOWN) return Command::Down;
 
   if (screen == Screen::Benchmarks) {
+    if (key == '1') return Command::BenchRunAll;
+    if (key == '2') return Command::BenchReport;
     if (key == '\n' || key == KEY_ENTER) return Command::Activate;
   }
 
@@ -63,6 +65,14 @@ std::optional<Command> keyToCommand(int key, Screen screen) {
 
   if (screen == Screen::Hardware) {
     if (key == 'r' || key == 'R') return Command::Refresh;
+  }
+
+  if (screen == Screen::Processes) {
+    if (key == '1') return Command::SortProcessName;
+    if (key == '2') return Command::SortCpu;
+    if (key == '3') return Command::SortGpu;
+    if (key == '4') return Command::SortRam;
+    if (key == '5') return Command::SortVram;
   }
 
   return std::nullopt;
