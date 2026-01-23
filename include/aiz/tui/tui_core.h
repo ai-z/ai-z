@@ -89,6 +89,10 @@ struct TuiState {
   Timeline cpuMaxTl{240};
   std::vector<Timeline> gpuTls;
   Timeline gpuMemUtilTl{240};
+  Timeline gpuClockTl{240};
+  Timeline gpuMemClockTl{240};
+  Timeline gpuEncTl{240};
+  Timeline gpuDecTl{240};
   Timeline ramTl{240};
   Timeline vramTl{240};
   Timeline diskTl{240};

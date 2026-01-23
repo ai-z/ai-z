@@ -39,6 +39,8 @@ struct OptTelemetryMsg {
   double powerWatts = 0.0;
   double tempC = 0.0;
   char pstate[16]{};
+  double encoderUtilPct = -1.0;
+  double decoderUtilPct = -1.0;
 
   std::uint32_t gpuClockMHz = 0;
   std::uint32_t memClockMHz = 0;
@@ -192,6 +194,8 @@ using nvmlDeviceGetPowerManagementLimitConstraints_t = nvmlReturn_t (*)(
   nvmlDevice_t, unsigned int* /*minLimitMilliWatts*/, unsigned int* /*maxLimitMilliWatts*/);
 using nvmlDeviceGetMemoryBusWidth_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*busWidthBits*/);
 using nvmlDeviceGetMultiProcessorCount_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*count*/);
+using nvmlDeviceGetEncoderUtilization_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*util*/, unsigned int* /*samplingPeriodUs*/);
+using nvmlDeviceGetDecoderUtilization_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int* /*util*/, unsigned int* /*samplingPeriodUs*/);
 
 struct NvmlApi {
   void* lib = nullptr;
@@ -221,6 +225,8 @@ struct NvmlApi {
   nvmlDeviceGetPowerManagementLimitConstraints_t nvmlDeviceGetPowerManagementLimitConstraints = nullptr;
   nvmlDeviceGetMemoryBusWidth_t nvmlDeviceGetMemoryBusWidth = nullptr;
   nvmlDeviceGetMultiProcessorCount_t nvmlDeviceGetMultiProcessorCount = nullptr;
+  nvmlDeviceGetEncoderUtilization_t nvmlDeviceGetEncoderUtilization = nullptr;
+  nvmlDeviceGetDecoderUtilization_t nvmlDeviceGetDecoderUtilization = nullptr;
 
   bool ok() const {
     return lib && nvmlInit_v2 && nvmlShutdown && nvmlDeviceGetCount_v2 && nvmlDeviceGetHandleByIndex_v2 &&
@@ -268,33 +274,37 @@ static NvmlApi& api() {
 
   // Optional extras (best-effort).
   a.nvmlDeviceGetClockInfo = reinterpret_cast<nvmlDeviceGetClockInfo_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetClockInfo"));
-    a.nvmlDeviceGetMaxClockInfo = reinterpret_cast<nvmlDeviceGetMaxClockInfo_t>(
+  a.nvmlDeviceGetMaxClockInfo = reinterpret_cast<nvmlDeviceGetMaxClockInfo_t>(
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetMaxClockInfo"));
-    a.nvmlDeviceGetSupportedMemoryClocks = reinterpret_cast<nvmlDeviceGetSupportedMemoryClocks_t>(
+  a.nvmlDeviceGetSupportedMemoryClocks = reinterpret_cast<nvmlDeviceGetSupportedMemoryClocks_t>(
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetSupportedMemoryClocks"));
-    a.nvmlDeviceGetSupportedGraphicsClocks = reinterpret_cast<nvmlDeviceGetSupportedGraphicsClocks_t>(
+  a.nvmlDeviceGetSupportedGraphicsClocks = reinterpret_cast<nvmlDeviceGetSupportedGraphicsClocks_t>(
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetSupportedGraphicsClocks"));
-    a.nvmlDeviceGetPerformanceModes = reinterpret_cast<nvmlDeviceGetPerformanceModes_t>(
+  a.nvmlDeviceGetPerformanceModes = reinterpret_cast<nvmlDeviceGetPerformanceModes_t>(
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPerformanceModes"));
   a.nvmlDeviceGetCudaComputeCapability = reinterpret_cast<nvmlDeviceGetCudaComputeCapability_t>(
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetCudaComputeCapability"));
-      a.nvmlDeviceGetMultiProcessorCount = reinterpret_cast<nvmlDeviceGetMultiProcessorCount_t>(
-        loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetMultiProcessorCount"));
-    a.nvmlDeviceGetPowerManagementLimitConstraints = reinterpret_cast<nvmlDeviceGetPowerManagementLimitConstraints_t>(
+  a.nvmlDeviceGetMultiProcessorCount = reinterpret_cast<nvmlDeviceGetMultiProcessorCount_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetMultiProcessorCount"));
+  a.nvmlDeviceGetPowerManagementLimitConstraints = reinterpret_cast<nvmlDeviceGetPowerManagementLimitConstraints_t>(
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPowerManagementLimitConstraints"));
-    a.nvmlDeviceGetMemoryBusWidth = reinterpret_cast<nvmlDeviceGetMemoryBusWidth_t>(
+  a.nvmlDeviceGetMemoryBusWidth = reinterpret_cast<nvmlDeviceGetMemoryBusWidth_t>(
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetMemoryBusWidth"));
+  a.nvmlDeviceGetEncoderUtilization = reinterpret_cast<nvmlDeviceGetEncoderUtilization_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetEncoderUtilization"));
+  a.nvmlDeviceGetDecoderUtilization = reinterpret_cast<nvmlDeviceGetDecoderUtilization_t>(
+      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetDecoderUtilization"));
 
-    // Optional system queries.
-    a.nvmlSystemGetNVMLVersion = reinterpret_cast<nvmlSystemGetNVMLVersion_t>(
+  // Optional system queries.
+  a.nvmlSystemGetNVMLVersion = reinterpret_cast<nvmlSystemGetNVMLVersion_t>(
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlSystemGetNVMLVersion"));
-    a.nvmlSystemGetDriverVersion = reinterpret_cast<nvmlSystemGetDriverVersion_t>(
+  a.nvmlSystemGetDriverVersion = reinterpret_cast<nvmlSystemGetDriverVersion_t>(
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlSystemGetDriverVersion"));
 
-    // Optional (not required for a.ok()).
-    a.nvmlDeviceGetCurrPcieLinkGeneration = reinterpret_cast<nvmlDeviceGetCurrPcieLinkGeneration_t>(
+  // Optional (not required for a.ok()).
+  a.nvmlDeviceGetCurrPcieLinkGeneration = reinterpret_cast<nvmlDeviceGetCurrPcieLinkGeneration_t>(
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetCurrPcieLinkGeneration"));
-    a.nvmlDeviceGetCurrPcieLinkWidth = reinterpret_cast<nvmlDeviceGetCurrPcieLinkWidth_t>(
+  a.nvmlDeviceGetCurrPcieLinkWidth = reinterpret_cast<nvmlDeviceGetCurrPcieLinkWidth_t>(
       loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetCurrPcieLinkWidth"));
 
   if (!a.ok()) {
@@ -453,21 +463,52 @@ static std::optional<NvmlTelemetry> readNvmlTelemetryWithSession(nvmlDevice_t de
   t.powerWatts = static_cast<double>(mw) / 1000.0;
   t.tempC = static_cast<double>(tc);
   t.pstate = "P" + std::to_string(ps);
+  if (a.nvmlDeviceGetEncoderUtilization) {
+    unsigned int utilEnc = 0;
+    unsigned int periodUs = 0;
+    if (a.nvmlDeviceGetEncoderUtilization(dev, &utilEnc, &periodUs) == NVML_SUCCESS) {
+      t.encoderUtilPct = static_cast<double>(utilEnc);
+    }
+  }
+  if (a.nvmlDeviceGetDecoderUtilization) {
+    unsigned int utilDec = 0;
+    unsigned int periodUs = 0;
+    if (a.nvmlDeviceGetDecoderUtilization(dev, &utilDec, &periodUs) == NVML_SUCCESS) {
+      t.decoderUtilPct = static_cast<double>(utilDec);
+    }
+  }
 
-  // Report MAX clocks (requested). Prefer supported clock tables (more stable/spec-like),
-  // fall back to nvmlDeviceGetMaxClockInfo if needed.
-  if (const auto mhz = maxSupportedGraphicsClockMHz(dev, a)) t.gpuClockMHz = *mhz;
-  if (const auto mhz = maxSupportedMemoryClockMHz(dev, a)) t.memClockMHz = *mhz;
-
-  if ((t.gpuClockMHz == 0 || t.memClockMHz == 0) && a.nvmlDeviceGetMaxClockInfo) {
+  // Report CURRENT clocks when available.
+  if (a.nvmlDeviceGetClockInfo) {
     unsigned int mhz = 0;
-    if (t.gpuClockMHz == 0 && a.nvmlDeviceGetMaxClockInfo(dev, NVML_CLOCK_GRAPHICS, &mhz) == NVML_SUCCESS && mhz > 0) {
+    if (a.nvmlDeviceGetClockInfo(dev, NVML_CLOCK_GRAPHICS, &mhz) == NVML_SUCCESS && mhz > 0) {
       t.gpuClockMHz = mhz;
     }
-
     mhz = 0;
-    if (t.memClockMHz == 0 && a.nvmlDeviceGetMaxClockInfo(dev, NVML_CLOCK_MEM, &mhz) == NVML_SUCCESS && mhz > 0) {
+    if (a.nvmlDeviceGetClockInfo(dev, NVML_CLOCK_MEM, &mhz) == NVML_SUCCESS && mhz > 0) {
       t.memClockMHz = mhz;
+    }
+  }
+
+  // Fallback to max clocks only if current clocks are unavailable.
+  if (t.gpuClockMHz == 0 || t.memClockMHz == 0) {
+    if (t.gpuClockMHz == 0) {
+      if (const auto mhz = maxSupportedGraphicsClockMHz(dev, a)) t.gpuClockMHz = *mhz;
+    }
+    if (t.memClockMHz == 0) {
+      if (const auto mhz = maxSupportedMemoryClockMHz(dev, a)) t.memClockMHz = *mhz;
+    }
+
+    if ((t.gpuClockMHz == 0 || t.memClockMHz == 0) && a.nvmlDeviceGetMaxClockInfo) {
+      unsigned int mhz = 0;
+      if (t.gpuClockMHz == 0 && a.nvmlDeviceGetMaxClockInfo(dev, NVML_CLOCK_GRAPHICS, &mhz) == NVML_SUCCESS && mhz > 0) {
+        t.gpuClockMHz = mhz;
+      }
+
+      mhz = 0;
+      if (t.memClockMHz == 0 && a.nvmlDeviceGetMaxClockInfo(dev, NVML_CLOCK_MEM, &mhz) == NVML_SUCCESS && mhz > 0) {
+        t.memClockMHz = mhz;
+      }
     }
   }
 
@@ -751,6 +792,8 @@ std::optional<NvmlTelemetry> readNvmlTelemetryForGpu(unsigned int index) {
           out.tempC = r->tempC;
           std::strncpy(out.pstate, r->pstate.c_str(), sizeof(out.pstate) - 1);
           out.pstate[sizeof(out.pstate) - 1] = '\0';
+          out.encoderUtilPct = r->encoderUtilPct;
+          out.decoderUtilPct = r->decoderUtilPct;
 
           out.gpuClockMHz = static_cast<std::uint32_t>(r->gpuClockMHz);
           out.memClockMHz = static_cast<std::uint32_t>(r->memClockMHz);
@@ -775,6 +818,8 @@ std::optional<NvmlTelemetry> readNvmlTelemetryForGpu(unsigned int index) {
   t.powerWatts = msg->powerWatts;
   t.tempC = msg->tempC;
   t.pstate = std::string(msg->pstate);
+  t.encoderUtilPct = msg->encoderUtilPct;
+  t.decoderUtilPct = msg->decoderUtilPct;
   t.gpuClockMHz = static_cast<unsigned int>(msg->gpuClockMHz);
   t.memClockMHz = static_cast<unsigned int>(msg->memClockMHz);
   t.memTransferRateMHz = static_cast<unsigned int>(msg->memTransferRateMHz);
@@ -805,6 +850,9 @@ std::optional<NvmlTelemetry> readNvmlTelemetry() {
           std::strncpy(out.pstate, r->pstate.c_str(), sizeof(out.pstate) - 1);
           out.pstate[sizeof(out.pstate) - 1] = '\0';
 
+          out.encoderUtilPct = r->encoderUtilPct;
+          out.decoderUtilPct = r->decoderUtilPct;
+
           out.gpuClockMHz = static_cast<std::uint32_t>(r->gpuClockMHz);
           out.memClockMHz = static_cast<std::uint32_t>(r->memClockMHz);
           out.memTransferRateMHz = static_cast<std::uint32_t>(r->memTransferRateMHz);
@@ -828,6 +876,8 @@ std::optional<NvmlTelemetry> readNvmlTelemetry() {
   t.powerWatts = msg->powerWatts;
   t.tempC = msg->tempC;
   t.pstate = std::string(msg->pstate);
+  t.encoderUtilPct = msg->encoderUtilPct;
+  t.decoderUtilPct = msg->decoderUtilPct;
   t.gpuClockMHz = static_cast<unsigned int>(msg->gpuClockMHz);
   t.memClockMHz = static_cast<unsigned int>(msg->memClockMHz);
   t.memTransferRateMHz = static_cast<unsigned int>(msg->memTransferRateMHz);

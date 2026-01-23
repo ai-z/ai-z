@@ -20,6 +20,14 @@ struct GpuTelemetrySnapshot {
   std::optional<double> watts;
   std::optional<double> tempC;
 
+  // Clocks (MHz) when available.
+  std::optional<unsigned int> gpuClockMHz;
+  std::optional<unsigned int> memClockMHz;
+
+  // Encoder/decoder utilization (0..100).
+  std::optional<double> encoderUtilPct;
+  std::optional<double> decoderUtilPct;
+
   // Best-effort textual state.
   std::string pstate;
 
@@ -38,6 +46,10 @@ struct TelemetrySnapshot {
   std::optional<Sample> netTx;
   std::optional<Sample> gpu;
   std::optional<Sample> gpuMemUtil;
+  std::optional<Sample> gpuClock;
+  std::optional<Sample> gpuMemClock;
+  std::optional<Sample> gpuEnc;
+  std::optional<Sample> gpuDec;
   std::optional<Sample> pcieRx;
   std::optional<Sample> pcieTx;
 

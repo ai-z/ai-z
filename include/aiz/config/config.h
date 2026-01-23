@@ -21,6 +21,10 @@ struct Config {
   bool showCpu = true;
   bool showGpu = true;
   bool showGpuMem = true;
+  bool showGpuClock = true;
+  bool showGpuMemClock = true;
+  bool showGpuEnc = true;
+  bool showGpuDec = true;
   // Backward-compat aggregate toggle (controls both read+write).
   bool showDisk = true;
   bool showDiskRead = true;

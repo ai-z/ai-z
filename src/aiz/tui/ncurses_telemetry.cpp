@@ -45,6 +45,10 @@ std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index) {
     t.watts = nv->powerWatts;
     t.tempC = nv->tempC;
     t.pstate = nv->pstate;
+    if (nv->gpuClockMHz > 0) t.gpuClockMHz = nv->gpuClockMHz;
+    if (nv->memClockMHz > 0) t.memClockMHz = nv->memClockMHz;
+    if (nv->encoderUtilPct >= 0.0) t.encoderUtilPct = nv->encoderUtilPct;
+    if (nv->decoderUtilPct >= 0.0) t.decoderUtilPct = nv->decoderUtilPct;
     t.source = "nvml";
     any = true;
   }

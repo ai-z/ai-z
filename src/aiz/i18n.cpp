@@ -53,6 +53,10 @@ constexpr std::wstring_view en(MsgId id) {
     case MsgId::ConfigToggleCpuUsage: return L"CPU usage";
     case MsgId::ConfigToggleGpuUsage: return L"GPU usage";
     case MsgId::ConfigToggleGpuMemCtrl: return L"GPU mem ctrl";
+    case MsgId::ConfigToggleGpuClock: return L"GPU MHz";
+    case MsgId::ConfigToggleGpuMemClock: return L"Mem MHz";
+    case MsgId::ConfigToggleGpuEnc: return L"GPU encoder";
+    case MsgId::ConfigToggleGpuDec: return L"GPU decoder";
     case MsgId::ConfigToggleDiskRead: return L"Disk Read";
     case MsgId::ConfigToggleDiskWrite: return L"Disk Write";
     case MsgId::ConfigToggleNetRx: return L"Net RX";
@@ -104,6 +108,10 @@ constexpr std::wstring_view zhCN(MsgId id) {
     case MsgId::ConfigToggleCpuUsage: return L"CPU 使用率";
     case MsgId::ConfigToggleGpuUsage: return L"GPU 使用率";
     case MsgId::ConfigToggleGpuMemCtrl: return L"GPU 显存控制";
+    case MsgId::ConfigToggleGpuClock: return L"GPU 频率";
+    case MsgId::ConfigToggleGpuMemClock: return L"显存频率";
+    case MsgId::ConfigToggleGpuEnc: return L"GPU 编码";
+    case MsgId::ConfigToggleGpuDec: return L"GPU 解码";
     case MsgId::ConfigToggleDiskRead: return L"磁盘读取";
     case MsgId::ConfigToggleDiskWrite: return L"磁盘写入";
     case MsgId::ConfigToggleNetRx: return L"网络接收";

@@ -344,6 +344,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   ensureTimelineCapacity(state.cpuTl, cfg.timelineSamples);
   ensureTimelineCapacity(state.cpuMaxTl, cfg.timelineSamples);
   ensureTimelineCapacity(state.gpuMemUtilTl, cfg.timelineSamples);
+  ensureTimelineCapacity(state.gpuClockTl, cfg.timelineSamples);
+  ensureTimelineCapacity(state.gpuMemClockTl, cfg.timelineSamples);
+  ensureTimelineCapacity(state.gpuEncTl, cfg.timelineSamples);
+  ensureTimelineCapacity(state.gpuDecTl, cfg.timelineSamples);
   ensureTimelineCapacity(state.ramTl, cfg.timelineSamples);
   ensureTimelineCapacity(state.vramTl, cfg.timelineSamples);
   ensureTimelineCapacity(state.diskTl, cfg.timelineSamples);
@@ -562,6 +566,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       vramPct = Sample{vramPctV, "%", "debug"};
       gt.watts = dbgGpuW.next();
       gt.tempC = dbgGpuTemp.next();
+      gt.gpuClockMHz = static_cast<unsigned int>(1200 + util * 10.0);
+      gt.memClockMHz = static_cast<unsigned int>(7000 + util * 5.0);
+      gt.encoderUtilPct = util * 0.6;
+      gt.decoderUtilPct = util * 0.4;
       std::string ps = "P8";
       if (util > 80.0) ps = "P0";
       else if (util > 50.0) ps = "P2";
@@ -641,6 +649,19 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       }
     }
 
+    std::optional<Sample> gpuClock;
+    std::optional<Sample> gpuMemClock;
+    std::optional<Sample> gpuEnc;
+    std::optional<Sample> gpuDec;
+    if (!gpuTel.empty() && gpuTel[0]) {
+      const auto& gt0 = *gpuTel[0];
+      const std::string label = !gt0.source.empty() ? gt0.source : std::string("gpu");
+      if (gt0.gpuClockMHz) gpuClock = Sample{static_cast<double>(*gt0.gpuClockMHz), "MHz", label};
+      if (gt0.memClockMHz) gpuMemClock = Sample{static_cast<double>(*gt0.memClockMHz), "MHz", label};
+      if (gt0.encoderUtilPct) gpuEnc = Sample{*gt0.encoderUtilPct, "%", label};
+      if (gt0.decoderUtilPct) gpuDec = Sample{*gt0.decoderUtilPct, "%", label};
+    }
+
     // Update shared-core snapshot + timelines.
     state.tick = uiTick;
     state.latest.cpu = cpu;
@@ -653,6 +674,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     // GPU0 as a Sample is still used by some panels.
     if (!gpuSamples.empty()) state.latest.gpu = gpuSamples[0];
     state.latest.gpuMemUtil = gpuMemUtil;
+    state.latest.gpuClock = gpuClock;
+    state.latest.gpuMemClock = gpuMemClock;
+    state.latest.gpuEnc = gpuEnc;
+    state.latest.gpuDec = gpuDec;
     state.latest.pcieRx = pcieRx;
     state.latest.pcieTx = pcieTx;
     state.latest.ramPct = ramPct;
@@ -676,6 +701,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
         gs.watts = gt.watts;
         gs.tempC = gt.tempC;
         gs.pstate = gt.pstate;
+        gs.gpuClockMHz = gt.gpuClockMHz;
+        gs.memClockMHz = gt.memClockMHz;
+        gs.encoderUtilPct = gt.encoderUtilPct;
+        gs.decoderUtilPct = gt.decoderUtilPct;
         if (gt.pcieLinkWidth) gs.pcieLinkWidth = static_cast<int>(*gt.pcieLinkWidth);
         if (gt.pcieLinkGen) gs.pcieLinkGen = static_cast<int>(*gt.pcieLinkGen);
       }
@@ -685,6 +714,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     state.cpuTl.push(cpu ? cpu->value : 0.0);
     state.cpuMaxTl.push(cpuMax ? cpuMax->value : 0.0);
     state.gpuMemUtilTl.push((gpuMemUtil && cfg.showGpuMem) ? gpuMemUtil->value : 0.0);
+    state.gpuClockTl.push((gpuClock && cfg.showGpuClock) ? gpuClock->value : 0.0);
+    state.gpuMemClockTl.push((gpuMemClock && cfg.showGpuMemClock) ? gpuMemClock->value : 0.0);
+    state.gpuEncTl.push((gpuEnc && cfg.showGpuEnc) ? gpuEnc->value : 0.0);
+    state.gpuDecTl.push((gpuDec && cfg.showGpuDec) ? gpuDec->value : 0.0);
     state.ramTl.push(ramPct ? ramPct->value : 0.0);
     state.vramTl.push(vramPct ? vramPct->value : 0.0);
     state.diskReadTl.push(diskRead ? diskRead->value : 0.0);

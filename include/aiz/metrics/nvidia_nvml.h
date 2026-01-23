@@ -14,6 +14,10 @@ struct NvmlTelemetry {
   double tempC = 0.0;
   std::string pstate;          // e.g. "P8"
 
+  // Encoder/decoder utilization (0..100). -1 indicates unavailable.
+  double encoderUtilPct = -1.0;
+  double decoderUtilPct = -1.0;
+
   // Best-effort extra metadata (not always available on all drivers/devices).
   unsigned int gpuClockMHz = 0;  // current graphics clock
   unsigned int memClockMHz = 0;  // current memory clock

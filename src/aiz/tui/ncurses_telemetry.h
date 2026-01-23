@@ -15,6 +15,10 @@ struct GpuTelemetry {
   std::optional<double> watts;
   std::optional<double> tempC;
   std::string pstate;
+  std::optional<unsigned int> gpuClockMHz;
+  std::optional<unsigned int> memClockMHz;
+  std::optional<double> encoderUtilPct;
+  std::optional<double> decoderUtilPct;
   std::optional<unsigned int> pcieLinkWidth;
   std::optional<unsigned int> pcieLinkGen;
   std::string source;

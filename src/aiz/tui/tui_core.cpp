@@ -19,10 +19,14 @@ struct ConfigToggleItem {
   bool Config::*field;
 };
 
-static constexpr std::array<ConfigToggleItem, 11> kConfigToggleItems = {{
+static constexpr std::array<ConfigToggleItem, 15> kConfigToggleItems = {{
     {i18n::MsgId::ConfigToggleCpuUsage, &Config::showCpu},
     {i18n::MsgId::ConfigToggleGpuUsage, &Config::showGpu},
     {i18n::MsgId::ConfigToggleGpuMemCtrl, &Config::showGpuMem},
+  {i18n::MsgId::ConfigToggleGpuClock, &Config::showGpuClock},
+  {i18n::MsgId::ConfigToggleGpuMemClock, &Config::showGpuMemClock},
+  {i18n::MsgId::ConfigToggleGpuEnc, &Config::showGpuEnc},
+  {i18n::MsgId::ConfigToggleGpuDec, &Config::showGpuDec},
     {i18n::MsgId::ConfigToggleDiskRead, &Config::showDiskRead},
     {i18n::MsgId::ConfigToggleDiskWrite, &Config::showDiskWrite},
     {i18n::MsgId::ConfigToggleNetRx, &Config::showNetRx},
@@ -696,6 +700,11 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   panels.push_back(Panel{gpuPrefix(0) + " VRAM", cfg.showVram, &state.latest.vramPct, &state.vramTl, nullptr, 100.0, false, gpuContext(0)});
   panels.push_back(Panel{gpuPrefix(0) + " MemCtrl", cfg.showGpuMem, &state.latest.gpuMemUtil, &state.gpuMemUtilTl, nullptr, 100.0, false, gpuContext(0)});
 
+  panels.push_back(Panel{gpuPrefix(0) + " MHz", cfg.showGpuClock, &state.latest.gpuClock, &state.gpuClockTl, nullptr, 3000.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " Mem MHz", cfg.showGpuMemClock, &state.latest.gpuMemClock, &state.gpuMemClockTl, nullptr, 14000.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " Enc", cfg.showGpuEnc, &state.latest.gpuEnc, &state.gpuEncTl, nullptr, 100.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " Dec", cfg.showGpuDec, &state.latest.gpuDec, &state.gpuDecTl, nullptr, 100.0, false, gpuContext(0)});
+
   // PCIe split RX/TX (tweak restored).
   panels.push_back(Panel{gpuPrefix(0) + " PCIe RX", cfg.showPcieRx, &state.latest.pcieRx, &state.pcieRxTl, nullptr, 32'000.0, false, gpuContext(0)});
   panels.push_back(Panel{gpuPrefix(0) + " PCIe TX", cfg.showPcieTx, &state.latest.pcieTx, &state.pcieTxTl, nullptr, 32'000.0, false, gpuContext(0)});
@@ -755,7 +764,7 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
 static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
   // Reuse the Timelines top header (stats rows), but do not draw any scrolling bars.
   // This view is intended to be lightweight / text-only.
-  const int headerRows = 1 + static_cast<int>(state.latest.gpus.size());
+  const int headerRows = 3 + static_cast<int>(state.latest.gpus.size());
 
   // Render the same stats header as Timelines by calling into renderTimelines' logic.
   // We keep it simple by delegating through a minimal local copy of the header code.
@@ -789,21 +798,11 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
     };
 
     const std::string cpuStr = state.latest.cpu ? (fmt0(state.latest.cpu->value) + "%") : std::string("--");
-    addLabelTight("CPU:");
+    addLabelSpaced("CPU 0");
     addValueField(cpuStr, 4, Align::Right);
 
     addLabelTight("RAM:");
     addValueField(!state.latest.ramText.empty() ? state.latest.ramText : std::string("--"), 18, Align::Left);
-
-    const std::string diskStr = "R: " + fmtSampleOrDashSpaced(state.latest.diskRead)
-      + " W: " + fmtSampleOrDashSpaced(state.latest.diskWrite);
-    addLabelTight("DISK:");
-    addValueField(diskStr, 32, Align::Left);
-
-    const std::string netStr = "RX: " + fmtSampleOrDashSpaced(state.latest.netRx)
-      + " TX: " + fmtSampleOrDashSpaced(state.latest.netTx);
-    addLabelTight("NET:");
-    addValueField(netStr, 32, Align::Left);
   }
 
   for (int i = 0; i < static_cast<int>(state.latest.gpus.size()); ++i) {
@@ -836,14 +835,7 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
     };
 
     const auto& gt = state.latest.gpus[static_cast<std::size_t>(i)];
-    std::string gpuPrefix = "GPU " + std::to_string(i);
-    if (static_cast<std::size_t>(i) < state.gpuDeviceNames.size()) {
-      const std::string& n = state.gpuDeviceNames[static_cast<std::size_t>(i)];
-      if (!n.empty() && n != ("GPU" + std::to_string(i)) && n != "--" && n != "unknown") {
-        gpuPrefix += " - ";
-        gpuPrefix += n;
-      }
-    }
+    const std::string gpuPrefix = "GPU " + std::to_string(i);
     addLabelSpaced(gpuPrefix);
 
     addValueField(gt.utilPct ? (fmt0(*gt.utilPct) + "%") : std::string("--"), 4, Align::Right);
@@ -858,10 +850,25 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
     addLabelTight("VRAM:");
     addValueField(vramStr, 18, Align::Left);
 
-    addLabelTight("W:");
+    addLabelTight("MEMCTRL:");
+    addValueField(gt.memUtilPct ? (fmt0(*gt.memUtilPct) + "%") : std::string("--"), 4, Align::Right);
+
+    addLabelTight("GPU MHz:");
+    addValueField(gt.gpuClockMHz ? std::to_string(*gt.gpuClockMHz) : std::string("--"), 6, Align::Right);
+
+    addLabelTight("MEM MHz:");
+    addValueField(gt.memClockMHz ? std::to_string(*gt.memClockMHz) : std::string("--"), 6, Align::Right);
+
+    addLabelTight("ENC:");
+    addValueField(gt.encoderUtilPct ? (fmt0(*gt.encoderUtilPct) + "%") : std::string("--"), 4, Align::Right);
+
+    addLabelTight("DEC:");
+    addValueField(gt.decoderUtilPct ? (fmt0(*gt.decoderUtilPct) + "%") : std::string("--"), 4, Align::Right);
+
+    addLabelTight("WATTS:");
     addValueField(gt.watts ? (fmt0(*gt.watts) + "W") : std::string("--"), 5, Align::Right);
 
-    addLabelTight("T:");
+    addLabelTight("TEMP:");
     addValueField(gt.tempC ? (fmt0(*gt.tempC) + "C") : std::string("--"), 4, Align::Right);
 
     addLabelTight("POWER:");
@@ -876,6 +883,80 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
         + " TX: " + fmtSampleOrDashSpaced(state.latest.pcieTx);
     addLabelTight("PCIE:");
     addValueField(pcieStr, 40, Align::Left);
+  }
+
+  {
+    const int row = 1 + static_cast<int>(state.latest.gpus.size());
+    if (row < out.height) {
+      drawBodyLine(out, row, L"", Style::Default);
+
+      int x = 0;
+      auto addLabelTight = [&](const std::string& label) {
+        drawText(out, x, row, widenAscii(label), Style::FooterBlock);
+        x += static_cast<int>(label.size());
+      };
+      auto addLabelSpaced = [&](const std::string& label) {
+        drawText(out, x, row, widenAscii(label), Style::FooterBlock);
+        x += static_cast<int>(label.size());
+        if (x < out.width) {
+          drawText(out, x, row, L" ", Style::Default);
+          ++x;
+        }
+      };
+      auto addValueField = [&](std::string value, std::size_t w, Align a) {
+        (void)a;
+        if (value.size() > w) value.resize(w);
+        drawText(out, x, row, widenAscii(value), Style::Default);
+        x += static_cast<int>(value.size());
+        if (x + 1 < out.width) {
+          drawText(out, x, row, L"  ", Style::Default);
+          x += 2;
+        }
+      };
+
+      addLabelSpaced("Disk 0");
+      addLabelTight("R:");
+      addValueField(fmtSampleOrDashSpaced(state.latest.diskRead), 12, Align::Left);
+      addLabelTight("W:");
+      addValueField(fmtSampleOrDashSpaced(state.latest.diskWrite), 12, Align::Left);
+    }
+  }
+
+  {
+    const int row = 2 + static_cast<int>(state.latest.gpus.size());
+    if (row < out.height) {
+      drawBodyLine(out, row, L"", Style::Default);
+
+      int x = 0;
+      auto addLabelTight = [&](const std::string& label) {
+        drawText(out, x, row, widenAscii(label), Style::FooterBlock);
+        x += static_cast<int>(label.size());
+      };
+      auto addLabelSpaced = [&](const std::string& label) {
+        drawText(out, x, row, widenAscii(label), Style::FooterBlock);
+        x += static_cast<int>(label.size());
+        if (x < out.width) {
+          drawText(out, x, row, L" ", Style::Default);
+          ++x;
+        }
+      };
+      auto addValueField = [&](std::string value, std::size_t w, Align a) {
+        (void)a;
+        if (value.size() > w) value.resize(w);
+        drawText(out, x, row, widenAscii(value), Style::Default);
+        x += static_cast<int>(value.size());
+        if (x + 1 < out.width) {
+          drawText(out, x, row, L"  ", Style::Default);
+          x += 2;
+        }
+      };
+
+      addLabelSpaced("NET 0");
+      addLabelTight("RX:");
+      addValueField(fmtSampleOrDashSpaced(state.latest.netRx), 12, Align::Left);
+      addLabelTight("TX:");
+      addValueField(fmtSampleOrDashSpaced(state.latest.netTx), 12, Align::Left);
+    }
   }
 
 }

@@ -95,6 +95,10 @@ Config Config::load() {
     if (key == "showCpu") cfg.showCpu = parseBool(val, cfg.showCpu);
     else if (key == "showGpu") cfg.showGpu = parseBool(val, cfg.showGpu);
     else if (key == "showGpuMem") cfg.showGpuMem = parseBool(val, cfg.showGpuMem);
+    else if (key == "showGpuClock") cfg.showGpuClock = parseBool(val, cfg.showGpuClock);
+    else if (key == "showGpuMemClock") cfg.showGpuMemClock = parseBool(val, cfg.showGpuMemClock);
+    else if (key == "showGpuEnc") cfg.showGpuEnc = parseBool(val, cfg.showGpuEnc);
+    else if (key == "showGpuDec") cfg.showGpuDec = parseBool(val, cfg.showGpuDec);
     else if (key == "showDisk") {
       // Backward compat: old single toggle controls both.
       const bool v = parseBool(val, cfg.showDisk);
@@ -139,6 +143,10 @@ void Config::save() const {
   out << "showCpu=" << (showCpu ? "true" : "false") << "\n";
   out << "showGpu=" << (showGpu ? "true" : "false") << "\n";
   out << "showGpuMem=" << (showGpuMem ? "true" : "false") << "\n";
+  out << "showGpuClock=" << (showGpuClock ? "true" : "false") << "\n";
+  out << "showGpuMemClock=" << (showGpuMemClock ? "true" : "false") << "\n";
+  out << "showGpuEnc=" << (showGpuEnc ? "true" : "false") << "\n";
+  out << "showGpuDec=" << (showGpuDec ? "true" : "false") << "\n";
   // Prefer explicit per-direction toggles.
   out << "showDiskRead=" << (showDiskRead ? "true" : "false") << "\n";
   out << "showDiskWrite=" << (showDiskWrite ? "true" : "false") << "\n";
