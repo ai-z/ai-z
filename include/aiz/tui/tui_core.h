@@ -52,6 +52,7 @@ enum class Command {
   SortGpu,
   SortRam,
   SortVram,
+  ToggleGpuOnly,
 
   BenchRunAll,
   BenchReport,
@@ -95,9 +96,11 @@ struct TuiState {
 
   // Processes screen: latest snapshot of top processes.
   ProcessSort processSort = ProcessSort::Cpu;
+  bool processesGpuOnly = true;
   struct ProcessEntry {
     int pid = 0;
     std::string name;
+    std::string cmdline;
     double cpuPct = 0.0;
     std::uint64_t ramBytes = 0;
     std::optional<double> gpuUtilPct;

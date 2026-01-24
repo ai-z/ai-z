@@ -35,7 +35,7 @@ bool isZhCnTag(const std::string& tag) {
 constexpr std::wstring_view en(MsgId id) {
   switch (id) {
     case MsgId::FooterNav:
-      return L"ESCMain F1Help F2Hardware F3Bench F4Config F5Minimal F6Process F10Quit";
+      return L"ESCMain F1Help F2Hardware F3Benchmark F4Config F5Minimal F6Processes F10Quit";
 
     case MsgId::ScreenHelpTitle: return L"Help";
     case MsgId::ScreenConfigTitle: return L"Config";

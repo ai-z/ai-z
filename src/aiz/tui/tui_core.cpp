@@ -2,6 +2,7 @@
 
 #include <aiz/bench/bench.h>
 #include <aiz/i18n.h>
+#include <aiz/version.h>
 
 #include <algorithm>
 #include <array>
@@ -251,6 +252,7 @@ void applyCommand(TuiState& state, Config& cfg, Command cmd) {
     if (cmd == Command::SortGpu) state.processSort = TuiState::ProcessSort::Gpu;
     if (cmd == Command::SortRam) state.processSort = TuiState::ProcessSort::Ram;
     if (cmd == Command::SortVram) state.processSort = TuiState::ProcessSort::Vram;
+    if (cmd == Command::ToggleGpuOnly) state.processesGpuOnly = !state.processesGpuOnly;
     return;
   }
 }
@@ -600,8 +602,7 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
       };
 
       const std::string cpuStr = state.latest.cpu ? (fmt0(state.latest.cpu->value) + "%") : std::string("--");
-      addBadge("CPU 0");
-      addPunct(L":", Style::Section);
+      addLabel("CPU0:");
       addValueField(cpuStr, 4, Align::Right);
 
       addLabel("RAM:");
@@ -660,9 +661,8 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
 
       const auto& gt = state.latest.gpus[static_cast<std::size_t>(i)];
       // Header should be compact: GPU label is just "GPU <n>" (device name is shown elsewhere).
-      const std::string gpuId = "GPU " + std::to_string(i);
-      addBadge(gpuId);
-      addPunct(L":", Style::Section);
+      const std::string gpuId = "GPU" + std::to_string(i);
+      addLabel(gpuId + ":");
 
       addValueField(gt.utilPct ? (fmt0(*gt.utilPct) + "%") : std::string("--"), 4, Align::Right);
 
@@ -854,7 +854,7 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
     };
 
     const std::string cpuStr = state.latest.cpu ? (fmt0(state.latest.cpu->value) + "%") : std::string("--");
-    addLabelSpaced("CPU 0");
+    addLabelTight("CPU0:");
     addValueField(cpuStr, 4, Align::Right);
 
     addLabelTight("RAM:");
@@ -891,8 +891,8 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
     };
 
     const auto& gt = state.latest.gpus[static_cast<std::size_t>(i)];
-    const std::string gpuPrefix = "GPU " + std::to_string(i);
-    addLabelSpaced(gpuPrefix);
+    const std::string gpuPrefix = "GPU" + std::to_string(i) + ":";
+    addLabelTight(gpuPrefix);
 
     addValueField(gt.utilPct ? (fmt0(*gt.utilPct) + "%") : std::string("--"), 4, Align::Right);
 
@@ -1020,31 +1020,30 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
 static void renderHelp(Frame& out, int bodyTop) {
   int y = bodyTop + 1;
   const std::vector<std::string> lines = {
-      "ai-z",  // version/website will be added when shared core has access to version.h
+      std::string("AI-Z ") + AIZ_VERSION,
       "",
-      "Description:",
-      "  C++ TUI for performance timelines and benchmarks.",
-      "  Timelines: CPU, RAM, VRAM, GPU, Disk Read/Write, Net RX/TX, PCIe RX/TX.",
+      "Terminal app to display performances metrics of CPU/NPU/GPU and run AI related benchmarks",
       "",
-      "Guide:",
-      "  - Timelines are vertical bars that scroll over time.",
-      "  - Use Config to enable/disable timelines.",
-      "  - Use Hardware to view OS/CPU/RAM/GPU/driver information.",
-      "  - Use Benchmarks to run synthetic tests (stubs for now).",
+      "Pages:",
+      "  Timelines  Live performance timelines (CPU/GPU/RAM/IO/Net/PCIe)",
+      "  Hardware   OS/CPU/RAM/GPU/driver information",
+      "  Benchmarks Run AI and bandwidth benchmarks",
+      "  Config     Toggle timelines and view sampling settings",
+      "  Minimal    Condensed live metrics view",
+      "  Processes  Per-process CPU/GPU usage (when available)",
+      "  Help       This help screen",
       "",
-      "Keys:",
-      "  F1  Help        (H)",
-      "  F2  Hardware    (W)",
-      "  F3  Benchmarks  (B)",
-      "  F4  Config      (C)",
-      "  F5  Minimal     (M)",
-      "  F6  Processes   (P)",
-      "  F10 Quit        (Q)",
-        "  Esc Main",
+      "Options:",
+      "  --debug      Run with synthetic/fake timelines",
+      "  --help, -h   Show help and exit",
+      "  --version    Print version and exit",
+      "  --lang TAG   UI language (en, zh-CN). Also reads AI_Z_LANG / LANG",
+      "",
   };
 
-  for (const auto& line : lines) {
+  for (std::size_t i = 0; i < lines.size(); ++i) {
     if (y >= out.height - 2) break;
+    const auto& line = lines[i];
     // Render the line but hide the parenthesized shortcut, then highlight the hot
     // letter inside the label word itself (htop-style).
     std::string shown = line;
@@ -1057,7 +1056,14 @@ static void renderHelp(Frame& out, int bodyTop) {
       }
     }
 
-    drawBodyLine(out, y, widenAscii(shown), Style::Value);
+    Style lineStyle = Style::Default;
+    if (i == 0) {
+      lineStyle = Style::Section;
+    } else if (!line.empty()) {
+      const std::size_t first = line.find_first_not_of(' ');
+      if (first == 0 && line.back() == ':') lineStyle = Style::Section;
+    }
+    drawBodyLine(out, y, widenAscii(shown), lineStyle);
 
     // Highlight the intended hot letter within the label.
     // We infer it from the hidden (X) when present.
@@ -1210,22 +1216,48 @@ static void renderProcesses(Frame& out, int bodyTop, const TuiState& state) {
   const int listEnd = out.height - 2;
 
   if (sortY < out.height) {
-    const std::wstring sortLine = L"SORT BY: 1PROCESS NAME 2CPU 3GPU 4RAM 5VRAM";
-    std::vector<Style> styles(sortLine.size(), Style::Default);
-    auto mark = [&](std::wstring_view needle) {
-      const std::size_t pos = sortLine.find(needle);
-      if (pos == std::wstring::npos) return;
-      const std::size_t end = std::min(sortLine.size(), pos + needle.size());
-      for (std::size_t i = pos; i < end; ++i) styles[i] = Style::FooterBlock;
-    };
-    mark(L"SORT BY:");
-    mark(L"PROCESS NAME");
-    mark(L"CPU");
-    mark(L"GPU");
-    mark(L"RAM");
-    mark(L"VRAM");
+    const std::wstring left = L"SORT BY: 1PROCESS NAME 2CPU 3GPU 4RAM 5VRAM";
+    const std::wstring right = state.processesGpuOnly
+        ? L"FILTER: G GPU ONLY [ON]"
+        : L"FILTER: G GPU ONLY [OFF]";
 
-    drawTextStyled(out, 0, sortY, sortLine, styles);
+    const int width = std::max(0, out.width);
+    std::wstring line(static_cast<std::size_t>(width), L' ');
+    std::vector<Style> styles(static_cast<std::size_t>(width), Style::Default);
+
+    auto writeAt = [&](int x, std::wstring_view text) {
+      if (x < 0 || x >= width) return;
+      const int n = std::min<int>(static_cast<int>(text.size()), width - x);
+      for (int i = 0; i < n; ++i) line[static_cast<std::size_t>(x + i)] = text[static_cast<std::size_t>(i)];
+    };
+
+    auto markAt = [&](int x, std::wstring_view text) {
+      if (x < 0 || x >= width) return;
+      const int n = std::min<int>(static_cast<int>(text.size()), width - x);
+      for (int i = 0; i < n; ++i) styles[static_cast<std::size_t>(x + i)] = Style::FooterBlock;
+    };
+
+    auto markIn = [&](std::wstring_view hay, std::wstring_view needle, int offset) {
+      const std::size_t pos = hay.find(needle);
+      if (pos == std::wstring::npos) return;
+      markAt(offset + static_cast<int>(pos), needle);
+    };
+
+    const int rightX = std::max(0, width - static_cast<int>(right.size()));
+    writeAt(0, left);
+    writeAt(rightX, right);
+
+    markIn(left, L"SORT BY:", 0);
+    markIn(left, L"PROCESS NAME", 0);
+    markIn(left, L"CPU", 0);
+    markIn(left, L"GPU", 0);
+    markIn(left, L"RAM", 0);
+    markIn(left, L"VRAM", 0);
+    markIn(right, L"FILTER:", rightX);
+    markIn(right, L"GPU ONLY", rightX);
+    markIn(right, L"G", rightX);
+
+    drawTextStyled(out, 0, sortY, line, styles);
   }
 
   if (headerY < out.height) {
@@ -1236,7 +1268,13 @@ static void renderProcesses(Frame& out, int bodyTop, const TuiState& state) {
     const int gpuW = 7;
     const int vramW = 9;
     const int fixed = pidW + whereW + cpuW + ramW + gpuW + vramW + 6;
-    const int nameW = std::max(0, out.width - fixed);
+    const int remaining = std::max(0, out.width - fixed);
+    int cmdW = 0;
+    int nameW = remaining;
+    if (remaining > 10) {
+      cmdW = remaining / 2;
+      nameW = remaining - cmdW;
+    }
 
     std::string header =
         fit("PID", pidW, Align::Right) + " " +
@@ -1245,7 +1283,8 @@ static void renderProcesses(Frame& out, int bodyTop, const TuiState& state) {
         fit("CPU", cpuW, Align::Right) + " " +
         fit("RAM", ramW, Align::Right) + " " +
         fit("GPU", gpuW, Align::Right) + " " +
-        fit("VRAM", vramW, Align::Right);
+      fit("VRAM", vramW, Align::Right);
+    if (cmdW > 0) header += " " + fit("Cmd", static_cast<std::size_t>(cmdW), Align::Left);
     drawBodyLine(out, headerY, widenAscii(header), Style::Section);
   }
 
@@ -1266,7 +1305,13 @@ static void renderProcesses(Frame& out, int bodyTop, const TuiState& state) {
     const int gpuW = 7;
     const int vramW = 9;
     const int fixed = pidW + whereW + cpuW + ramW + gpuW + vramW + 6;
-    const int nameW = std::max(0, out.width - fixed);
+    const int remaining = std::max(0, out.width - fixed);
+    int cmdW = 0;
+    int nameW = remaining;
+    if (remaining > 10) {
+      cmdW = remaining / 2;
+      nameW = remaining - cmdW;
+    }
 
     const std::string pidStr = fit(std::to_string(p.pid), pidW, Align::Right);
     const std::string whereStr = fit(p.gpuIndex ? ("GPU" + std::to_string(*p.gpuIndex)) : "CPU", whereW, Align::Left);
@@ -1276,7 +1321,11 @@ static void renderProcesses(Frame& out, int bodyTop, const TuiState& state) {
     const std::string gpuStr = fit(p.gpuUtilPct ? (fmt1(*p.gpuUtilPct) + "%") : std::string("--"), gpuW, Align::Right);
     const std::string vramStr = fit(p.vramUsedGiB ? (fmt1(*p.vramUsedGiB) + "G") : std::string("--"), vramW, Align::Right);
 
-    const std::string line = pidStr + " " + whereStr + " " + nameStr + " " + cpuStr + " " + ramStr + " " + gpuStr + " " + vramStr;
+    std::string line = pidStr + " " + whereStr + " " + nameStr + " " + cpuStr + " " + ramStr + " " + gpuStr + " " + vramStr;
+    if (cmdW > 0) {
+      const std::string cmdStr = fit(p.cmdline.empty() ? std::string("--") : p.cmdline, static_cast<std::size_t>(cmdW), Align::Left);
+      line += " " + cmdStr;
+    }
     drawBodyLine(out, y, widenAscii(line), Style::Value);
     ++y;
   }
@@ -1573,7 +1622,6 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
       renderMinimal(out, bodyTop, state);
       break;
     case Screen::Help:
-      drawText(out, 0, bodyTop, std::wstring(i18n::tr(i18n::MsgId::ScreenHelpTitle)), Style::Section);
       renderHelp(out, bodyTop);
       break;
     case Screen::Config:

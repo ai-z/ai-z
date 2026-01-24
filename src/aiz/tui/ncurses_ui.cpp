@@ -507,6 +507,13 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           (void)ncurses::benchGenerateHtmlReport(benchThread, state);
           continue;
         }
+
+        if (state.screen == Screen::Processes &&
+            (cmd == Command::SortProcessName || cmd == Command::SortCpu || cmd == Command::SortGpu ||
+             cmd == Command::SortRam || cmd == Command::SortVram || cmd == Command::ToggleGpuOnly)) {
+          applyCommand(state, cfg, cmd);
+          continue;
+        }
       }
     }
 
@@ -761,6 +768,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
         TuiState::ProcessEntry entry;
         entry.pid = p.pid;
         entry.name = p.name;
+        entry.cmdline = p.cmdline;
         entry.cpuPct = p.cpuPct;
         entry.ramBytes = p.ramBytes;
         merged.emplace(p.pid, std::move(entry));
@@ -768,12 +776,14 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
       for (const auto& gp : gpuTop) {
         const int pid = static_cast<int>(gp.pid);
+        if (!isUserProcess(pid)) continue;
         auto it = merged.find(pid);
         if (it == merged.end()) {
           TuiState::ProcessEntry entry;
           entry.pid = pid;
           if (const auto id = readProcessIdentity(pid)) {
             entry.name = id->name;
+            entry.cmdline = id->cmdline;
             entry.ramBytes = id->ramBytes;
           }
           entry.gpuIndex = static_cast<int>(gp.gpuIndex);
@@ -784,12 +794,26 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           it->second.gpuIndex = static_cast<int>(gp.gpuIndex);
           if (gp.vramUsedGiB > 0.0) it->second.vramUsedGiB = gp.vramUsedGiB;
           if (gp.gpuUtilPct) it->second.gpuUtilPct = gp.gpuUtilPct;
+          if (it->second.cmdline.empty()) {
+            if (const auto id = readProcessIdentity(pid)) {
+              if (!id->cmdline.empty()) it->second.cmdline = id->cmdline;
+              if (it->second.name.empty()) it->second.name = id->name;
+              if (it->second.ramBytes == 0) it->second.ramBytes = id->ramBytes;
+            }
+          }
         }
       }
 
       std::vector<TuiState::ProcessEntry> rows;
       rows.reserve(merged.size());
-      for (auto& kv : merged) rows.push_back(std::move(kv.second));
+      for (auto& kv : merged) {
+        if (state.processesGpuOnly) {
+          const auto& e = kv.second;
+          const bool onGpu = e.gpuIndex.has_value() || e.gpuUtilPct.has_value() || e.vramUsedGiB.has_value();
+          if (!onGpu) continue;
+        }
+        rows.push_back(std::move(kv.second));
+      }
 
       auto toLower = [](const std::string& s) {
         std::string out;

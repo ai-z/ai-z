@@ -73,6 +73,7 @@ std::optional<Command> keyToCommand(int key, Screen screen) {
     if (key == '3') return Command::SortGpu;
     if (key == '4') return Command::SortRam;
     if (key == '5') return Command::SortVram;
+    if (key == 'g' || key == 'G') return Command::ToggleGpuOnly;
   }
 
   return std::nullopt;

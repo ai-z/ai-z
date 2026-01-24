@@ -1,6 +1,7 @@
 #include <aiz/metrics/process_list.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -83,6 +84,45 @@ static bool readProcRssBytes(int pid, std::uint64_t& rssBytesOut) {
   return true;
 }
 
+static bool readProcCmdline(int pid, std::string& cmdlineOut) {
+  std::string path = "/proc/" + std::to_string(pid) + "/cmdline";
+  std::ifstream in(path, std::ios::in | std::ios::binary);
+  if (!in.is_open()) return false;
+
+  std::string buf((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  if (buf.empty()) return false;
+
+  for (char& ch : buf) {
+    if (ch == '\0') ch = ' ';
+  }
+
+  // Trim trailing spaces.
+  while (!buf.empty() && std::isspace(static_cast<unsigned char>(buf.back()))) buf.pop_back();
+  while (!buf.empty() && std::isspace(static_cast<unsigned char>(buf.front()))) buf.erase(buf.begin());
+
+  if (buf.empty()) return false;
+  cmdlineOut = std::move(buf);
+  return true;
+}
+
+static bool readProcUid(int pid, uid_t& uidOut) {
+  std::string path = "/proc/" + std::to_string(pid) + "/status";
+  std::ifstream in(path);
+  if (!in.is_open()) return false;
+
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.rfind("Uid:", 0) != 0) continue;
+    std::istringstream iss(line.substr(4));
+    unsigned int uid = 0;
+    if (!(iss >> uid)) return false;
+    uidOut = static_cast<uid_t>(uid);
+    return true;
+  }
+
+  return false;
+}
+
 static bool isDigits(const char* s) {
   if (!s || !*s) return false;
   for (const char* p = s; *p; ++p) {
@@ -104,7 +144,14 @@ std::optional<ProcessIdentity> readProcessIdentity(int pid) {
 
   id.name = name;
   id.ramBytes = rssBytes;
+  readProcCmdline(pid, id.cmdline);
   return id;
+}
+
+bool isUserProcess(int pid) {
+  uid_t uid = 0;
+  if (!readProcUid(pid, uid)) return false;
+  return uid == ::getuid();
 }
 
 std::vector<CpuProcessInfo> ProcessSampler::sampleTop(std::size_t maxCount) {
@@ -133,8 +180,13 @@ std::vector<CpuProcessInfo> ProcessSampler::sampleTop(std::size_t maxCount) {
     std::string name;
     if (!readProcStatTimes(pid, procJiffies, name)) continue;
 
+    if (!isUserProcess(pid)) continue;
+
     std::uint64_t rssBytes = 0;
     if (!readProcRssBytes(pid, rssBytes)) continue;
+
+    std::string cmdline;
+    readProcCmdline(pid, cmdline);
 
     curProcJiffies[pid] = procJiffies;
 
@@ -147,7 +199,7 @@ std::vector<CpuProcessInfo> ProcessSampler::sampleTop(std::size_t maxCount) {
       }
     }
 
-    out.push_back(CpuProcessInfo{pid, name, cpuPct, rssBytes});
+    out.push_back(CpuProcessInfo{pid, name, std::move(cmdline), cpuPct, rssBytes});
   }
 
   ::closedir(dir);
