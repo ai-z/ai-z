@@ -10,6 +10,21 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <dxgi1_2.h>
+
+static std::string wideToUtf8(const wchar_t* s) {
+  if (!s) return {};
+  int len = WideCharToMultiByte(CP_UTF8, 0, s, -1, nullptr, 0, nullptr, nullptr);
+  if (len <= 1) return {};
+  std::string out(len - 1, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, s, -1, out.data(), len, nullptr, nullptr);
+  return out;
+}
+#endif
+
 namespace aiz::ncurses {
 
 std::vector<std::string> parseGpuNames(const HardwareInfo& hw, unsigned int gpuCount) {
@@ -71,10 +86,62 @@ std::string probeCpuNameFast() {
   return {};
 }
 
+unsigned int probeGpuCountFast() {
+#if defined(_WIN32)
+  IDXGIFactory1* factory = nullptr;
+  if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) {
+    return 0;
+  }
+
+  unsigned int count = 0;
+  for (UINT i = 0; ; ++i) {
+    IDXGIAdapter1* adapter = nullptr;
+    if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND) break;
+    DXGI_ADAPTER_DESC1 desc{};
+    if (SUCCEEDED(adapter->GetDesc1(&desc))) {
+      if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0) {
+        ++count;
+      }
+    }
+    adapter->Release();
+  }
+
+  factory->Release();
+  return count;
+#else
+  return 0;
+#endif
+}
+
 std::vector<std::string> probeGpuNamesFast(unsigned int gpuCount, bool hasNvml) {
   std::vector<std::string> names;
   names.resize(gpuCount);
   for (unsigned int i = 0; i < gpuCount; ++i) names[i] = "GPU" + std::to_string(i);
+
+#if defined(_WIN32)
+  // DXGI adapter names on Windows (covers AMD/Intel GPUs).
+  IDXGIFactory1* factory = nullptr;
+  if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) {
+    unsigned int hwIndex = 0;
+    for (UINT i = 0; ; ++i) {
+      IDXGIAdapter1* adapter = nullptr;
+      if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND) break;
+      DXGI_ADAPTER_DESC1 desc{};
+      if (SUCCEEDED(adapter->GetDesc1(&desc))) {
+        if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0) {
+          if (hwIndex < names.size()) {
+            const std::string n = wideToUtf8(desc.Description);
+            if (!n.empty()) names[hwIndex] = n;
+          }
+          ++hwIndex;
+        }
+      }
+      adapter->Release();
+    }
+    factory->Release();
+  }
+  if (hasRealDeviceNames(names)) return names;
+#endif
 
   // Prefer NVML device names when available.
   // Try the in-process variant first, but fall back to the fork/timeout wrapper:

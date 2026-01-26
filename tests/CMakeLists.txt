@@ -72,6 +72,16 @@ add_executable(ai-z-tests
   ../src/aiz/metrics/timeline.cpp
 )
 
+if (WIN32)
+  target_sources(ai-z-tests PRIVATE
+    ../src/aiz/platform/windows/config_paths_windows.cpp
+  )
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(ai-z-tests PRIVATE
+    ../src/aiz/platform/linux/config_paths_linux.cpp
+  )
+endif()
+
 target_compile_features(ai-z-tests PRIVATE cxx_std_20)
 
 target_include_directories(ai-z-tests PRIVATE

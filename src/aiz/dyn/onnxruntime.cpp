@@ -1,9 +1,11 @@
 #include <aiz/dyn/onnxruntime.h>
 
-#include <dlfcn.h>
+#include <aiz/platform/dynlib.h>
+
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -40,6 +42,10 @@ std::vector<std::string> getOrtSearchPaths() {
     paths.push_back(custom_path);
   }
 
+#if defined(AI_Z_PLATFORM_WINDOWS)
+  paths.push_back(platform::onnxruntimeLibraryName());
+  return paths;
+#else
   // 2. System library paths (via LD_LIBRARY_PATH or ldconfig)
   paths.push_back("libonnxruntime.so");
   paths.push_back("libonnxruntime.so.1");
@@ -56,8 +62,8 @@ std::vector<std::string> getOrtSearchPaths() {
     char buffer[512];
     if (fgets(buffer, sizeof(buffer), fp)) {
       size_t len = std::strlen(buffer);
-      if (len > 0 && buffer[len-1] == '\n') {
-        buffer[len-1] = '\0';
+      if (len > 0 && buffer[len - 1] == '\n') {
+        buffer[len - 1] = '\0';
       }
       if (std::strlen(buffer) > 0) {
         paths.push_back(buffer);
@@ -89,46 +95,41 @@ std::vector<std::string> getOrtSearchPaths() {
   }
 
   return paths;
+#endif
 }
 
 struct OrtLoader {
-  void* handle = nullptr;
+  std::unique_ptr<platform::DynamicLibrary> handle;
   const OrtApi* api_ptr = nullptr;
   bool cuda_available = false;
-
-  ~OrtLoader() {
-    if (handle) {
-      dlclose(handle);
-    }
-  }
 
   bool load(std::string* err) {
     if (api_ptr) return true;
 
     auto paths = getOrtSearchPaths();
 
-    for (const auto& path : paths) {
-      handle = dlopen(path.c_str(), RTLD_LAZY | RTLD_LOCAL);
-      if (handle) break;
-    }
+    std::vector<const char*> candidates;
+    candidates.reserve(paths.size());
+    for (const auto& p : paths) candidates.push_back(p.c_str());
 
-    if (!handle) {
+    std::string loadErr;
+    handle = platform::loadLibrary(candidates, &loadErr);
+    if (!handle || !handle->isValid()) {
       if (err) {
-        *err = "ONNX Runtime not found. Install with: pip install onnxruntime";
+        *err = loadErr.empty() ? "ONNX Runtime not found. Install with: pip install onnxruntime" : loadErr;
       }
       return false;
     }
 
     // Load the OrtGetApiBase function
     using GetApiBaseFn = const OrtApiBase* (*)(void);
-    auto get_api_base = reinterpret_cast<GetApiBaseFn>(dlsym(handle, "OrtGetApiBase"));
+    auto get_api_base = reinterpret_cast<GetApiBaseFn>(handle->getSymbol("OrtGetApiBase"));
 
     if (!get_api_base) {
       if (err) {
         *err = "Failed to find OrtGetApiBase in libonnxruntime.";
       }
-      dlclose(handle);
-      handle = nullptr;
+      handle.reset();
       return false;
     }
 
@@ -137,8 +138,7 @@ struct OrtLoader {
       if (err) {
         *err = "Invalid OrtApiBase returned.";
       }
-      dlclose(handle);
-      handle = nullptr;
+      handle.reset();
       return false;
     }
 
@@ -153,14 +153,13 @@ struct OrtLoader {
       if (err) {
         *err = "Failed to get a compatible ORT API version.";
       }
-      dlclose(handle);
-      handle = nullptr;
+      handle.reset();
       return false;
     }
 
     // Check for CUDA provider availability
     // Try to find the CUDA provider registration function
-    cuda_available = (dlsym(handle, "OrtSessionOptionsAppendExecutionProvider_CUDA") != nullptr);
+    cuda_available = (handle->getSymbol("OrtSessionOptionsAppendExecutionProvider_CUDA") != nullptr);
 
     return true;
   }

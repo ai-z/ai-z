@@ -13,6 +13,15 @@
 #include <mutex>
 #include <wchar.h>
 
+#if defined(_WIN32)
+static int wcwidth_compat(wchar_t ch) {
+  if (ch == 0) return 0;
+  if (iswcntrl(ch)) return -1;
+  return 1;
+}
+#define wcwidth wcwidth_compat
+#endif
+
 namespace aiz {
 
 struct ConfigToggleItem {
@@ -688,6 +697,8 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
       std::string linkStr = "--";
       if (gt.pcieLinkWidth && gt.pcieLinkGen) {
         linkStr = "GEN " + std::to_string(*gt.pcieLinkGen) + "@" + std::to_string(*gt.pcieLinkWidth) + "x";
+      } else if (!gt.pcieLinkNote.empty()) {
+        linkStr = "-- (" + gt.pcieLinkNote + ")";
       }
       const std::string pcieStr = linkStr
           + " RX: " + fmtSampleOrDashSpaced(state.latest.pcieRx)
@@ -933,6 +944,8 @@ static void renderMinimal(Frame& out, int /*bodyTop*/, const TuiState& state) {
     std::string linkStr = "--";
     if (gt.pcieLinkWidth && gt.pcieLinkGen) {
       linkStr = "GEN " + std::to_string(*gt.pcieLinkGen) + "@" + std::to_string(*gt.pcieLinkWidth) + "x";
+    } else if (!gt.pcieLinkNote.empty()) {
+      linkStr = "-- (" + gt.pcieLinkNote + ")";
     }
     const std::string pcieStr = linkStr
         + " RX: " + fmtSampleOrDashSpaced(state.latest.pcieRx)

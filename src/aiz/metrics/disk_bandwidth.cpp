@@ -1,7 +1,6 @@
 #include <aiz/metrics/disk_bandwidth.h>
-#include <cctype>
-#include <fstream>
-#include <sstream>
+
+#include <aiz/platform/metrics/disk.h>
 
 namespace aiz {
 
@@ -13,74 +12,23 @@ DiskBandwidthCollector::DiskBandwidthCollector(DiskBandwidthMode mode, std::stri
 
 DiskBandwidthCollector::~DiskBandwidthCollector() = default;
 
-static bool readDiskSectorsTotals(const std::string& devicePrefix, std::uint64_t& readSectorsOut, std::uint64_t& writeSectorsOut) {
-  // /proc/diskstats fields (Linux): reads completed, reads merged, sectors read, ms reading,
-  // writes completed, writes merged, sectors written, ms writing, ...
-  // We sum read+write sectors across matching devices.
-  std::ifstream in("/proc/diskstats");
-  if (!in.is_open()) return false;
-
-  std::uint64_t readSectors = 0;
-  std::uint64_t writeSectors = 0;
-  std::string line;
-  while (std::getline(in, line)) {
-    std::istringstream iss(line);
-    int major = 0, minor = 0;
-    std::string dev;
-    iss >> major >> minor >> dev;
-    if (dev.empty()) continue;
-
-    if (!devicePrefix.empty()) {
-      if (dev.rfind(devicePrefix, 0) != 0) continue;
-    } else {
-      // Default: ignore partitions like sda1, nvme0n1p1. Keep base devices like sda, nvme0n1.
-      const bool endsWithDigit = (!dev.empty() && std::isdigit(static_cast<unsigned char>(dev.back())));
-      const bool isNvme = (dev.rfind("nvme", 0) == 0);
-      if (isNvme) {
-        // nvme base devices typically end in a digit (nvme0n1). Partitions include 'p' (nvme0n1p1).
-        if (endsWithDigit && dev.find('p') != std::string::npos) continue;
-      } else {
-        if (endsWithDigit) continue;
-      }
-    }
-
-    std::uint64_t readsCompleted = 0, readsMerged = 0, sectorsRead = 0, msReading = 0;
-    std::uint64_t writesCompleted = 0, writesMerged = 0, sectorsWritten = 0, msWriting = 0;
-    iss >> readsCompleted >> readsMerged >> sectorsRead >> msReading;
-    iss >> writesCompleted >> writesMerged >> sectorsWritten >> msWriting;
-
-    readSectors += sectorsRead;
-    writeSectors += sectorsWritten;
-  }
-
-  readSectorsOut = readSectors;
-  writeSectorsOut = writeSectors;
-  return true;
-}
-
 std::optional<Sample> DiskBandwidthCollector::sample() {
-  std::uint64_t readSectors = 0;
-  std::uint64_t writeSectors = 0;
-  if (!readDiskSectorsTotals(devicePrefix_, readSectors, writeSectors)) {
-    return std::nullopt;
-  }
+  const auto counters = platform::readDiskCounters(devicePrefix_);
+  if (!counters) return std::nullopt;
 
-  std::uint64_t sectors = 0;
+  std::uint64_t bytesTotal = 0;
   switch (mode_) {
     case DiskBandwidthMode::Read:
-      sectors = readSectors;
+      bytesTotal = counters->readBytes;
       break;
     case DiskBandwidthMode::Write:
-      sectors = writeSectors;
+      bytesTotal = counters->writeBytes;
       break;
     case DiskBandwidthMode::Total:
     default:
-      sectors = readSectors + writeSectors;
+      bytesTotal = counters->readBytes + counters->writeBytes;
       break;
   }
-
-  // Assume 512-byte sectors (common for diskstats). This is a known limitation.
-  const std::uint64_t bytesTotal = sectors * 512ULL;
 
   const auto now = std::chrono::steady_clock::now();
   if (!hasPrev_) {

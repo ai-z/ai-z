@@ -11,7 +11,11 @@
 namespace fs = std::filesystem;
 
 static void setEnvVar(const char* key, const std::string& value) {
+#if defined(_WIN32)
+  _putenv_s(key, value.c_str());
+#else
   setenv(key, value.c_str(), 1);
+#endif
 }
 
 static fs::path makeTempDir() {

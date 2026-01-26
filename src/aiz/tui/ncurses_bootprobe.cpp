@@ -1,5 +1,11 @@
 #include "ncurses_bootprobe.h"
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <objbase.h>
+#endif
+
 #include <utility>
 
 namespace aiz::ncurses {
@@ -13,6 +19,11 @@ void BootHardwareProbe::start() {
   ready_.store(false);
 
   thread_ = std::thread([this]() {
+#if defined(_WIN32)
+    const HRESULT hrCo = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool coInited = SUCCEEDED(hrCo);
+#endif
+
     HardwareInfo hw = HardwareInfo::probe();
     std::vector<std::string> lines = hw.toLines();
 
@@ -23,6 +34,12 @@ void BootHardwareProbe::start() {
     }
 
     ready_.store(true);
+
+#if defined(_WIN32)
+    if (coInited) {
+      CoUninitialize();
+    }
+#endif
   });
 }
 

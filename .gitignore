@@ -55,3 +55,6 @@ CTestTestfile.cmake
 # OS
 .DS_Store
 Thumbs.db
+
+# Local debug artifacts
+tmp_*.txt

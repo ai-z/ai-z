@@ -21,6 +21,8 @@ struct GpuTelemetry {
   std::optional<double> decoderUtilPct;
   std::optional<unsigned int> pcieLinkWidth;
   std::optional<unsigned int> pcieLinkGen;
+  // Short reason when PCIe link fields are unavailable (e.g. "ADL missing").
+  std::string pcieLinkNote;
   std::string source;
 };
 

@@ -7,7 +7,9 @@
 #include <aiz/metrics/cpu_usage.h>
 #include <aiz/metrics/disk_bandwidth.h>
 #include <aiz/metrics/network_bandwidth.h>
+#if defined(AI_Z_PLATFORM_LINUX)
 #include <aiz/metrics/linux_gpu_sysfs.h>
+#endif
 #include <aiz/metrics/nvidia_nvml.h>
 #include <aiz/metrics/process_list.h>
 #include <aiz/metrics/ram_usage.h>
@@ -18,6 +20,17 @@
 
 #include <clocale>
 #include <cctype>
+#include <iostream>
+
+#if defined(AI_Z_PLATFORM_WINDOWS)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #include "ncurses_render.h"
 #include "ncurses_probe.h"
@@ -155,6 +168,101 @@ static void applyTimelineDevicesFromHw(TuiState& state, const HardwareInfo& hw) 
 
 }  // namespace
 
+#if defined(AI_Z_PLATFORM_WINDOWS)
+namespace {
+
+static bool windowsEnvFlagSet(const char* name) {
+  if (!name) return false;
+  if (const char* v = std::getenv(name)) {
+    if (*v == '\0') return false;
+    if (v[0] == '0' && v[1] == '\0') return false;
+    return true;
+  }
+  return false;
+}
+
+static void windowsAppendTuiLog(const std::string& msg) {
+  char tempPath[MAX_PATH] = {0};
+  const DWORD n = GetTempPathA(MAX_PATH, tempPath);
+  if (n == 0 || n >= MAX_PATH) return;
+
+  std::string path(tempPath);
+  if (!path.empty() && (path.back() != '\\' && path.back() != '/')) path.push_back('\\');
+  path += "ai-z-tui.log";
+
+  HANDLE h = CreateFileA(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                         FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (h == INVALID_HANDLE_VALUE) return;
+
+  DWORD written = 0;
+  (void)WriteFile(h, msg.data(), static_cast<DWORD>(msg.size()), &written, nullptr);
+  CloseHandle(h);
+}
+
+static bool windowsGetConsoleWindowSize(int* cols, int* rows) {
+  if (!cols || !rows) return false;
+  const HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+  if (hOut == INVALID_HANDLE_VALUE) return false;
+  CONSOLE_SCREEN_BUFFER_INFO csbi{};
+  if (!GetConsoleScreenBufferInfo(hOut, &csbi)) return false;
+  *cols = (csbi.srWindow.Right - csbi.srWindow.Left) + 1;
+  *rows = (csbi.srWindow.Bottom - csbi.srWindow.Top) + 1;
+  return true;
+}
+
+static void windowsFixCursesEnvFromConsole() {
+  // Some terminals/PTY layers end up with bogus LINES/COLUMNS values (even negative),
+  // which can cause PDCurses to refuse to initialize.
+  int cols = 0, rows = 0;
+  if (!windowsGetConsoleWindowSize(&cols, &rows)) return;
+  if (cols <= 0 || rows <= 0) return;
+
+  char buf[32];
+  (void)snprintf(buf, sizeof(buf), "%d", rows);
+  SetEnvironmentVariableA("LINES", buf);
+  (void)snprintf(buf, sizeof(buf), "%d", cols);
+  SetEnvironmentVariableA("COLUMNS", buf);
+}
+
+extern "C" int aiz_windows_safe_refresh(void);
+
+static bool windowsConsoleOkForCurses(std::string* reason) {
+  const HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+  const HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+  if (hIn == INVALID_HANDLE_VALUE || hOut == INVALID_HANDLE_VALUE) {
+    if (reason) *reason = "invalid std handles";
+    return false;
+  }
+
+  DWORD mode = 0;
+  if (!GetConsoleMode(hOut, &mode)) {
+    if (reason) *reason = "stdout is not a Windows console (output redirected or unsupported terminal)";
+    return false;
+  }
+  if (!GetConsoleMode(hIn, &mode)) {
+    if (reason) *reason = "stdin is not a Windows console (input redirected or unsupported terminal)";
+    return false;
+  }
+
+  CONSOLE_SCREEN_BUFFER_INFO csbi{};
+  if (!GetConsoleScreenBufferInfo(hOut, &csbi)) {
+    if (reason) *reason = "failed to query console screen buffer";
+    return false;
+  }
+
+  const int cols = (csbi.srWindow.Right - csbi.srWindow.Left) + 1;
+  const int rows = (csbi.srWindow.Bottom - csbi.srWindow.Top) + 1;
+  if (cols < 10 || rows < 2) {
+    if (reason) *reason = "console window is too small";
+    return false;
+  }
+
+  return true;
+}
+
+}  // namespace
+#endif
+
 namespace {
 
 class RandomWalk {
@@ -187,19 +295,70 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   // Falls back gracefully if the environment isn't UTF-8.
   std::setlocale(LC_ALL, "");
 
-  initscr();
+#if defined(AI_Z_PLATFORM_WINDOWS)
+  // PDCurses/ncurses builds on Windows can fail (or even crash) when stdout/stdin
+  // are not connected to a real Windows console (e.g., redirected output, some PTYs).
+  // Detect that early and provide a clear error instead of calling initscr().
+  std::string consoleReason;
+  if (!windowsConsoleOkForCurses(&consoleReason)) {
+    const std::string msg1 = std::string("ai-z: TUI unavailable: ") + consoleReason + "\n";
+    const std::string msg2 =
+        "ai-z: try running from Windows Terminal/cmd.exe (not the VS Code integrated terminal), and avoid output redirection\n";
+    windowsAppendTuiLog(msg1 + msg2);
+    std::cerr << msg1 << msg2 << std::flush;
+    return 1;
+  }
+
+  // If we're in a console but environment variables are bogus, override them.
+  // This helps PDCurses initialize in some PTY/ConPTY setups.
+  windowsAppendTuiLog("stage: console ok\n");
+  windowsFixCursesEnvFromConsole();
+  windowsAppendTuiLog("stage: env fixed (LINES/COLUMNS)\n");
+#endif
+
+  #if defined(AI_Z_PLATFORM_WINDOWS)
+  windowsAppendTuiLog("stage: calling initscr()\n");
+  #endif
+  WINDOW* w = initscr();
+  if (!w) {
+    const std::string msg =
+        "ai-z: failed to initialize curses (unsupported terminal).\n"
+        "ai-z: try Windows Terminal/cmd.exe; the VS Code integrated terminal may not support curses on Windows.\n";
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    windowsAppendTuiLog(msg);
+    #endif
+    std::cerr << msg << std::flush;
+    return 1;
+  }
+
+  #if defined(AI_Z_PLATFORM_WINDOWS)
+  windowsAppendTuiLog("stage: initscr ok\n");
+  #endif
   cbreak();
   noecho();
   keypad(stdscr, TRUE);
+
+  #if defined(AI_Z_PLATFORM_WINDOWS)
+  windowsAppendTuiLog("stage: input modes set\n");
+  #endif
 
   // Arrow keys are typically encoded as escape sequences. The default ESCDELAY can
   // make them feel sluggish and can also contribute to perceived input backlog.
   // Keep it small so navigation is snappy.
 #if defined(NCURSES_VERSION)
   set_escdelay(1);
+#elif defined(PDC_BUILD)
+  // PDCurses handles escape timing internally.
 #endif
+
+  #if defined(AI_Z_PLATFORM_WINDOWS)
+  windowsAppendTuiLog("stage: escdelay/cursor\n");
+  #endif
   curs_set(0);
 
+  #if defined(AI_Z_PLATFORM_WINDOWS)
+  windowsAppendTuiLog("stage: colors begin\n");
+  #endif
   if (has_colors()) {
     start_color();
     use_default_colors();
@@ -221,6 +380,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     init_pair(8, COLOR_WHITE, COLOR_RED);
   }
 
+  #if defined(AI_Z_PLATFORM_WINDOWS)
+  windowsAppendTuiLog("stage: colors done\n");
+  #endif
+
   TuiState state;
   state.screen = Screen::Timelines;
 
@@ -234,6 +397,9 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
   // Draw something immediately so we don't appear to hang on a cleared screen.
   {
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    windowsAppendTuiLog("stage: initial frame begin\n");
+    #endif
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
 
@@ -241,9 +407,18 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     Viewport vp{cols, rows};
     state.tick = 0;
     state.hardwareLines = {"Initializing..."};
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    windowsAppendTuiLog("stage: initial renderFrame begin\n");
+    #endif
     renderFrame(frame, vp, state, cfg, debugMode);
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    windowsAppendTuiLog("stage: initial renderFrame done\n");
+    #endif
 
     int lastAttr = INT32_MIN;
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    windowsAppendTuiLog("stage: initial draw loop begin\n");
+    #endif
     for (int y = 0; y < rows; ++y) {
       for (int x = 0; x < cols; ++x) {
         const auto& c = frame.at(x, y);
@@ -263,13 +438,35 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
         } else if (c.ch == 0 || c.ch == L' ') {
           mvaddch(y, x, ' ');
         } else {
+          #if defined(_WIN32)
+          // Some Windows curses backends (notably under ConPTY/VS Code terminal)
+          // can crash when rendering wide characters.
+          mvaddch(y, x, '?');
+          #else
           wchar_t buf[2] = {c.ch, 0};
           mvaddnwstr(y, x, buf, 1);
+          #endif
         }
       }
     }
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    windowsAppendTuiLog("stage: initial draw loop done\n");
+    #endif
     attrset(A_NORMAL);
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    windowsAppendTuiLog("stage: initial refresh begin\n");
+    if (!aiz_windows_safe_refresh()) {
+      windowsAppendTuiLog("ai-z: EXCEPTION during refresh()\n");
+      const std::string msg =
+          "ai-z: TUI crashed during screen refresh in this terminal.\n"
+          "ai-z: try Windows Terminal/cmd.exe, or run --hardware.\n";
+      std::cerr << msg;
+      return 1;
+    }
+    windowsAppendTuiLog("stage: initial refresh done\n");
+    #else
     refresh();
+    #endif
 
     // Seed the diff cache and last-known geometry so the first loop iteration
     // doesn't immediately erase + redraw the entire screen.
@@ -322,10 +519,15 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     if (n && *n > 0) {
       gpuCount = *n;
       hasNvml = true;
-    } else {
+        } else {
+    #if defined(AI_Z_PLATFORM_LINUX)
       const unsigned int nSys = linuxGpuCount();
       if (nSys > 0) gpuCount = nSys;
-    }
+    #elif defined(_WIN32)
+      const unsigned int nSys = ncurses::probeGpuCountFast();
+      if (nSys > 0) gpuCount = nSys;
+    #endif
+        }
   }
 
   // Resolve device names early (before starting background threads) so Timelines titles
@@ -341,7 +543,26 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   if (ncurses::hasRealDeviceNames(gpuNamesInit)) state.gpuDeviceNames = std::move(gpuNamesInit);
 
   ncurses::GpuTelemetrySampler gpuSampler(gpuCount, hasNvml);
-  if (!debugMode) gpuSampler.start();
+  const bool disableGpuSampler = windowsEnvFlagSet("AI_Z_DISABLE_GPU_SAMPLER");
+  if (!debugMode && !disableGpuSampler) {
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    windowsAppendTuiLog("stage: starting gpu sampler\n");
+    #endif
+    gpuSampler.start();
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    windowsAppendTuiLog("stage: gpu sampler started\n");
+    #endif
+  } else if (!debugMode && disableGpuSampler) {
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    windowsAppendTuiLog("stage: gpu sampler disabled by AI_Z_DISABLE_GPU_SAMPLER\n");
+    #endif
+  }
+#if defined(_WIN32)
+  if (!debugMode && !hasNvml && !ncurses::GpuTelemetrySampler::isPcieThroughputSupported()) {
+    cfg.showPcieRx = false;
+    cfg.showPcieTx = false;
+  }
+#endif
 
   // Use shared-core timelines so the Frame renderer can display them.
   ensureTimelineCapacity(state.cpuTl, cfg.timelineSamples);
@@ -369,7 +590,32 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   // Boot-time hardware probe (background): this is primarily to get CPU/GPU names
   // for Timelines titles reliably, without requiring the user to open the Hardware screen.
   ncurses::BootHardwareProbe bootProbe;
-  if (!debugMode) bootProbe.start();
+  const bool disableBootProbe = windowsEnvFlagSet("AI_Z_DISABLE_BOOT_PROBE");
+  #if defined(_WIN32)
+  // On some Windows systems, HardwareInfo::probe() is not safe to run from a
+  // background thread (can crash via COM/WMI/WDDM calls). Keep it opt-in.
+  const bool enableBootProbeThread = windowsEnvFlagSet("AI_Z_ENABLE_BOOT_PROBE");
+  #else
+  const bool enableBootProbeThread = true;
+  #endif
+
+  if (!debugMode && !disableBootProbe && enableBootProbeThread) {
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    windowsAppendTuiLog("stage: starting boot probe\n");
+    #endif
+    bootProbe.start();
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    windowsAppendTuiLog("stage: boot probe started\n");
+    #endif
+  } else if (!debugMode && disableBootProbe) {
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    windowsAppendTuiLog("stage: boot probe disabled by AI_Z_DISABLE_BOOT_PROBE\n");
+    #endif
+  } else if (!debugMode && !enableBootProbeThread) {
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    windowsAppendTuiLog("stage: boot probe thread disabled by default on Windows (set AI_Z_ENABLE_BOOT_PROBE=1 to enable)\n");
+    #endif
+  }
 
   // Benchmark runner state: keep UI responsive while benchmarks execute.
   std::thread benchThread;
@@ -410,6 +656,13 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
   bool running = true;
 
+  std::optional<std::uint32_t> smokeMs;
+  if (const char* v = std::getenv("AI_Z_TUI_SMOKE_MS")) {
+    const long ms = std::strtol(v, nullptr, 10);
+    if (ms > 0) smokeMs = static_cast<std::uint32_t>(ms);
+  }
+  const auto smokeStart = std::chrono::steady_clock::now();
+
   constexpr std::uint32_t kRefreshMinMs = 50;
   constexpr std::uint32_t kRefreshMaxMs = 5000;
 
@@ -429,6 +682,13 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   };
 
   while (running) {
+    if (smokeMs) {
+      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - smokeStart);
+      if (elapsed.count() >= static_cast<long long>(*smokeMs)) {
+        break;
+      }
+    }
     ++uiTick;
     // Join completed benchmark worker (if any) so we can start another run.
     ncurses::benchJoinIfDone(benchThread, state);
@@ -729,6 +989,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
         gs.decoderUtilPct = gt.decoderUtilPct;
         if (gt.pcieLinkWidth) gs.pcieLinkWidth = static_cast<int>(*gt.pcieLinkWidth);
         if (gt.pcieLinkGen) gs.pcieLinkGen = static_cast<int>(*gt.pcieLinkGen);
+        gs.pcieLinkNote = gt.pcieLinkNote;
       }
       state.latest.gpus.push_back(std::move(gs));
     }
@@ -875,7 +1136,13 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
         state.cpuDevice = hwCache.cpuName;
       }
       if (!ncurses::hasRealDeviceNames(state.gpuDeviceNames)) {
-        std::vector<std::string> fromHw = ncurses::parseGpuNames(hwCache, gpuCount);
+        std::vector<std::string> fromHw;
+      #if defined(_WIN32)
+        fromHw.resize(gpuCount);
+        for (unsigned int i = 0; i < gpuCount; ++i) fromHw[i] = "GPU" + std::to_string(i);
+      #else
+        fromHw = ncurses::parseGpuNames(hwCache, gpuCount);
+      #endif
         if (ncurses::hasRealDeviceNames(fromHw)) state.gpuDeviceNames = std::move(fromHw);
       }
       applyTimelineDevicesFromHw(state, hwCache);
@@ -890,7 +1157,13 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     }
 
     if (!ncurses::hasRealDeviceNames(state.gpuDeviceNames)) {
-      std::vector<std::string> fromHw = ncurses::parseGpuNames(hwCache, gpuCount);
+      std::vector<std::string> fromHw;
+    #if defined(_WIN32)
+      fromHw.resize(gpuCount);
+      for (unsigned int i = 0; i < gpuCount; ++i) fromHw[i] = "GPU" + std::to_string(i);
+    #else
+      fromHw = ncurses::parseGpuNames(hwCache, gpuCount);
+    #endif
       if (ncurses::hasRealDeviceNames(fromHw)) {
         state.gpuDeviceNames = std::move(fromHw);
       }
@@ -945,8 +1218,12 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           } else if (c.ch == 0 || c.ch == L' ') {
             mvaddch(y, x, ' ');
           } else {
+            #if defined(_WIN32)
+            mvaddch(y, x, '?');
+            #else
             wchar_t buf[2] = {c.ch, 0};
             mvaddnwstr(y, x, buf, 1);
+            #endif
           }
         }
       }
@@ -975,8 +1252,12 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
         } else if (cur.ch == 0 || cur.ch == L' ') {
           mvaddch(y, x, ' ');
         } else {
+          #if defined(_WIN32)
+          mvaddch(y, x, '?');
+          #else
           wchar_t buf[2] = {cur.ch, 0};
           mvaddnwstr(y, x, buf, 1);
+          #endif
         }
       }
     }
@@ -985,6 +1266,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     havePrevFrame = true;
     attrset(A_NORMAL);
     refresh();
+
   }
 
   gpuSampler.stop();

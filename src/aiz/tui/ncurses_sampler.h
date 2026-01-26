@@ -26,6 +26,8 @@ public:
   void snapshot(std::vector<std::optional<GpuTelemetry>>& outGpu,
                 std::optional<NvmlPcieThroughput>& outPcie) const;
 
+  static bool isPcieThroughputSupported();
+
 private:
   void run();
 

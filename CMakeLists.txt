@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ai-z VERSION 0.1.0 LANGUAGES CXX)
+project(ai-z VERSION 0.1.0 LANGUAGES C CXX)
 
 include(GNUInstallDirs)
 
@@ -7,9 +7,19 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Linux-only for now.
-if (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  message(FATAL_ERROR "ai-z currently supports Linux only")
+# Platform check
+if (NOT CMAKE_SYSTEM_NAME MATCHES "Linux|Windows")
+  message(FATAL_ERROR "ai-z supports Linux and Windows only")
+endif()
+
+# Platform detection
+set(AI_Z_PLATFORM_LINUX OFF)
+set(AI_Z_PLATFORM_WINDOWS OFF)
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(AI_Z_PLATFORM_LINUX ON)
+elseif (WIN32)
+  set(AI_Z_PLATFORM_WINDOWS ON)
 endif()
 
 # Backend defaults
@@ -44,6 +54,10 @@ option(AI_Z_ENABLE_WARNINGS "Enable -Wall/-Wextra style warnings" OFF)
 # benchmark needs the C API header to safely call the function table.
 set(AI_Z_ONNXRUNTIME_ROOT "" CACHE PATH "ONNX Runtime root (contains include/ and lib/) for enabling real ORT benchmarks")
 
+# Optional: AMD ADLX headers (official AMD SDK).
+# ai-z runtime-loads amdadlx64.dll, but compiling the interface calls needs headers.
+set(AI_Z_ADLX_ROOT "" CACHE PATH "ADLX SDK root (contains SDK/Include) for enabling ADLX integration")
+
 set(AI_Z_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/include/aiz/version.h.in
@@ -53,7 +67,7 @@ configure_file(
 
 include(CTest)
 
-add_executable(ai-z
+set(AI_Z_COMMON_SOURCES
   src/main.cpp
   src/aiz/app.cpp
   src/aiz/i18n.cpp
@@ -62,14 +76,13 @@ add_executable(ai-z
   src/aiz/dyn/opencl.cpp
   src/aiz/dyn/vulkan.cpp
   src/aiz/dyn/onnxruntime.cpp
-  src/aiz/hw/hardware_info.cpp
   src/aiz/metrics/cpu_usage.cpp
   src/aiz/metrics/disk_bandwidth.cpp
   src/aiz/metrics/network_bandwidth.cpp
-  src/aiz/metrics/linux_gpu_sysfs.cpp
   src/aiz/metrics/gpu_memory_util.cpp
   src/aiz/metrics/timeline.cpp
   src/aiz/metrics/nvidia_nvml.cpp
+  src/aiz/metrics/amd_adl.cpp
   src/aiz/metrics/gpu_stub.cpp
   src/aiz/metrics/pcie_stub.cpp
   src/aiz/metrics/ram_usage.cpp
@@ -83,13 +96,58 @@ add_executable(ai-z
   src/aiz/bench/onnxruntime_bench.cpp
 )
 
+if (AI_Z_PLATFORM_LINUX)
+  set(AI_Z_PLATFORM_SOURCES
+    src/aiz/platform/linux/dynlib_linux.cpp
+    src/aiz/platform/linux/config_paths_linux.cpp
+    src/aiz/platform/linux/process_linux.cpp
+    src/aiz/platform/linux/metrics/cpu_linux.cpp
+    src/aiz/platform/linux/metrics/memory_linux.cpp
+    src/aiz/platform/linux/metrics/disk_linux.cpp
+    src/aiz/platform/linux/metrics/network_linux.cpp
+    src/aiz/metrics/linux_gpu_sysfs.cpp
+    src/aiz/hw/hardware_info.cpp
+  )
+elseif (AI_Z_PLATFORM_WINDOWS)
+  set(AI_Z_PLATFORM_SOURCES
+    src/aiz/platform/windows/dynlib_windows.cpp
+    src/aiz/platform/windows/config_paths_windows.cpp
+    src/aiz/platform/windows/process_windows.cpp
+    src/aiz/platform/windows/metrics/cpu_windows.cpp
+    src/aiz/platform/windows/metrics/memory_windows.cpp
+    src/aiz/platform/windows/metrics/disk_windows.cpp
+    src/aiz/platform/windows/metrics/network_windows.cpp
+    src/aiz/hw/hardware_info_windows.cpp
+  )
+endif()
+
+add_executable(ai-z ${AI_Z_COMMON_SOURCES} ${AI_Z_PLATFORM_SOURCES})
+
 target_include_directories(ai-z PRIVATE include)
 target_include_directories(ai-z PRIVATE ${AI_Z_GENERATED_DIR})
 
-# Prefer wide-character ncurses for localized UI strings.
-set(CURSES_NEED_NCURSES TRUE)
-set(CURSES_NEED_WIDE TRUE)
-find_package(Curses REQUIRED)
+if (AI_Z_PLATFORM_WINDOWS)
+  set(AI_Z_ADLX_INCLUDE_HINTS "${CMAKE_CURRENT_SOURCE_DIR}/../ADLX/SDK/Include")
+  if (AI_Z_ADLX_ROOT)
+    list(APPEND AI_Z_ADLX_INCLUDE_HINTS "${AI_Z_ADLX_ROOT}/SDK/Include")
+    list(APPEND AI_Z_ADLX_INCLUDE_HINTS "${AI_Z_ADLX_ROOT}/Include")
+  endif()
+
+  find_path(AI_Z_ADLX_INCLUDE_DIR
+    NAMES ADLX.h ISystem1.h ISystem2.h
+    HINTS ${AI_Z_ADLX_INCLUDE_HINTS}
+  )
+
+  if (AI_Z_ADLX_INCLUDE_DIR)
+    target_include_directories(ai-z PRIVATE ${AI_Z_ADLX_INCLUDE_DIR})
+    target_compile_definitions(ai-z PRIVATE AI_Z_HAS_ADLX_HEADERS=1)
+    message(STATUS "ADLX headers found: ${AI_Z_ADLX_INCLUDE_DIR} (ADLX integration enabled)")
+  else()
+    message(STATUS "ADLX headers not found; ADLX integration disabled")
+  endif()
+endif()
+
+# TUI sources
 target_sources(ai-z PRIVATE
   src/aiz/tui/platform_ui_ncurses.cpp
   src/aiz/tui/ncurses_render.cpp
@@ -104,16 +162,43 @@ target_sources(ai-z PRIVATE
   src/aiz/tui/tui_core.cpp
 )
 
-find_library(AI_Z_NCURSESW_LIBRARY NAMES ncursesw)
-if (AI_Z_NCURSESW_LIBRARY)
-  target_link_libraries(ai-z PRIVATE ${AI_Z_NCURSESW_LIBRARY})
-else()
-  target_link_libraries(ai-z PRIVATE ${CURSES_LIBRARIES})
+if (AI_Z_PLATFORM_WINDOWS)
+  target_sources(ai-z PRIVATE src/aiz/tui/win_curses_seh.c)
 endif()
 
-target_include_directories(ai-z PRIVATE ${CURSES_INCLUDE_DIR})
+if (AI_Z_PLATFORM_LINUX)
+  # Prefer wide-character ncurses for localized UI strings.
+  set(CURSES_NEED_NCURSES TRUE)
+  set(CURSES_NEED_WIDE TRUE)
+  find_package(Curses REQUIRED)
 
-target_link_libraries(ai-z PRIVATE dl)
+  find_library(AI_Z_NCURSESW_LIBRARY NAMES ncursesw)
+  if (AI_Z_NCURSESW_LIBRARY)
+    target_link_libraries(ai-z PRIVATE ${AI_Z_NCURSESW_LIBRARY})
+  else()
+    target_link_libraries(ai-z PRIVATE ${CURSES_LIBRARIES})
+  endif()
+
+  target_include_directories(ai-z PRIVATE ${CURSES_INCLUDE_DIR})
+  target_link_libraries(ai-z PRIVATE dl)
+elseif (AI_Z_PLATFORM_WINDOWS)
+  # PDCurses via vcpkg or manual
+  find_package(unofficial-pdcurses CONFIG QUIET)
+  if (unofficial-pdcurses_FOUND)
+    target_link_libraries(ai-z PRIVATE unofficial::pdcurses::pdcurses)
+  else()
+    find_library(PDCURSES_LIBRARY NAMES pdcurses)
+    find_path(PDCURSES_INCLUDE_DIR curses.h)
+    if (PDCURSES_LIBRARY AND PDCURSES_INCLUDE_DIR)
+      target_link_libraries(ai-z PRIVATE ${PDCURSES_LIBRARY})
+      target_include_directories(ai-z PRIVATE ${PDCURSES_INCLUDE_DIR})
+    else()
+      message(FATAL_ERROR "PDCurses not found. Install via vcpkg or set PDCURSES_LIBRARY/PDCURSES_INCLUDE_DIR")
+    endif()
+  endif()
+  target_compile_definitions(ai-z PRIVATE PDC_WIDE=1)
+  target_link_libraries(ai-z PRIVATE dxgi pdh setupapi)
+endif()
 
 # Enable real ONNX Runtime benchmarks when headers are available.
 set(AI_Z_ONNXRUNTIME_INCLUDE_HINTS "")
@@ -226,6 +311,12 @@ if (AI_Z_ENABLE_VULKAN)
   endif()
 endif()
 
+# Platform compile definitions
+target_compile_definitions(ai-z PRIVATE
+  $<$<BOOL:${AI_Z_PLATFORM_LINUX}>:AI_Z_PLATFORM_LINUX>
+  $<$<BOOL:${AI_Z_PLATFORM_WINDOWS}>:AI_Z_PLATFORM_WINDOWS>
+)
+
 target_compile_definitions(ai-z PRIVATE
   $<$<BOOL:${AI_Z_ENABLE_NVML}>:AI_Z_ENABLE_NVML>
   $<$<BOOL:${AI_Z_ENABLE_CUDA}>:AI_Z_ENABLE_CUDA>
@@ -244,6 +335,10 @@ if (AI_Z_ENABLE_WARNINGS)
   elseif (MSVC)
     target_compile_options(ai-z PRIVATE /W4)
   endif()
+endif()
+
+if (AI_Z_PLATFORM_WINDOWS)
+  target_link_libraries(ai-z PRIVATE iphlpapi psapi advapi32 shell32 ole32)
 endif()
 
 if (BUILD_TESTING)

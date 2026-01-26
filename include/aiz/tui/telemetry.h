@@ -34,6 +34,9 @@ struct GpuTelemetrySnapshot {
   // PCIe link info (if known).
   std::optional<int> pcieLinkWidth;
   std::optional<int> pcieLinkGen;
+
+  // Short reason when PCIe link fields are unavailable (e.g. "ADL missing").
+  std::string pcieLinkNote;
 };
 
 struct TelemetrySnapshot {

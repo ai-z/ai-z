@@ -1,7 +1,8 @@
 #include <aiz/metrics/nvidia_nvml.h>
 
-#include <dlfcn.h>
-#if defined(__linux__)
+#include <aiz/platform/dynlib.h>
+
+#if defined(AI_Z_PLATFORM_LINUX)
 #include <errno.h>
 #include <signal.h>
 #include <sys/select.h>
@@ -15,17 +16,19 @@
 #include <cstring>
 #include <chrono>
 #include <limits>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
 namespace aiz {
 namespace {
 
-#if defined(__linux__)
 // NVML can sometimes hang inside the driver stack. To keep the UI responsive while
 // still using NVML, execute NVML queries in a child process we can time out + kill.
 // This keeps NVML mandatory without relying on external tooling.
 constexpr std::chrono::milliseconds kNvmlCallTimeout{700};
+
+#if defined(AI_Z_PLATFORM_LINUX)
 
 struct OptU32Msg {
   std::uint8_t has = 0;
@@ -150,6 +153,13 @@ static std::optional<MsgT> callWithTimeout(Fn&& fn, std::chrono::milliseconds ti
   if (!ok) return std::nullopt;
   return msg;
 }
+#else
+template <typename MsgT, typename Fn>
+static std::optional<MsgT> callWithTimeout(Fn&& fn, std::chrono::milliseconds) {
+  MsgT msg{};
+  fn(msg);
+  return msg;
+}
 #endif
 
 // Minimal NVML ABI surface (avoid depending on nvml.h).
@@ -220,7 +230,7 @@ using nvmlDeviceGetProcessUtilization_t = nvmlReturn_t (*) (
   nvmlDevice_t, nvmlProcessUtilizationSample_t* /*samples*/, unsigned int* /*count*/, unsigned long long /*lastSeen*/);
 
 struct NvmlApi {
-  void* lib = nullptr;
+  std::unique_ptr<platform::DynamicLibrary> lib;
   nvmlInit_v2_t nvmlInit_v2 = nullptr;
   nvmlShutdown_t nvmlShutdown = nullptr;
   nvmlDeviceGetCount_v2_t nvmlDeviceGetCount_v2 = nullptr;
@@ -272,8 +282,8 @@ constexpr unsigned int NVML_CLOCK_MEM = 2;
 constexpr unsigned int NVML_PCIE_UTIL_TX_BYTES = 0;
 constexpr unsigned int NVML_PCIE_UTIL_RX_BYTES = 1;
 
-static void* loadSym(void* lib, const char* name) {
-  return dlsym(lib, name);
+static void* loadSym(platform::DynamicLibrary* lib, const char* name) {
+  return lib ? lib->getSymbol(name) : nullptr;
 }
 
 static NvmlApi& api() {
@@ -282,73 +292,75 @@ static NvmlApi& api() {
   if (attempted) return a;
   attempted = true;
 
-  // Prefer SONAME.
-  a.lib = dlopen("libnvidia-ml.so.1", RTLD_LAZY);
-  if (!a.lib) {
-    a.lib = dlopen("libnvidia-ml.so", RTLD_LAZY);
-  }
-  if (!a.lib) return a;
+  std::vector<const char*> candidates;
+  candidates.push_back(platform::nvmlLibraryName());
+#if defined(AI_Z_PLATFORM_LINUX)
+  candidates.push_back("libnvidia-ml.so");
+#endif
 
-  a.nvmlInit_v2 = reinterpret_cast<nvmlInit_v2_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlInit_v2"));
-  a.nvmlShutdown = reinterpret_cast<nvmlShutdown_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlShutdown"));
-  a.nvmlDeviceGetCount_v2 = reinterpret_cast<nvmlDeviceGetCount_v2_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetCount_v2"));
-  a.nvmlDeviceGetHandleByIndex_v2 = reinterpret_cast<nvmlDeviceGetHandleByIndex_v2_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetHandleByIndex_v2"));
-  a.nvmlDeviceGetUtilizationRates = reinterpret_cast<nvmlDeviceGetUtilizationRates_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetUtilizationRates"));
-  a.nvmlDeviceGetMemoryInfo = reinterpret_cast<nvmlDeviceGetMemoryInfo_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetMemoryInfo"));
-  a.nvmlDeviceGetPowerUsage = reinterpret_cast<nvmlDeviceGetPowerUsage_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPowerUsage"));
-  a.nvmlDeviceGetTemperature = reinterpret_cast<nvmlDeviceGetTemperature_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetTemperature"));
-  a.nvmlDeviceGetPowerState = reinterpret_cast<nvmlDeviceGetPowerState_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPowerState"));
-  a.nvmlDeviceGetPcieThroughput = reinterpret_cast<nvmlDeviceGetPcieThroughput_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPcieThroughput"));
-  a.nvmlDeviceGetName = reinterpret_cast<nvmlDeviceGetName_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetName"));
+  a.lib = platform::loadLibrary(candidates, nullptr);
+  if (!a.lib || !a.lib->isValid()) return a;
+
+  a.nvmlInit_v2 = reinterpret_cast<nvmlInit_v2_t>(loadSym(a.lib.get(), "nvmlInit_v2"));
+  a.nvmlShutdown = reinterpret_cast<nvmlShutdown_t>(loadSym(a.lib.get(), "nvmlShutdown"));
+  a.nvmlDeviceGetCount_v2 = reinterpret_cast<nvmlDeviceGetCount_v2_t>(loadSym(a.lib.get(), "nvmlDeviceGetCount_v2"));
+  a.nvmlDeviceGetHandleByIndex_v2 = reinterpret_cast<nvmlDeviceGetHandleByIndex_v2_t>(loadSym(a.lib.get(), "nvmlDeviceGetHandleByIndex_v2"));
+  a.nvmlDeviceGetUtilizationRates = reinterpret_cast<nvmlDeviceGetUtilizationRates_t>(loadSym(a.lib.get(), "nvmlDeviceGetUtilizationRates"));
+  a.nvmlDeviceGetMemoryInfo = reinterpret_cast<nvmlDeviceGetMemoryInfo_t>(loadSym(a.lib.get(), "nvmlDeviceGetMemoryInfo"));
+  a.nvmlDeviceGetPowerUsage = reinterpret_cast<nvmlDeviceGetPowerUsage_t>(loadSym(a.lib.get(), "nvmlDeviceGetPowerUsage"));
+  a.nvmlDeviceGetTemperature = reinterpret_cast<nvmlDeviceGetTemperature_t>(loadSym(a.lib.get(), "nvmlDeviceGetTemperature"));
+  a.nvmlDeviceGetPowerState = reinterpret_cast<nvmlDeviceGetPowerState_t>(loadSym(a.lib.get(), "nvmlDeviceGetPowerState"));
+  a.nvmlDeviceGetPcieThroughput = reinterpret_cast<nvmlDeviceGetPcieThroughput_t>(loadSym(a.lib.get(), "nvmlDeviceGetPcieThroughput"));
+  a.nvmlDeviceGetName = reinterpret_cast<nvmlDeviceGetName_t>(loadSym(a.lib.get(), "nvmlDeviceGetName"));
 
   // Optional extras (best-effort).
-  a.nvmlDeviceGetClockInfo = reinterpret_cast<nvmlDeviceGetClockInfo_t>(loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetClockInfo"));
+  a.nvmlDeviceGetClockInfo = reinterpret_cast<nvmlDeviceGetClockInfo_t>(loadSym(a.lib.get(), "nvmlDeviceGetClockInfo"));
   a.nvmlDeviceGetMaxClockInfo = reinterpret_cast<nvmlDeviceGetMaxClockInfo_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetMaxClockInfo"));
+      loadSym(a.lib.get(), "nvmlDeviceGetMaxClockInfo"));
   a.nvmlDeviceGetSupportedMemoryClocks = reinterpret_cast<nvmlDeviceGetSupportedMemoryClocks_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetSupportedMemoryClocks"));
+      loadSym(a.lib.get(), "nvmlDeviceGetSupportedMemoryClocks"));
   a.nvmlDeviceGetSupportedGraphicsClocks = reinterpret_cast<nvmlDeviceGetSupportedGraphicsClocks_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetSupportedGraphicsClocks"));
+      loadSym(a.lib.get(), "nvmlDeviceGetSupportedGraphicsClocks"));
   a.nvmlDeviceGetPerformanceModes = reinterpret_cast<nvmlDeviceGetPerformanceModes_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPerformanceModes"));
+      loadSym(a.lib.get(), "nvmlDeviceGetPerformanceModes"));
   a.nvmlDeviceGetCudaComputeCapability = reinterpret_cast<nvmlDeviceGetCudaComputeCapability_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetCudaComputeCapability"));
+      loadSym(a.lib.get(), "nvmlDeviceGetCudaComputeCapability"));
   a.nvmlDeviceGetMultiProcessorCount = reinterpret_cast<nvmlDeviceGetMultiProcessorCount_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetMultiProcessorCount"));
+      loadSym(a.lib.get(), "nvmlDeviceGetMultiProcessorCount"));
   a.nvmlDeviceGetPowerManagementLimitConstraints = reinterpret_cast<nvmlDeviceGetPowerManagementLimitConstraints_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetPowerManagementLimitConstraints"));
+      loadSym(a.lib.get(), "nvmlDeviceGetPowerManagementLimitConstraints"));
   a.nvmlDeviceGetMemoryBusWidth = reinterpret_cast<nvmlDeviceGetMemoryBusWidth_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetMemoryBusWidth"));
+      loadSym(a.lib.get(), "nvmlDeviceGetMemoryBusWidth"));
   a.nvmlDeviceGetEncoderUtilization = reinterpret_cast<nvmlDeviceGetEncoderUtilization_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetEncoderUtilization"));
+      loadSym(a.lib.get(), "nvmlDeviceGetEncoderUtilization"));
   a.nvmlDeviceGetDecoderUtilization = reinterpret_cast<nvmlDeviceGetDecoderUtilization_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetDecoderUtilization"));
+      loadSym(a.lib.get(), "nvmlDeviceGetDecoderUtilization"));
     a.nvmlDeviceGetGraphicsRunningProcesses_v3 = reinterpret_cast<nvmlDeviceGetGraphicsRunningProcesses_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetGraphicsRunningProcesses_v3"));
+      loadSym(a.lib.get(), "nvmlDeviceGetGraphicsRunningProcesses_v3"));
     a.nvmlDeviceGetGraphicsRunningProcesses_v2 = reinterpret_cast<nvmlDeviceGetGraphicsRunningProcesses_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetGraphicsRunningProcesses_v2"));
+      loadSym(a.lib.get(), "nvmlDeviceGetGraphicsRunningProcesses_v2"));
     a.nvmlDeviceGetGraphicsRunningProcesses = reinterpret_cast<nvmlDeviceGetGraphicsRunningProcesses_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetGraphicsRunningProcesses"));
+      loadSym(a.lib.get(), "nvmlDeviceGetGraphicsRunningProcesses"));
     a.nvmlDeviceGetComputeRunningProcesses_v3 = reinterpret_cast<nvmlDeviceGetComputeRunningProcesses_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetComputeRunningProcesses_v3"));
+      loadSym(a.lib.get(), "nvmlDeviceGetComputeRunningProcesses_v3"));
     a.nvmlDeviceGetComputeRunningProcesses_v2 = reinterpret_cast<nvmlDeviceGetComputeRunningProcesses_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetComputeRunningProcesses_v2"));
+      loadSym(a.lib.get(), "nvmlDeviceGetComputeRunningProcesses_v2"));
     a.nvmlDeviceGetComputeRunningProcesses = reinterpret_cast<nvmlDeviceGetComputeRunningProcesses_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetComputeRunningProcesses"));
+      loadSym(a.lib.get(), "nvmlDeviceGetComputeRunningProcesses"));
     a.nvmlDeviceGetProcessUtilization = reinterpret_cast<nvmlDeviceGetProcessUtilization_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetProcessUtilization"));
+      loadSym(a.lib.get(), "nvmlDeviceGetProcessUtilization"));
 
   // Optional system queries.
-  a.nvmlSystemGetNVMLVersion = reinterpret_cast<nvmlSystemGetNVMLVersion_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlSystemGetNVMLVersion"));
-  a.nvmlSystemGetDriverVersion = reinterpret_cast<nvmlSystemGetDriverVersion_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlSystemGetDriverVersion"));
+    a.nvmlSystemGetNVMLVersion = reinterpret_cast<nvmlSystemGetNVMLVersion_t>(
+      loadSym(a.lib.get(), "nvmlSystemGetNVMLVersion"));
+    a.nvmlSystemGetDriverVersion = reinterpret_cast<nvmlSystemGetDriverVersion_t>(
+      loadSym(a.lib.get(), "nvmlSystemGetDriverVersion"));
 
   // Optional (not required for a.ok()).
-  a.nvmlDeviceGetCurrPcieLinkGeneration = reinterpret_cast<nvmlDeviceGetCurrPcieLinkGeneration_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetCurrPcieLinkGeneration"));
-  a.nvmlDeviceGetCurrPcieLinkWidth = reinterpret_cast<nvmlDeviceGetCurrPcieLinkWidth_t>(
-      loadSym(reinterpret_cast<void*>(a.lib), "nvmlDeviceGetCurrPcieLinkWidth"));
+    a.nvmlDeviceGetCurrPcieLinkGeneration = reinterpret_cast<nvmlDeviceGetCurrPcieLinkGeneration_t>(
+      loadSym(a.lib.get(), "nvmlDeviceGetCurrPcieLinkGeneration"));
+    a.nvmlDeviceGetCurrPcieLinkWidth = reinterpret_cast<nvmlDeviceGetCurrPcieLinkWidth_t>(
+      loadSym(a.lib.get(), "nvmlDeviceGetCurrPcieLinkWidth"));
 
   if (!a.ok()) {
     // Keep lib open; just mark unusable.

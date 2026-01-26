@@ -1,105 +1,92 @@
 #include <aiz/dyn/cuda.h>
 
-#include <dlfcn.h>
+#include <aiz/platform/dynlib.h>
 
+#include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace aiz::dyn::cuda {
 namespace {
 
 template <typename T>
-static bool loadRequired(void* handle, const char* name, T& fn, std::string& err) {
-  dlerror();
-  void* sym = dlsym(handle, name);
-  const char* e = dlerror();
-  if (e != nullptr || sym == nullptr) {
-    err = std::string("Missing CUDA driver symbol '") + name + "': " + (e ? e : "(null)");
+static bool loadRequired(platform::DynamicLibrary& lib, const char* name, T& fn, std::string& err) {
+  if (!lib.loadSymbol(name, fn)) {
+    err = std::string("Missing CUDA driver symbol '") + name + "'";
     return false;
   }
-  fn = reinterpret_cast<T>(sym);
   return true;
 }
 
 template <typename T>
-static void loadOptional(void* handle, const char* name, T& fn) {
-  dlerror();
-  void* sym = dlsym(handle, name);
-  const char* e = dlerror();
-  if (e != nullptr || sym == nullptr) {
+static void loadOptional(platform::DynamicLibrary& lib, const char* name, T& fn) {
+  if (!lib.loadSymbol(name, fn)) {
     fn = nullptr;
-    return;
   }
-  fn = reinterpret_cast<T>(sym);
 }
 
 using cuGetErrorString_t = CUresult (*)(CUresult, const char**);
 static cuGetErrorString_t g_cuGetErrorString = nullptr;
 
-static const char* kCandidates[] = {
-  "libcuda.so.1",
-  "libcuda.so",
-};
-
 static std::once_flag g_once;
 static Api g_api;
 static std::string g_err;
 static bool g_ok = false;
+static std::unique_ptr<platform::DynamicLibrary> g_lib;
 
 static void initOnce() {
-  void* handle = nullptr;
-  for (const char* cand : kCandidates) {
-    handle = dlopen(cand, RTLD_LAZY | RTLD_LOCAL);
-    if (handle) break;
-  }
+  std::vector<const char*> candidates;
+  candidates.push_back(platform::cudaLibraryName());
+#if defined(AI_Z_PLATFORM_LINUX)
+  candidates.push_back("libcuda.so");
+#endif
 
-  if (!handle) {
-    const char* e = dlerror();
-    g_err = std::string("CUDA driver runtime not found (dlopen libcuda.so failed): ") + (e ? e : "(null)");
+  g_lib = platform::loadLibrary(candidates, &g_err);
+  if (!g_lib || !g_lib->isValid()) {
+    if (g_err.empty()) g_err = "CUDA driver runtime not found";
     g_ok = false;
     return;
   }
 
   Api api;
-  api.handle = handle;
+  api.handle = g_lib.get();
 
-  if (!loadRequired(handle, "cuInit", api.cuInit, g_err) ||
-      !loadRequired(handle, "cuDriverGetVersion", api.cuDriverGetVersion, g_err) ||
-      !loadRequired(handle, "cuDeviceGetCount", api.cuDeviceGetCount, g_err) ||
-      !loadRequired(handle, "cuDeviceGet", api.cuDeviceGet, g_err) ||
-      !loadRequired(handle, "cuDeviceGetName", api.cuDeviceGetName, g_err) ||
-      !loadRequired(handle, "cuCtxCreate_v2", api.cuCtxCreate_v2, g_err) ||
-      !loadRequired(handle, "cuCtxDestroy_v2", api.cuCtxDestroy_v2, g_err) ||
-      !loadRequired(handle, "cuStreamCreate", api.cuStreamCreate, g_err) ||
-      !loadRequired(handle, "cuStreamDestroy_v2", api.cuStreamDestroy_v2, g_err) ||
-      !loadRequired(handle, "cuStreamSynchronize", api.cuStreamSynchronize, g_err) ||
-      !loadRequired(handle, "cuMemAlloc_v2", api.cuMemAlloc_v2, g_err) ||
-      !loadRequired(handle, "cuMemFree_v2", api.cuMemFree_v2, g_err) ||
-      !loadRequired(handle, "cuMemHostAlloc", api.cuMemHostAlloc, g_err) ||
-      !loadRequired(handle, "cuMemFreeHost", api.cuMemFreeHost, g_err) ||
-      !loadRequired(handle, "cuMemcpyHtoDAsync_v2", api.cuMemcpyHtoDAsync_v2, g_err) ||
-      !loadRequired(handle, "cuMemcpyDtoHAsync_v2", api.cuMemcpyDtoHAsync_v2, g_err) ||
-      !loadRequired(handle, "cuEventCreate", api.cuEventCreate, g_err) ||
-      !loadRequired(handle, "cuEventDestroy_v2", api.cuEventDestroy_v2, g_err) ||
-      !loadRequired(handle, "cuEventRecord", api.cuEventRecord, g_err) ||
-      !loadRequired(handle, "cuEventSynchronize", api.cuEventSynchronize, g_err) ||
-      !loadRequired(handle, "cuEventElapsedTime", api.cuEventElapsedTime, g_err) ||
-      !loadRequired(handle, "cuModuleLoadDataEx", api.cuModuleLoadDataEx, g_err) ||
-      !loadRequired(handle, "cuModuleUnload", api.cuModuleUnload, g_err) ||
-      !loadRequired(handle, "cuModuleGetFunction", api.cuModuleGetFunction, g_err) ||
-      !loadRequired(handle, "cuLaunchKernel", api.cuLaunchKernel, g_err)) {
-    dlclose(handle);
+  if (!loadRequired(*g_lib, "cuInit", api.cuInit, g_err) ||
+      !loadRequired(*g_lib, "cuDriverGetVersion", api.cuDriverGetVersion, g_err) ||
+      !loadRequired(*g_lib, "cuDeviceGetCount", api.cuDeviceGetCount, g_err) ||
+      !loadRequired(*g_lib, "cuDeviceGet", api.cuDeviceGet, g_err) ||
+      !loadRequired(*g_lib, "cuDeviceGetName", api.cuDeviceGetName, g_err) ||
+      !loadRequired(*g_lib, "cuCtxCreate_v2", api.cuCtxCreate_v2, g_err) ||
+      !loadRequired(*g_lib, "cuCtxDestroy_v2", api.cuCtxDestroy_v2, g_err) ||
+      !loadRequired(*g_lib, "cuStreamCreate", api.cuStreamCreate, g_err) ||
+      !loadRequired(*g_lib, "cuStreamDestroy_v2", api.cuStreamDestroy_v2, g_err) ||
+      !loadRequired(*g_lib, "cuStreamSynchronize", api.cuStreamSynchronize, g_err) ||
+      !loadRequired(*g_lib, "cuMemAlloc_v2", api.cuMemAlloc_v2, g_err) ||
+      !loadRequired(*g_lib, "cuMemFree_v2", api.cuMemFree_v2, g_err) ||
+      !loadRequired(*g_lib, "cuMemHostAlloc", api.cuMemHostAlloc, g_err) ||
+      !loadRequired(*g_lib, "cuMemFreeHost", api.cuMemFreeHost, g_err) ||
+      !loadRequired(*g_lib, "cuMemcpyHtoDAsync_v2", api.cuMemcpyHtoDAsync_v2, g_err) ||
+      !loadRequired(*g_lib, "cuMemcpyDtoHAsync_v2", api.cuMemcpyDtoHAsync_v2, g_err) ||
+      !loadRequired(*g_lib, "cuEventCreate", api.cuEventCreate, g_err) ||
+      !loadRequired(*g_lib, "cuEventDestroy_v2", api.cuEventDestroy_v2, g_err) ||
+      !loadRequired(*g_lib, "cuEventRecord", api.cuEventRecord, g_err) ||
+      !loadRequired(*g_lib, "cuEventSynchronize", api.cuEventSynchronize, g_err) ||
+      !loadRequired(*g_lib, "cuEventElapsedTime", api.cuEventElapsedTime, g_err) ||
+      !loadRequired(*g_lib, "cuModuleLoadDataEx", api.cuModuleLoadDataEx, g_err) ||
+      !loadRequired(*g_lib, "cuModuleUnload", api.cuModuleUnload, g_err) ||
+      !loadRequired(*g_lib, "cuModuleGetFunction", api.cuModuleGetFunction, g_err) ||
+      !loadRequired(*g_lib, "cuLaunchKernel", api.cuLaunchKernel, g_err)) {
     g_ok = false;
     return;
   }
 
-  loadOptional(handle, "cuGetErrorString", g_cuGetErrorString);
+  loadOptional(*g_lib, "cuGetErrorString", g_cuGetErrorString);
 
   // Best-effort init probe.
   const CUresult r = api.cuInit(0);
   if (r != CUDA_SUCCESS) {
     g_err = "cuInit failed: " + errToString(r);
-    dlclose(handle);
     g_ok = false;
     return;
   }

@@ -2,103 +2,96 @@
 
 #ifdef AI_Z_ENABLE_VULKAN
 
-#include <dlfcn.h>
+#include <aiz/platform/dynlib.h>
 
+#include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace aiz::dyn::vulkan {
 namespace {
 
 template <typename T>
-static bool loadRequired(void* handle, const char* name, T& fn, std::string& err) {
-  dlerror();
-  void* sym = dlsym(handle, name);
-  const char* e = dlerror();
-  if (e != nullptr || sym == nullptr) {
-    err = std::string("Missing Vulkan symbol '") + name + "': " + (e ? e : "(null)");
+static bool loadRequired(platform::DynamicLibrary& lib, const char* name, T& fn, std::string& err) {
+  if (!lib.loadSymbol(name, fn)) {
+    err = std::string("Missing Vulkan symbol '") + name + "'";
     return false;
   }
-  fn = reinterpret_cast<T>(sym);
   return true;
 }
-
-static const char* kCandidates[] = {
-  "libvulkan.so.1",
-  "libvulkan.so",
-};
 
 static std::once_flag g_once;
 static Api g_api;
 static std::string g_err;
 static bool g_ok = false;
+static std::unique_ptr<platform::DynamicLibrary> g_lib;
 
 static void initOnce() {
-  void* handle = nullptr;
-  for (const char* cand : kCandidates) {
-    handle = dlopen(cand, RTLD_LAZY | RTLD_LOCAL);
-    if (handle) break;
-  }
+  std::vector<const char*> candidates;
+  candidates.push_back(platform::vulkanLibraryName());
+#if defined(AI_Z_PLATFORM_LINUX)
+  candidates.push_back("libvulkan.so");
+#endif
 
-  if (!handle) {
-    const char* e = dlerror();
-    g_err = std::string("Vulkan runtime not found (dlopen libvulkan.so failed): ") + (e ? e : "(null)");
+  g_lib = platform::loadLibrary(candidates, &g_err);
+  if (!g_lib || !g_lib->isValid()) {
+    if (g_err.empty()) g_err = "Vulkan runtime not found";
     g_ok = false;
     return;
   }
 
   Api api;
-  api.handle = handle;
+  api.handle = g_lib.get();
 
-  if (!loadRequired(handle, "vkCreateInstance", api.vkCreateInstance, g_err) ||
-      !loadRequired(handle, "vkDestroyInstance", api.vkDestroyInstance, g_err) ||
-      !loadRequired(handle, "vkEnumeratePhysicalDevices", api.vkEnumeratePhysicalDevices, g_err) ||
-      !loadRequired(handle, "vkGetPhysicalDeviceQueueFamilyProperties", api.vkGetPhysicalDeviceQueueFamilyProperties, g_err) ||
-      !loadRequired(handle, "vkGetPhysicalDeviceMemoryProperties", api.vkGetPhysicalDeviceMemoryProperties, g_err) ||
-      !loadRequired(handle, "vkGetPhysicalDeviceProperties", api.vkGetPhysicalDeviceProperties, g_err) ||
-      !loadRequired(handle, "vkCreateDevice", api.vkCreateDevice, g_err) ||
-      !loadRequired(handle, "vkDestroyDevice", api.vkDestroyDevice, g_err) ||
-      !loadRequired(handle, "vkGetDeviceQueue", api.vkGetDeviceQueue, g_err) ||
-      !loadRequired(handle, "vkCreateBuffer", api.vkCreateBuffer, g_err) ||
-      !loadRequired(handle, "vkDestroyBuffer", api.vkDestroyBuffer, g_err) ||
-      !loadRequired(handle, "vkGetBufferMemoryRequirements", api.vkGetBufferMemoryRequirements, g_err) ||
-      !loadRequired(handle, "vkAllocateMemory", api.vkAllocateMemory, g_err) ||
-      !loadRequired(handle, "vkFreeMemory", api.vkFreeMemory, g_err) ||
-      !loadRequired(handle, "vkBindBufferMemory", api.vkBindBufferMemory, g_err) ||
-      !loadRequired(handle, "vkMapMemory", api.vkMapMemory, g_err) ||
-      !loadRequired(handle, "vkUnmapMemory", api.vkUnmapMemory, g_err) ||
-      !loadRequired(handle, "vkCreateCommandPool", api.vkCreateCommandPool, g_err) ||
-      !loadRequired(handle, "vkDestroyCommandPool", api.vkDestroyCommandPool, g_err) ||
-      !loadRequired(handle, "vkAllocateCommandBuffers", api.vkAllocateCommandBuffers, g_err) ||
-      !loadRequired(handle, "vkResetCommandBuffer", api.vkResetCommandBuffer, g_err) ||
-      !loadRequired(handle, "vkBeginCommandBuffer", api.vkBeginCommandBuffer, g_err) ||
-      !loadRequired(handle, "vkEndCommandBuffer", api.vkEndCommandBuffer, g_err) ||
-      !loadRequired(handle, "vkCmdCopyBuffer", api.vkCmdCopyBuffer, g_err) ||
-      !loadRequired(handle, "vkQueueSubmit", api.vkQueueSubmit, g_err) ||
-      !loadRequired(handle, "vkQueueWaitIdle", api.vkQueueWaitIdle, g_err) ||
-      !loadRequired(handle, "vkCreateShaderModule", api.vkCreateShaderModule, g_err) ||
-      !loadRequired(handle, "vkDestroyShaderModule", api.vkDestroyShaderModule, g_err) ||
-      !loadRequired(handle, "vkCreateDescriptorSetLayout", api.vkCreateDescriptorSetLayout, g_err) ||
-      !loadRequired(handle, "vkDestroyDescriptorSetLayout", api.vkDestroyDescriptorSetLayout, g_err) ||
-      !loadRequired(handle, "vkCreatePipelineLayout", api.vkCreatePipelineLayout, g_err) ||
-      !loadRequired(handle, "vkDestroyPipelineLayout", api.vkDestroyPipelineLayout, g_err) ||
-      !loadRequired(handle, "vkCreateComputePipelines", api.vkCreateComputePipelines, g_err) ||
-      !loadRequired(handle, "vkDestroyPipeline", api.vkDestroyPipeline, g_err) ||
-      !loadRequired(handle, "vkCreateDescriptorPool", api.vkCreateDescriptorPool, g_err) ||
-      !loadRequired(handle, "vkDestroyDescriptorPool", api.vkDestroyDescriptorPool, g_err) ||
-      !loadRequired(handle, "vkAllocateDescriptorSets", api.vkAllocateDescriptorSets, g_err) ||
-      !loadRequired(handle, "vkUpdateDescriptorSets", api.vkUpdateDescriptorSets, g_err) ||
-      !loadRequired(handle, "vkCreateQueryPool", api.vkCreateQueryPool, g_err) ||
-      !loadRequired(handle, "vkDestroyQueryPool", api.vkDestroyQueryPool, g_err) ||
-      !loadRequired(handle, "vkCmdWriteTimestamp", api.vkCmdWriteTimestamp, g_err) ||
-      !loadRequired(handle, "vkCmdBindPipeline", api.vkCmdBindPipeline, g_err) ||
-      !loadRequired(handle, "vkCmdBindDescriptorSets", api.vkCmdBindDescriptorSets, g_err) ||
-      !loadRequired(handle, "vkCmdDispatch", api.vkCmdDispatch, g_err) ||
-      !loadRequired(handle, "vkCreateFence", api.vkCreateFence, g_err) ||
-      !loadRequired(handle, "vkDestroyFence", api.vkDestroyFence, g_err) ||
-      !loadRequired(handle, "vkWaitForFences", api.vkWaitForFences, g_err) ||
-      !loadRequired(handle, "vkGetQueryPoolResults", api.vkGetQueryPoolResults, g_err)) {
-    dlclose(handle);
+  if (!loadRequired(*g_lib, "vkCreateInstance", api.vkCreateInstance, g_err) ||
+      !loadRequired(*g_lib, "vkDestroyInstance", api.vkDestroyInstance, g_err) ||
+      !loadRequired(*g_lib, "vkEnumeratePhysicalDevices", api.vkEnumeratePhysicalDevices, g_err) ||
+      !loadRequired(*g_lib, "vkGetPhysicalDeviceQueueFamilyProperties", api.vkGetPhysicalDeviceQueueFamilyProperties, g_err) ||
+      !loadRequired(*g_lib, "vkGetPhysicalDeviceMemoryProperties", api.vkGetPhysicalDeviceMemoryProperties, g_err) ||
+      !loadRequired(*g_lib, "vkGetPhysicalDeviceProperties", api.vkGetPhysicalDeviceProperties, g_err) ||
+      !loadRequired(*g_lib, "vkCreateDevice", api.vkCreateDevice, g_err) ||
+      !loadRequired(*g_lib, "vkDestroyDevice", api.vkDestroyDevice, g_err) ||
+      !loadRequired(*g_lib, "vkGetDeviceQueue", api.vkGetDeviceQueue, g_err) ||
+      !loadRequired(*g_lib, "vkCreateBuffer", api.vkCreateBuffer, g_err) ||
+      !loadRequired(*g_lib, "vkDestroyBuffer", api.vkDestroyBuffer, g_err) ||
+      !loadRequired(*g_lib, "vkGetBufferMemoryRequirements", api.vkGetBufferMemoryRequirements, g_err) ||
+      !loadRequired(*g_lib, "vkAllocateMemory", api.vkAllocateMemory, g_err) ||
+      !loadRequired(*g_lib, "vkFreeMemory", api.vkFreeMemory, g_err) ||
+      !loadRequired(*g_lib, "vkBindBufferMemory", api.vkBindBufferMemory, g_err) ||
+      !loadRequired(*g_lib, "vkMapMemory", api.vkMapMemory, g_err) ||
+      !loadRequired(*g_lib, "vkUnmapMemory", api.vkUnmapMemory, g_err) ||
+      !loadRequired(*g_lib, "vkCreateCommandPool", api.vkCreateCommandPool, g_err) ||
+      !loadRequired(*g_lib, "vkDestroyCommandPool", api.vkDestroyCommandPool, g_err) ||
+      !loadRequired(*g_lib, "vkAllocateCommandBuffers", api.vkAllocateCommandBuffers, g_err) ||
+      !loadRequired(*g_lib, "vkResetCommandBuffer", api.vkResetCommandBuffer, g_err) ||
+      !loadRequired(*g_lib, "vkBeginCommandBuffer", api.vkBeginCommandBuffer, g_err) ||
+      !loadRequired(*g_lib, "vkEndCommandBuffer", api.vkEndCommandBuffer, g_err) ||
+      !loadRequired(*g_lib, "vkCmdCopyBuffer", api.vkCmdCopyBuffer, g_err) ||
+      !loadRequired(*g_lib, "vkQueueSubmit", api.vkQueueSubmit, g_err) ||
+      !loadRequired(*g_lib, "vkQueueWaitIdle", api.vkQueueWaitIdle, g_err) ||
+      !loadRequired(*g_lib, "vkCreateShaderModule", api.vkCreateShaderModule, g_err) ||
+      !loadRequired(*g_lib, "vkDestroyShaderModule", api.vkDestroyShaderModule, g_err) ||
+      !loadRequired(*g_lib, "vkCreateDescriptorSetLayout", api.vkCreateDescriptorSetLayout, g_err) ||
+      !loadRequired(*g_lib, "vkDestroyDescriptorSetLayout", api.vkDestroyDescriptorSetLayout, g_err) ||
+      !loadRequired(*g_lib, "vkCreatePipelineLayout", api.vkCreatePipelineLayout, g_err) ||
+      !loadRequired(*g_lib, "vkDestroyPipelineLayout", api.vkDestroyPipelineLayout, g_err) ||
+      !loadRequired(*g_lib, "vkCreateComputePipelines", api.vkCreateComputePipelines, g_err) ||
+      !loadRequired(*g_lib, "vkDestroyPipeline", api.vkDestroyPipeline, g_err) ||
+      !loadRequired(*g_lib, "vkCreateDescriptorPool", api.vkCreateDescriptorPool, g_err) ||
+      !loadRequired(*g_lib, "vkDestroyDescriptorPool", api.vkDestroyDescriptorPool, g_err) ||
+      !loadRequired(*g_lib, "vkAllocateDescriptorSets", api.vkAllocateDescriptorSets, g_err) ||
+      !loadRequired(*g_lib, "vkUpdateDescriptorSets", api.vkUpdateDescriptorSets, g_err) ||
+      !loadRequired(*g_lib, "vkCreateQueryPool", api.vkCreateQueryPool, g_err) ||
+      !loadRequired(*g_lib, "vkDestroyQueryPool", api.vkDestroyQueryPool, g_err) ||
+      !loadRequired(*g_lib, "vkCmdWriteTimestamp", api.vkCmdWriteTimestamp, g_err) ||
+      !loadRequired(*g_lib, "vkCmdBindPipeline", api.vkCmdBindPipeline, g_err) ||
+      !loadRequired(*g_lib, "vkCmdBindDescriptorSets", api.vkCmdBindDescriptorSets, g_err) ||
+      !loadRequired(*g_lib, "vkCmdDispatch", api.vkCmdDispatch, g_err) ||
+      !loadRequired(*g_lib, "vkCreateFence", api.vkCreateFence, g_err) ||
+      !loadRequired(*g_lib, "vkDestroyFence", api.vkDestroyFence, g_err) ||
+      !loadRequired(*g_lib, "vkWaitForFences", api.vkWaitForFences, g_err) ||
+      !loadRequired(*g_lib, "vkGetQueryPoolResults", api.vkGetQueryPoolResults, g_err)) {
     g_ok = false;
     return;
   }

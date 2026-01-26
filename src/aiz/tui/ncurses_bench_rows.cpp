@@ -18,7 +18,13 @@ void rebuildBenchRows(TuiState& state, const HardwareInfo& hw, unsigned int gpuC
   state.benchRowIsHeader.clear();
   state.benchResults.clear();
 
-  const std::vector<std::string> gpuNames = parseGpuNames(hw, gpuCount);
+  std::vector<std::string> gpuNames;
+#if defined(_WIN32)
+  gpuNames.resize(gpuCount);
+  for (unsigned int i = 0; i < gpuCount; ++i) gpuNames[i] = "GPU" + std::to_string(i);
+#else
+  gpuNames = parseGpuNames(hw, gpuCount);
+#endif
 
   auto addHeader = [&](const std::string& title) {
     state.benches.push_back(nullptr);

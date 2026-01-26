@@ -2,96 +2,84 @@
 
 #ifdef AI_Z_ENABLE_OPENCL
 
-#include <dlfcn.h>
+#include <aiz/platform/dynlib.h>
 
+#include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace aiz::dyn::opencl {
 namespace {
 
 template <typename T>
-static bool loadRequired(void* handle, const char* name, T& fn, std::string& err) {
-  dlerror();
-  void* sym = dlsym(handle, name);
-  const char* e = dlerror();
-  if (e != nullptr || sym == nullptr) {
-    err = std::string("Missing OpenCL symbol '") + name + "': " + (e ? e : "(null)");
+static bool loadRequired(platform::DynamicLibrary& lib, const char* name, T& fn, std::string& err) {
+  if (!lib.loadSymbol(name, fn)) {
+    err = std::string("Missing OpenCL symbol '") + name + "'";
     return false;
   }
-  fn = reinterpret_cast<T>(sym);
   return true;
 }
 
 template <typename T>
-static void loadOptional(void* handle, const char* name, T& fn) {
-  dlerror();
-  void* sym = dlsym(handle, name);
-  const char* e = dlerror();
-  if (e != nullptr || sym == nullptr) {
+static void loadOptional(platform::DynamicLibrary& lib, const char* name, T& fn) {
+  if (!lib.loadSymbol(name, fn)) {
     fn = nullptr;
-    return;
   }
-  fn = reinterpret_cast<T>(sym);
 }
-
-static const char* kCandidates[] = {
-  "libOpenCL.so.1",
-  "libOpenCL.so",
-};
 
 static std::once_flag g_once;
 static Api g_api;
 static std::string g_err;
 static bool g_ok = false;
+static std::unique_ptr<platform::DynamicLibrary> g_lib;
 
 static void initOnce() {
-  void* handle = nullptr;
-  for (const char* cand : kCandidates) {
-    handle = dlopen(cand, RTLD_LAZY | RTLD_LOCAL);
-    if (handle) break;
-  }
+  std::vector<const char*> candidates;
+  candidates.push_back(platform::openclLibraryName());
+#if defined(AI_Z_PLATFORM_LINUX)
+  candidates.push_back("libOpenCL.so");
+#endif
 
-  if (!handle) {
-    const char* e = dlerror();
-    g_err = std::string("OpenCL runtime not found (dlopen libOpenCL.so failed): ") + (e ? e : "(null)");
+  g_lib = platform::loadLibrary(candidates, &g_err);
+  if (!g_lib || !g_lib->isValid()) {
+    if (g_err.empty()) g_err = "OpenCL runtime not found";
     g_ok = false;
     return;
   }
 
   Api api;
-  api.handle = handle;
+  api.handle = g_lib.get();
 
   // Required core symbols.
-  if (!loadRequired(handle, "clGetPlatformIDs", api.clGetPlatformIDs, g_err) ||
-      !loadRequired(handle, "clGetDeviceIDs", api.clGetDeviceIDs, g_err) ||
-      !loadRequired(handle, "clCreateContext", api.clCreateContext, g_err) ||
-      !loadRequired(handle, "clReleaseContext", api.clReleaseContext, g_err) ||
-      !loadRequired(handle, "clCreateCommandQueue", api.clCreateCommandQueue, g_err) ||
-      !loadRequired(handle, "clReleaseCommandQueue", api.clReleaseCommandQueue, g_err) ||
-      !loadRequired(handle, "clCreateBuffer", api.clCreateBuffer, g_err) ||
-      !loadRequired(handle, "clReleaseMemObject", api.clReleaseMemObject, g_err) ||
-      !loadRequired(handle, "clEnqueueWriteBuffer", api.clEnqueueWriteBuffer, g_err) ||
-      !loadRequired(handle, "clEnqueueReadBuffer", api.clEnqueueReadBuffer, g_err) ||
-      !loadRequired(handle, "clWaitForEvents", api.clWaitForEvents, g_err) ||
-      !loadRequired(handle, "clReleaseEvent", api.clReleaseEvent, g_err) ||
-      !loadRequired(handle, "clGetEventProfilingInfo", api.clGetEventProfilingInfo, g_err) ||
-      !loadRequired(handle, "clFinish", api.clFinish, g_err) ||
-      !loadRequired(handle, "clCreateProgramWithSource", api.clCreateProgramWithSource, g_err) ||
-      !loadRequired(handle, "clBuildProgram", api.clBuildProgram, g_err) ||
-      !loadRequired(handle, "clGetProgramBuildInfo", api.clGetProgramBuildInfo, g_err) ||
-      !loadRequired(handle, "clReleaseProgram", api.clReleaseProgram, g_err) ||
-      !loadRequired(handle, "clCreateKernel", api.clCreateKernel, g_err) ||
-      !loadRequired(handle, "clReleaseKernel", api.clReleaseKernel, g_err) ||
-      !loadRequired(handle, "clSetKernelArg", api.clSetKernelArg, g_err) ||
-      !loadRequired(handle, "clEnqueueNDRangeKernel", api.clEnqueueNDRangeKernel, g_err)) {
-    dlclose(handle);
+  if (!loadRequired(*g_lib, "clGetPlatformIDs", api.clGetPlatformIDs, g_err) ||
+      !loadRequired(*g_lib, "clGetDeviceIDs", api.clGetDeviceIDs, g_err) ||
+      !loadRequired(*g_lib, "clCreateContext", api.clCreateContext, g_err) ||
+      !loadRequired(*g_lib, "clReleaseContext", api.clReleaseContext, g_err) ||
+      !loadRequired(*g_lib, "clCreateCommandQueue", api.clCreateCommandQueue, g_err) ||
+      !loadRequired(*g_lib, "clReleaseCommandQueue", api.clReleaseCommandQueue, g_err) ||
+      !loadRequired(*g_lib, "clCreateBuffer", api.clCreateBuffer, g_err) ||
+      !loadRequired(*g_lib, "clReleaseMemObject", api.clReleaseMemObject, g_err) ||
+      !loadRequired(*g_lib, "clEnqueueWriteBuffer", api.clEnqueueWriteBuffer, g_err) ||
+      !loadRequired(*g_lib, "clEnqueueReadBuffer", api.clEnqueueReadBuffer, g_err) ||
+      !loadRequired(*g_lib, "clWaitForEvents", api.clWaitForEvents, g_err) ||
+      !loadRequired(*g_lib, "clReleaseEvent", api.clReleaseEvent, g_err) ||
+      !loadRequired(*g_lib, "clGetEventProfilingInfo", api.clGetEventProfilingInfo, g_err) ||
+      !loadRequired(*g_lib, "clFinish", api.clFinish, g_err) ||
+      !loadRequired(*g_lib, "clCreateProgramWithSource", api.clCreateProgramWithSource, g_err) ||
+      !loadRequired(*g_lib, "clBuildProgram", api.clBuildProgram, g_err) ||
+      !loadRequired(*g_lib, "clGetProgramBuildInfo", api.clGetProgramBuildInfo, g_err) ||
+      !loadRequired(*g_lib, "clReleaseProgram", api.clReleaseProgram, g_err) ||
+      !loadRequired(*g_lib, "clCreateKernel", api.clCreateKernel, g_err) ||
+      !loadRequired(*g_lib, "clReleaseKernel", api.clReleaseKernel, g_err) ||
+      !loadRequired(*g_lib, "clSetKernelArg", api.clSetKernelArg, g_err) ||
+      !loadRequired(*g_lib, "clEnqueueNDRangeKernel", api.clEnqueueNDRangeKernel, g_err)) {
     g_ok = false;
     return;
   }
 
 #if defined(CL_VERSION_2_0)
-  loadOptional(handle, "clCreateCommandQueueWithProperties", api.clCreateCommandQueueWithProperties);
+  loadOptional(*g_lib, "clCreateCommandQueueWithProperties", api.clCreateCommandQueueWithProperties);
 #endif
 
   g_api = api;

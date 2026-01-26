@@ -1,0 +1,9 @@
+{
+  "name": "ai-z",
+  "version": "0.1.0",
+  "dependencies": [
+    {
+      "name": "pdcurses"
+    }
+  ]
+}

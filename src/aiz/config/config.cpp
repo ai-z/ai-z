@@ -1,6 +1,7 @@
 #include <aiz/config/config.h>
 
-#include <cstdlib>
+#include <aiz/platform/config_paths.h>
+
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -11,16 +12,7 @@ namespace fs = std::filesystem;
 namespace aiz {
 
 static fs::path configPath() {
-  const char* xdg = std::getenv("XDG_CONFIG_HOME");
-  if (xdg && *xdg) {
-    return fs::path(xdg) / "ai-z" / "config.ini";
-  }
-
-  const char* home = std::getenv("HOME");
-  if (home && *home) {
-    return fs::path(home) / ".config" / "ai-z" / "config.ini";
-  }
-  return fs::path("config.ini");
+  return platform::configDirectory() / "config.ini";
 }
 
 static bool parseBool(std::string v, bool fallback) {
