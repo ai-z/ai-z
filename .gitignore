@@ -9,6 +9,9 @@ Testing/
 CTestTestfile.cmake
 *_autogen/
 
+# vcpkg
+/vcpkg_installed/
+
 # Generated
 /generated/
 

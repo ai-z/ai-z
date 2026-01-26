@@ -1,6 +1,25 @@
 cmake_minimum_required(VERSION 3.16)
 project(ai-z VERSION 0.1.0 LANGUAGES C CXX)
 
+# Helpful error message for Windows users who haven't set up vcpkg
+if(WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+  message(WARNING "
+  ╔══════════════════════════════════════════════════════════════════╗
+  ║  vcpkg not detected! PDCurses is required for Windows builds.   ║
+  ║                                                                  ║
+  ║  Quick setup (one-time):                                         ║
+  ║    git clone https://github.com/microsoft/vcpkg.git C:\\vcpkg    ║
+  ║    C:\\vcpkg\\bootstrap-vcpkg.bat                                 ║
+  ║                                                                  ║
+  ║  Then rebuild with:                                              ║
+  ║    cmake -S . -B build ^                                         ║
+  ║      -DCMAKE_TOOLCHAIN_FILE=C:\\vcpkg\\scripts\\buildsystems\\vcpkg.cmake ║
+  ║                                                                  ║
+  ║  See README.md for full Windows build instructions.             ║
+  ╚══════════════════════════════════════════════════════════════════╝
+  ")
+endif()
+
 include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 20)

@@ -4,8 +4,53 @@ C++ TUI app for performance timelines (CPU/GPU/Disk/PCIe) and benchmarks.
 
 Current platform support:
 - Linux: ncurses TUI
+- Windows: PDCurses TUI
 
 ## Build
+
+### Windows
+
+**Prerequisites:**
+- Visual Studio 2019 or later (with C++ desktop development workload)
+- CMake 3.16+
+- vcpkg (for PDCurses dependency management)
+
+**One-time setup:**
+
+```powershell
+# 1. Install vcpkg (if not already installed)
+git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+C:\vcpkg\bootstrap-vcpkg.bat
+
+# 2. (Optional) Add vcpkg to your environment for convenience
+[Environment]::SetEnvironmentVariable('VCPKG_ROOT', 'C:\vcpkg', 'User')
+```
+
+**Build:**
+
+```powershell
+# Configure (tells CMake to use vcpkg for dependencies)
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
+
+# Build
+cmake --build build --config Release -j
+```
+
+**Run:**
+
+```powershell
+.\build\Release\ai-z.exe
+```
+
+The TUI application will launch in your terminal. Use:
+- Arrow keys or vim-style keys to navigate
+- `q` or `Ctrl+C` to quit
+- Check the UI for additional keyboard shortcuts
+
+**Alternative:** If you have vcpkg in a different location, adjust the path accordingly:
+```powershell
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake
+```
 
 ### Linux
 
