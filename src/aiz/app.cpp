@@ -99,12 +99,20 @@ int App::run(int argc, char** argv) {
   }
 
   if (hasFlag(argc, argv, "--diag-pcie")) {
+    #if defined(_WIN32)
     std::cout << pcieDiagnostics();
+    #else
+    std::cout << "--diag-pcie is only available on Windows.\n";
+    #endif
     return 0;
   }
 
   if (hasFlag(argc, argv, "--diag-adlx")) {
+    #if defined(_WIN32)
     std::cout << adlxDiagnostics();
+    #else
+    std::cout << "--diag-adlx is only available on Windows.\n";
+    #endif
     return 0;
   }
 

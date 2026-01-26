@@ -168,7 +168,6 @@ static void applyTimelineDevicesFromHw(TuiState& state, const HardwareInfo& hw) 
 
 }  // namespace
 
-#if defined(AI_Z_PLATFORM_WINDOWS)
 namespace {
 
 static bool windowsEnvFlagSet(const char* name) {
@@ -180,6 +179,11 @@ static bool windowsEnvFlagSet(const char* name) {
   }
   return false;
 }
+
+}  // namespace
+
+#if defined(AI_Z_PLATFORM_WINDOWS)
+namespace {
 
 static void windowsAppendTuiLog(const std::string& msg) {
   char tempPath[MAX_PATH] = {0};
