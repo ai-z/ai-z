@@ -3,7 +3,7 @@
 #include <aiz/i18n.h>
 #include <aiz/config/config.h>
 #include <aiz/hw/hardware_info.h>
-#include <aiz/metrics/amd_adl.h>
+#include <aiz/metrics/amd_adlx.h>
 #include <aiz/tui/ui.h>
 #include <aiz/version.h>
 
@@ -32,7 +32,6 @@ static void printHelp(std::ostream& os) {
         "  --help, -h   Show this help and exit\n"
         "  --version    Print version and exit\n"
         "  --hardware   Print hardware info and exit (no TUI)\n"
-        "  --diag-adl   Print AMD ADL diagnostics and exit (Windows)\n"
       "  --diag-pcie  Print Windows PCIe link diagnostics and exit (Windows)\n"
         "  --diag-adlx  Print AMD ADLX diagnostics and exit (Windows)\n"
         "  --lang TAG   UI language (en, zh-CN). Also reads AI_Z_LANG / LANG\n";
@@ -90,11 +89,6 @@ int App::run(int argc, char** argv) {
   if (hasFlag(argc, argv, "--version")) {
     std::cout << "ai-z " << AIZ_VERSION << "\n";
     std::cout << AIZ_WEBSITE << "\n";
-    return 0;
-  }
-
-  if (hasFlag(argc, argv, "--diag-adl")) {
-    std::cout << adlDiagnostics();
     return 0;
   }
 

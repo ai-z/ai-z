@@ -1,7 +1,7 @@
 #include <aiz/hw/hardware_info.h>
 
 #include <aiz/dyn/cuda.h>
-#include <aiz/metrics/amd_adl.h>
+#include <aiz/metrics/amd_adlx.h>
 #include <aiz/metrics/nvidia_nvml.h>
 #include <aiz/platform/metrics/memory.h>
 
@@ -125,11 +125,7 @@ struct DxgiGpuInfo {
   std::uint64_t dedicatedBytes = 0;
   std::uint64_t sharedBytes = 0;
   std::uint32_t vendorId = 0;
-  std::uint32_t bus = 0;
-  std::uint32_t device = 0;
-  std::uint32_t function = 0;
-  std::optional<AdlAdapterLuid> adapterLuid;
-  std::optional<unsigned int> amdOrdinal;
+  std::optional<AmdAdapterLuid> adapterLuid;
 };
 
 static std::vector<DxgiGpuInfo> probeDxgiGpus() {
@@ -139,7 +135,6 @@ static std::vector<DxgiGpuInfo> probeDxgiGpus() {
   }
 
   std::vector<DxgiGpuInfo> gpus;
-  unsigned int amdOrdinal = 0;
   for (UINT i = 0; ; ++i) {
     IDXGIAdapter1* adapter = nullptr;
     if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND) break;
@@ -153,19 +148,8 @@ static std::vector<DxgiGpuInfo> probeDxgiGpus() {
         info.sharedBytes = desc.SharedSystemMemory;
         info.vendorId = desc.VendorId;
         // Prefer the adapter LUID for matching.
-        info.adapterLuid = AdlAdapterLuid{static_cast<std::uint32_t>(desc.AdapterLuid.LowPart),
+        info.adapterLuid = AmdAdapterLuid{static_cast<std::uint32_t>(desc.AdapterLuid.LowPart),
                   static_cast<std::int32_t>(desc.AdapterLuid.HighPart)};
-
-        // Best-effort PCI location extraction (kept as a secondary fallback).
-        // Note: DXGI does not guarantee this maps to PCI BDF on all systems.
-        info.bus = static_cast<std::uint32_t>((desc.AdapterLuid.HighPart >> 16) & 0xFF);
-        info.device = static_cast<std::uint32_t>((desc.AdapterLuid.HighPart >> 8) & 0xFF);
-        info.function = static_cast<std::uint32_t>(desc.AdapterLuid.HighPart & 0xFF);
-
-        if (info.vendorId == 0x1002 || info.vendorId == 0x1022) {
-          info.amdOrdinal = amdOrdinal;
-          ++amdOrdinal;
-        }
         gpus.push_back(std::move(info));
       }
     }
@@ -275,13 +259,9 @@ static std::vector<std::string> probePerGpuLinesDxgi(const std::vector<DxgiGpuIn
       lines.push_back(l.str());
     }
 
-    // AMD PCIe link info via ADL (best-effort).
+    // AMD PCIe link info via ADLX (best-effort).
     if (gpu.vendorId == 0x1002 || gpu.vendorId == 0x1022) {
-      std::optional<AdlPciLocation> loc;
-      if (gpu.bus || gpu.device || gpu.function) {
-        loc = AdlPciLocation{gpu.bus, gpu.device, gpu.function};
-      }
-        if (const auto link = readAdlPcieLinkForDxgi(gpu.name, gpu.adapterLuid, gpu.amdOrdinal, loc)) {
+      if (const auto link = readAdlxPcieLinkForDxgi(gpu.adapterLuid)) {
           std::ostringstream l;
           l.setf(std::ios::fixed);
           l.precision(1);
@@ -293,11 +273,11 @@ static std::vector<std::string> probePerGpuLinesDxgi(const std::vector<DxgiGpuIn
         if (!note.empty()) {
           lines.push_back(indent + std::string("PCIe: unavailable (") + note + ")");
         } else {
-          const auto st = adlStatus();
-          if (st == AdlStatus::MissingDll) {
-            lines.push_back(indent + std::string("PCIe: unavailable (ADL not found)"));
-          } else if (st == AdlStatus::Unusable) {
-            lines.push_back(indent + std::string("PCIe: unavailable (ADL unusable)"));
+          const auto st = adlxStatus();
+          if (st == AdlxStatus::MissingDll) {
+            lines.push_back(indent + std::string("PCIe: unavailable (ADLX not found)"));
+          } else if (st == AdlxStatus::Unusable) {
+            lines.push_back(indent + std::string("PCIe: unavailable (ADLX unusable)"));
           }
         }
       }
@@ -321,15 +301,15 @@ std::vector<std::string> HardwareInfo::toLines() const {
   lines.push_back("CUDA: " + (cudaVersion.empty() ? std::string(kUnknown) : cudaVersion));
   lines.push_back("NVML: " + (nvmlVersion.empty() ? std::string(kUnknown) : nvmlVersion));
   {
-    const auto a = adlAvailability();
+    const auto a = adlxAvailability();
     if (a.available) {
       std::string s = a.backend.empty() ? std::string("available") : a.backend;
       if (!a.dll.empty()) s += " (" + a.dll + ")";
-      lines.push_back("ADL: " + s);
+      lines.push_back("ADLX: " + s);
     } else {
-      const auto st = adlStatus();
-      if (st == AdlStatus::MissingDll) lines.push_back("ADL: unavailable (atiadlxx/atiadlxy not found)");
-      else lines.push_back("ADL: unavailable");
+      const auto st = adlxStatus();
+      if (st == AdlxStatus::MissingDll) lines.push_back("ADLX: unavailable (amdadlx64.dll not found)");
+      else lines.push_back("ADLX: unavailable");
     }
   }
   lines.push_back("ROCm: " + (rocmVersion.empty() ? std::string(kUnknown) : rocmVersion));

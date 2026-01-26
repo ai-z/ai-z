@@ -6,6 +6,31 @@ Current platform support:
 - Linux: ncurses TUI
 - Windows: PDCurses TUI
 
+## GPU backends
+
+ai-z prefers vendor APIs when available, then falls back to OS APIs.
+
+- NVIDIA
+	- Telemetry: NVML (runtime-loaded)
+	- PCIe link: NVML
+	- PCIe throughput (RX/TX): NVML (preferred), otherwise Windows performance counters when available
+
+- AMD (Windows)
+	- Telemetry: ADLX (requires ADLX SDK headers at build time; runtime-loads `amdadlx64.dll`)
+	- VRAM fallback: D3DKMT `QueryVideoMemoryInfo` by adapter LUID
+	- PCIe link: ADLX (Gen/width)
+	- PCIe throughput (RX/TX): Windows performance counters when available
+
+### About PCIe RX/TX in the header
+
+There are two different concepts:
+
+- **Real-time throughput** (what NVML reports on NVIDIA): bytes/sec sampled over time.
+- **Link cap estimate**: a theoretical max derived from PCIe `GEN @ lanes`.
+
+On some Windows installs, the `PCI Express` performance counter set may be missing/disabled. In that case ai-z will show
+`(cap)` for RX/TX instead of real-time traffic.
+
 ## Build
 
 ### Windows
@@ -242,7 +267,7 @@ Keys:
 - `showCpu`, `showGpu`, `showGpuMem`, `showRam`, `showVram` (true/false)
 - `showDiskRead`, `showDiskWrite` (true/false)
 - `showNetRx`, `showNetTx` (true/false)
-- `showPcieRx`, `showPcieTx` (true/false)
+- `showPcieRx`, `showPcieTx` (true/false) (real-time when available; may fall back to a `(cap)` estimate on Windows)
 - `refreshMs` (integer)
 - `timelineSamples` (integer)
 - `timelineAgg` (`max` or `avg`)

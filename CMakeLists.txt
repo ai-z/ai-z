@@ -101,7 +101,7 @@ set(AI_Z_COMMON_SOURCES
   src/aiz/metrics/gpu_memory_util.cpp
   src/aiz/metrics/timeline.cpp
   src/aiz/metrics/nvidia_nvml.cpp
-  src/aiz/metrics/amd_adl.cpp
+  src/aiz/metrics/amd_adlx.cpp
   src/aiz/metrics/gpu_stub.cpp
   src/aiz/metrics/pcie_stub.cpp
   src/aiz/metrics/ram_usage.cpp
@@ -136,6 +136,7 @@ elseif (AI_Z_PLATFORM_WINDOWS)
     src/aiz/platform/windows/metrics/memory_windows.cpp
     src/aiz/platform/windows/metrics/disk_windows.cpp
     src/aiz/platform/windows/metrics/network_windows.cpp
+    src/aiz/metrics/windows_d3dkmt.cpp
     src/aiz/hw/hardware_info_windows.cpp
   )
 endif()
@@ -162,7 +163,7 @@ if (AI_Z_PLATFORM_WINDOWS)
     target_compile_definitions(ai-z PRIVATE AI_Z_HAS_ADLX_HEADERS=1)
     message(STATUS "ADLX headers found: ${AI_Z_ADLX_INCLUDE_DIR} (ADLX integration enabled)")
   else()
-    message(STATUS "ADLX headers not found; ADLX integration disabled")
+    message(FATAL_ERROR "ADLX headers not found. ADLX is required on Windows builds (set AI_Z_ADLX_ROOT or provide ../ADLX/SDK/Include).")
   endif()
 endif()
 

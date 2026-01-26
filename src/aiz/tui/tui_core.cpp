@@ -310,6 +310,34 @@ static std::string fmtSampleOrDashSpaced(const std::optional<Sample>& s) {
   return fmt1(s->value) + " " + s->unit;
 }
 
+static std::string fmtSampleOrDashSpacedPcie(const std::optional<Sample>& s) {
+  if (!s) return std::string("--");
+  if (s->label == "pcie-cap") return fmt1(s->value) + " " + s->unit + " (cap)";
+  return fmt1(s->value) + " " + s->unit;
+}
+
+static std::optional<double> estimatePcieLinkCapMiBps(unsigned int gen, unsigned int width) {
+  // Estimate theoretical one-direction bandwidth from link speed.
+  // Values are based on commonly cited effective throughput per lane:
+  // Gen1: 250 MB/s, Gen2: 500 MB/s, Gen3: 984.615 MB/s, Gen4: 1969.231 MB/s, Gen5: 3938.462 MB/s.
+  // Convert decimal MB/s to MiB/s for consistency with other MB/s counters.
+  if (gen == 0 || width == 0) return std::nullopt;
+  const double mbPerLane = [&]() -> double {
+    switch (gen) {
+      case 1: return 250.0;
+      case 2: return 500.0;
+      case 3: return 984.615;
+      case 4: return 1969.231;
+      case 5: return 3938.462;
+      default: return 0.0;
+    }
+  }();
+  if (mbPerLane <= 0.0) return std::nullopt;
+  constexpr double mibPerMb = 1.0 / 1.048576;  // MiB = MB / 1.048576
+  const double mibPerLane = mbPerLane * mibPerMb;
+  return mibPerLane * static_cast<double>(width);
+}
+
 static Style metricNameStyle(const Config& cfg) {
   switch (cfg.metricNameColor) {
     case MetricNameColor::White:
@@ -700,9 +728,20 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
       } else if (!gt.pcieLinkNote.empty()) {
         linkStr = "-- (" + gt.pcieLinkNote + ")";
       }
+
+      std::optional<Sample> pcieRx = state.latest.pcieRx;
+      std::optional<Sample> pcieTx = state.latest.pcieTx;
+      // If OS/NVML throughput counters are unavailable, still show an estimated link bandwidth cap.
+      if ((!pcieRx || !pcieTx) && gt.pcieLinkWidth && gt.pcieLinkGen) {
+        if (const auto cap = estimatePcieLinkCapMiBps(*gt.pcieLinkGen, *gt.pcieLinkWidth)) {
+          const Sample capS{*cap, "MB/s", "pcie-cap"};
+          if (!pcieRx) pcieRx = capS;
+          if (!pcieTx) pcieTx = capS;
+        }
+      }
       const std::string pcieStr = linkStr
-          + " RX: " + fmtSampleOrDashSpaced(state.latest.pcieRx)
-          + " TX: " + fmtSampleOrDashSpaced(state.latest.pcieTx);
+          + " RX: " + fmtSampleOrDashSpacedPcie(pcieRx)
+          + " TX: " + fmtSampleOrDashSpacedPcie(pcieTx);
       addLabel("PCIE:");
       addValueField(pcieStr, 40, Align::Left);
     }

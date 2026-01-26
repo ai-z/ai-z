@@ -1,11 +1,12 @@
 #include "ncurses_telemetry.h"
 
 #include <aiz/metrics/nvidia_nvml.h>
-#include <aiz/metrics/amd_adl.h>
+#include <aiz/metrics/amd_adlx.h>
 #if defined(AI_Z_PLATFORM_LINUX)
 #include <aiz/metrics/linux_gpu_sysfs.h>
 #endif
 #if defined(_WIN32)
+#include <aiz/metrics/windows_d3dkmt.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <dxgi1_4.h>
@@ -170,9 +171,6 @@ struct DxgiMemInfo {
   double totalGiB = 0.0;
   std::uint32_t vendorId = 0;
   std::string name;
-  std::uint32_t bus = 0;
-  std::uint32_t device = 0;
-  std::uint32_t function = 0;
 };
 
 std::optional<DxgiMemInfo> readDxgiMemInfo(unsigned int index) {
@@ -224,10 +222,6 @@ std::optional<DxgiMemInfo> readDxgiMemInfo(unsigned int index) {
             info.name = std::move(out);
           }
         }
-        info.bus = static_cast<std::uint32_t>((desc.AdapterLuid.HighPart >> 16) & 0xFF);
-        info.device = static_cast<std::uint32_t>((desc.AdapterLuid.HighPart >> 8) & 0xFF);
-        info.function = static_cast<std::uint32_t>(desc.AdapterLuid.HighPart & 0xFF);
-
         adapter3->Release();
         adapter->Release();
         factory->Release();
@@ -241,51 +235,6 @@ std::optional<DxgiMemInfo> readDxgiMemInfo(unsigned int index) {
 
   factory->Release();
   return std::nullopt;
-}
-
-std::optional<unsigned int> readDxgiAmdOrdinal(unsigned int index) {
-  IDXGIFactory1* factory = nullptr;
-  if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) {
-    return std::nullopt;
-  }
-
-  unsigned int hwIndex = 0;
-  unsigned int amdOrdinal = 0;
-  IDXGIAdapter1* adapter = nullptr;
-  for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
-    DXGI_ADAPTER_DESC1 desc{};
-    if (SUCCEEDED(adapter->GetDesc1(&desc))) {
-      if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0) {
-        if (desc.VendorId == 0x1002 || desc.VendorId == 0x1022) {
-          if (hwIndex == index) {
-            adapter->Release();
-            factory->Release();
-            return amdOrdinal;
-          }
-          ++amdOrdinal;
-        }
-        ++hwIndex;
-      }
-    }
-    adapter->Release();
-  }
-
-  factory->Release();
-  return std::nullopt;
-}
-
-// AMD PCIe link info via shared ADL helper (best-effort).
-std::optional<std::pair<unsigned int, unsigned int>> readAdlPcieLinkForDxgiName(const std::string& dxgiName,
-                                                                               const std::optional<aiz::AdlAdapterLuid>& adapterLuid,
-                                                                               const std::optional<unsigned int>& amdOrdinal,
-                                                                               const std::optional<DxgiMemInfo>& memInfo) {
-  std::optional<::aiz::AdlPciLocation> loc;
-  if (memInfo) {
-    loc = ::aiz::AdlPciLocation{memInfo->bus, memInfo->device, memInfo->function};
-  }
-  const auto link = ::aiz::readAdlPcieLinkForDxgi(dxgiName, adapterLuid, amdOrdinal, loc);
-  if (!link) return std::nullopt;
-  return std::make_pair(link->generation, link->width);
 }
 
 bool containsEngType(std::wstring_view name, std::wstring_view token) {
@@ -531,28 +480,52 @@ std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index) {
 
 #if defined(_WIN32)
   std::optional<DxgiMemInfo> memInfo = readDxgiMemInfo(index);
+  const bool isAmd = memInfo && (memInfo->vendorId == 0x1002 || memInfo->vendorId == 0x1022);
+  std::optional<AmdAdapterLuid> luid;
+  if (memInfo) luid = AmdAdapterLuid{memInfo->luid.LowPart, memInfo->luid.HighPart};
+
+  if (isAmd) {
+    if (const auto adlx = readAdlxTelemetryForDxgi(luid)) {
+      if (adlx->gpuUtilPct) t.utilPct = *adlx->gpuUtilPct;
+      if (adlx->tempC) t.tempC = *adlx->tempC;
+      if (adlx->powerW) t.watts = *adlx->powerW;
+      if (adlx->gpuClockMHz) t.gpuClockMHz = *adlx->gpuClockMHz;
+      if (adlx->memClockMHz) t.memClockMHz = *adlx->memClockMHz;
+      if (adlx->vramUsedGiB) t.vramUsedGiB = *adlx->vramUsedGiB;
+      if (adlx->vramTotalGiB) t.vramTotalGiB = *adlx->vramTotalGiB;
+      if (t.source.empty()) t.source = "adlx";
+      any = true;
+    }
+  }
+
+  // D3DKMT fallback for VRAM info when ADLX can't provide it.
+  if (isAmd && memInfo && (!t.vramUsedGiB || !t.vramTotalGiB || *t.vramTotalGiB <= 0.0)) {
+    if (const auto d3 = queryD3dkmtLocalVideoMemoryForLuid(memInfo->luid)) {
+      const double total = d3->budgetBytes ? static_cast<double>(d3->budgetBytes) / (1024.0 * 1024.0 * 1024.0) : 0.0;
+      const double used = d3->currentUsageBytes ? static_cast<double>(d3->currentUsageBytes) / (1024.0 * 1024.0 * 1024.0) : 0.0;
+      if ((!t.vramTotalGiB || *t.vramTotalGiB <= 0.0) && total > 0.0) {
+        t.vramTotalGiB = total;
+      }
+      if ((!t.vramUsedGiB || *t.vramUsedGiB <= 0.0) && used >= 0.0) {
+        t.vramUsedGiB = used;
+      }
+      if (t.source.empty()) t.source = "d3dkmt";
+      any = true;
+    }
+  }
+
+  // DXGI fallback for VRAM totals/usage.
   if (memInfo) {
-    t.vramUsedGiB = memInfo->usedGiB;
-    t.vramTotalGiB = memInfo->totalGiB;
-    t.source = "dxgi";
-    any = true;
+    if (!t.vramUsedGiB || *t.vramUsedGiB <= 0.0) t.vramUsedGiB = memInfo->usedGiB;
+    if (!t.vramTotalGiB || *t.vramTotalGiB <= 0.0) t.vramTotalGiB = memInfo->totalGiB;
+    if (t.source.empty()) t.source = "dxgi";
+    if ((t.vramTotalGiB && *t.vramTotalGiB > 0.0) || (t.vramUsedGiB && *t.vramUsedGiB > 0.0)) any = true;
   }
 
   // Width alone is still useful; some backends can't reliably report a Gen.
   if (!t.pcieLinkWidth) {
-    const auto amdOrdinal = readDxgiAmdOrdinal(index);
-    const std::string dxgiName = memInfo ? memInfo->name : std::string();
-    const bool isAmd = (memInfo && (memInfo->vendorId == 0x1002 || memInfo->vendorId == 0x1022)) || amdOrdinal.has_value();
     if (isAmd) {
-      std::optional<AdlPciLocation> loc;
-      if (memInfo) loc = AdlPciLocation{memInfo->bus, memInfo->device, memInfo->function};
-
-      std::optional<AdlAdapterLuid> luid;
-      if (memInfo) {
-        luid = AdlAdapterLuid{memInfo->luid.LowPart, memInfo->luid.HighPart};
-      }
-
-      if (const auto link = readAdlPcieLinkForDxgi(dxgiName, luid, amdOrdinal, loc)) {
+      if (const auto link = readAdlxPcieLinkForDxgi(luid)) {
         t.pcieLinkWidth = link->width;
         if (link->generation) t.pcieLinkGen = link->generation;
         any = true;
@@ -563,21 +536,29 @@ std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index) {
     }
   }
 
-  if (const auto util = readWindowsGpuUtilizationForLuid(memInfo ? std::optional<LUID>(memInfo->luid) : std::nullopt)) {
-    t.utilPct = *util;
-    if (t.source.empty()) t.source = "pdh";
-    any = true;
+  if (!t.utilPct) {
+    if (const auto util = readWindowsGpuUtilizationForLuid(memInfo ? std::optional<LUID>(memInfo->luid) : std::nullopt)) {
+      t.utilPct = *util;
+      if (t.source.empty()) t.source = "pdh";
+      any = true;
+    }
   }
 
-  if (const auto pdhMem = readWindowsGpuMemoryFromPdh(index, memInfo ? std::optional<LUID>(memInfo->luid) : std::nullopt)) {
-    if (!t.vramTotalGiB || *t.vramTotalGiB <= 0.0 || pdhMem->totalGiB > *t.vramTotalGiB) {
-      t.vramTotalGiB = pdhMem->totalGiB;
+  if (!t.vramUsedGiB || !t.vramTotalGiB || *t.vramTotalGiB <= 0.0) {
+    if (const auto pdhMem = readWindowsGpuMemoryFromPdh(index, memInfo ? std::optional<LUID>(memInfo->luid) : std::nullopt)) {
+      if (!t.vramTotalGiB || *t.vramTotalGiB <= 0.0 || pdhMem->totalGiB > *t.vramTotalGiB) {
+        t.vramTotalGiB = pdhMem->totalGiB;
+      }
+      if (!t.vramUsedGiB || *t.vramUsedGiB <= 0.0 || pdhMem->usedGiB > 0.0) {
+        t.vramUsedGiB = pdhMem->usedGiB;
+      }
+      if (t.source.empty()) t.source = "pdh";
+      any = true;
     }
-    if (!t.vramUsedGiB || *t.vramUsedGiB <= 0.0 || pdhMem->usedGiB > 0.0) {
-      t.vramUsedGiB = pdhMem->usedGiB;
-    }
-    if (t.source.empty()) t.source = "pdh";
-    any = true;
+  }
+
+  if (!t.memUtilPct && t.vramUsedGiB && t.vramTotalGiB && *t.vramTotalGiB > 0.0) {
+    t.memUtilPct = std::clamp((*t.vramUsedGiB / *t.vramTotalGiB) * 100.0, 0.0, 100.0);
   }
 
   if (any) return t;
