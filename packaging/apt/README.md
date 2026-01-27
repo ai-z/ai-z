@@ -44,13 +44,11 @@ For real distribution, you should sign the repository metadata (Release/InReleas
 
 ## GitHub Pages (automated)
 
-This repo includes GitHub Actions workflows that can build the `.deb`, generate an APT repo tree, and publish it.
+This repo includes GitHub Actions workflows that can build the `.deb`, generate an APT repo tree, and publish it to GitHub Pages.
 
 - Build workflow: `.github/workflows/publish-apt-pages.yml`
 - Deploy workflow: `.github/workflows/deploy-apt-pages.yml`
 - Trigger: push a tag like `v0.1.0` (or run manually via **workflow_dispatch**)
-
-### If you host on `OWNER.github.io/REPO`
 
 Once Pages is enabled for the repository (Settings → Pages → Source: **GitHub Actions**), users can install with:
 
@@ -62,15 +60,4 @@ sudo apt install ai-z
 
 Replace `OWNER` and `REPO` with your GitHub org/user and repository name.
 
-### If you use a custom domain served by a separate `ai-z.github.io` repo
-
-If `www.ai-z.org` is served from a separate repository (e.g. `ai-z/ai-z.github.io`), configure the deploy workflow to publish into that repo.
-
-- Create a fine-grained PAT that can **Contents: Read and write** on `ai-z/ai-z.github.io`.
-- Add it as a secret in the app repo: `AI_Z_WEBSITE_REPO_TOKEN`.
-
-Then the deploy workflow will publish the APT repo under:
-
-```text
-https://www.ai-z.org/ai-z/
-```
+If you later switch to a custom domain, point the domain at the Pages site for this repository and keep the same `/dists/...` layout.

@@ -1,4 +1,4 @@
-name: Deploy APT repo (ai-z.org)
+name: Deploy APT repo (GitHub Pages)
 
 on:
   workflow_run:
@@ -19,6 +19,8 @@ on:
 permissions:
   contents: read
   actions: read
+  pages: write
+  id-token: write
 
 concurrency:
   group: pages-${{ github.ref }}
@@ -28,11 +30,15 @@ jobs:
   deploy:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Install tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends jq unzip rsync
+          sudo apt-get install -y --no-install-recommends jq unzip
 
       - name: Download APT repo artifact
         env:
@@ -147,41 +153,26 @@ jobs:
             "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > artifact.zip
           unzip -q artifact.zip -d public
 
-      - name: Checkout website repo (ai-z.github.io)
-        uses: actions/checkout@v4
-        with:
-          repository: ai-z/ai-z.github.io
-          token: ${{ secrets.AI_Z_WEBSITE_REPO_TOKEN }}
-          path: website
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
 
-      - name: Publish APT repo into website
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Print install instructions
         run: |
           set -euo pipefail
-
-          # Publish under https://www.ai-z.org/ai-z/
-          dest_dir="website/ai-z"
-          mkdir -p "$dest_dir"
-
-          # Keep the website repo clean and deterministic
-          rsync -a --delete "public/" "$dest_dir/"
-          touch website/.nojekyll
-
-          cd website
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          if git status --porcelain | grep -q .; then
-            git add -A
-            git commit -m "Publish ai-z APT repo" \
-              -m "Source: ${GITHUB_REPOSITORY}@${GITHUB_SHA}" \
-              -m "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-            git push
-          else
-            echo "No changes to publish."
-          fi
-
-          echo "APT repo base URL: https://www.ai-z.org/ai-z/"
+          base_url='${{ steps.deployment.outputs.page_url }}'
+          echo "Deployed GitHub Pages base URL: ${base_url}"
+          echo "APT repo should be under: ${base_url}dists/stable"
+          echo
           echo "Client install (unsigned):"
-          echo "  echo \"deb [trusted=yes] https://www.ai-z.org/ai-z stable main\" | sudo tee /etc/apt/sources.list.d/ai-z.list"
+          echo "  echo \"deb [trusted=yes] ${base_url} stable main\" | sudo tee /etc/apt/sources.list.d/ai-z.list"
           echo "  sudo apt update"
           echo "  sudo apt install ai-z"
