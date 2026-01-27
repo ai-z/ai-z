@@ -28,6 +28,7 @@ jobs:
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgJsonGlob: '**/vcpkg.json'
+          vcpkgDirectory: '${{ github.workspace }}/_vcpkg'
 
       - name: Configure (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
