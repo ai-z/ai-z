@@ -1,0 +1,61 @@
+name: CI (Linux)
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libncursesw5-dev \
+            opencl-headers \
+            ocl-icd-opencl-dev \
+            libvulkan-dev \
+            dpkg-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DBUILD_TESTING=ON \
+            -DAI_Z_TEST_BACKEND=minitest \
+            -DAI_Z_ENABLE_CUDA=ON \
+            -DAI_Z_ENABLE_OPENCL=ON \
+            -DAI_Z_ENABLE_VULKAN=ON
+
+      - name: Build
+        run: cmake --build build-ci
+
+      - name: Test
+        run: ctest --test-dir build-ci --output-on-failure
+
+      - name: Package (.deb)
+        run: |
+          cd build-ci
+          cpack -G DEB
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-z-deb-${{ github.sha }}
+          path: build-ci/*.deb
+          if-no-files-found: error
