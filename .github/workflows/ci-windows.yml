@@ -51,6 +51,15 @@ jobs:
 
           cmake --install build-ci --prefix $stage
 
+          # CMake installs executables to bin/ by default; flatten for a simpler portable layout.
+          $binDir = Join-Path $stage "bin"
+          if (Test-Path (Join-Path $binDir "ai-z.exe")) {
+            Get-ChildItem -Path $binDir -Force | ForEach-Object {
+              Move-Item -Force $_.FullName $stage
+            }
+            Remove-Item -Recurse -Force $binDir
+          }
+
           $exe = Join-Path $stage "ai-z.exe"
           if (!(Test-Path $exe)) {
             throw "Expected ai-z.exe at $exe"

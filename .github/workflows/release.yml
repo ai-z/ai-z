@@ -12,9 +12,14 @@ on:
         required: false
         default: true
         type: boolean
+  release:
+    types: [published]
 
 permissions:
   contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.event.release.tag_name }}
 
 jobs:
   build-windows:
@@ -25,7 +30,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ inputs.tag }}
+          ref: refs/tags/${{ env.TAG }}
 
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -51,11 +56,20 @@ jobs:
       - name: Stage portable folder
         shell: pwsh
         run: |
-          $stage = Join-Path $PWD "dist\\ai-z-windows-${{ inputs.tag }}"
+          $stage = Join-Path $PWD "dist\\ai-z-windows-${{ env.TAG }}"
           if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
           New-Item -ItemType Directory -Path $stage | Out-Null
 
           cmake --install build-release --prefix $stage
+
+          # CMake installs executables to bin/ by default; flatten for a simpler portable layout.
+          $binDir = Join-Path $stage "bin"
+          if (Test-Path (Join-Path $binDir "ai-z.exe")) {
+            Get-ChildItem -Path $binDir -Force | ForEach-Object {
+              Move-Item -Force $_.FullName $stage
+            }
+            Remove-Item -Recurse -Force $binDir
+          }
 
           $exe = Join-Path $stage "ai-z.exe"
           if (!(Test-Path $exe)) {
@@ -120,12 +134,12 @@ jobs:
       - name: Create zip
         shell: pwsh
         run: |
-          $zip = Join-Path $PWD "dist\\ai-z-windows-${{ inputs.tag }}.zip"
+          $zip = Join-Path $PWD "dist\\ai-z-windows-${{ env.TAG }}.zip"
           if (Test-Path $zip) { Remove-Item -Force $zip }
-          Compress-Archive -Path (Join-Path $PWD "dist\\ai-z-windows-${{ inputs.tag }}\\*") -DestinationPath $zip
+          Compress-Archive -Path (Join-Path $PWD "dist\\ai-z-windows-${{ env.TAG }}\\*") -DestinationPath $zip
 
       - name: Build installer (Inno Setup)
-        if: ${{ inputs.build_installer }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_installer) || github.event_name == 'release' }}
         shell: pwsh
         run: |
           choco install innosetup -y
@@ -136,21 +150,27 @@ jobs:
           }
 
           $outDir = Join-Path $PWD "dist"
-          $sourceDir = Join-Path $PWD "dist\\ai-z-windows-${{ inputs.tag }}"
+          $sourceDir = Join-Path $PWD "dist\\ai-z-windows-${{ env.TAG }}"
           & $iscc `
-            "/DAppVersion=${{ inputs.tag }}" `
+            "/DAppVersion=${{ env.TAG }}" `
             "/DSourceDir=$sourceDir" `
             "/DOutputDir=$outDir" `
-            "/DOutputBaseFilename=ai-z-setup-${{ inputs.tag }}" `
+            "/DOutputBaseFilename=ai-z-setup-${{ env.TAG }}" `
             "packaging\\windows\\ai-z.iss"
 
-      - name: Upload artifact
+      - name: Upload artifact (zip)
         uses: actions/upload-artifact@v4
         with:
           name: release-windows
-          path: |
-            dist/ai-z-windows-${{ inputs.tag }}.zip
-            dist/ai-z-setup-${{ inputs.tag }}.exe
+          path: dist/ai-z-windows-${{ env.TAG }}.zip
+          if-no-files-found: error
+
+      - name: Upload artifact (installer)
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_installer) || github.event_name == 'release' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-installer
+          path: dist/ai-z-setup-${{ env.TAG }}.exe
           if-no-files-found: error
 
   build-linux:
@@ -161,7 +181,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ inputs.tag }}
+          ref: refs/tags/${{ env.TAG }}
 
       - name: Install dependencies
         run: |
@@ -213,7 +233,7 @@ jobs:
       - name: Verify tag exists (safety check)
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ env.TAG }}
         run: |
           set -euo pipefail
           # Fail fast if the tag doesn't exist on the remote (avoid accidentally creating it).
@@ -230,13 +250,28 @@ jobs:
           set -euo pipefail
           find dist -type f -maxdepth 3 -print
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release (manual runs)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag }}
-          name: ai-z ${{ inputs.tag }}
+          tag_name: ${{ env.TAG }}
+          name: ai-z ${{ env.TAG }}
           generate_release_notes: true
-          files: |
-            dist/**/ai-z-windows-${{ inputs.tag }}.zip
-            dist/**/ai-z-setup-${{ inputs.tag }}.exe
-            dist/**/*.deb
+
+      - name: Upload assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          files=(dist/**/ai-z-windows-${TAG}.zip dist/**/*.deb dist/**/ai-z-setup-${TAG}.exe)
+          if (( ${#files[@]} == 0 )); then
+            echo "ERROR: no release assets found under dist/" >&2
+            find dist -maxdepth 4 -type f -print >&2 || true
+            exit 1
+          fi
+
+          echo "Uploading to release tag: ${TAG}"
+          printf ' - %s\n' "${files[@]}"
+          gh release upload "${TAG}" "${files[@]}" --clobber
