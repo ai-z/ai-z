@@ -27,6 +27,11 @@ enum class Screen {
   Processes,
 };
 
+enum class TimelineView {
+  Timelines,
+  Bars,
+};
+
 enum class Command {
   None,
   Quit,
@@ -56,6 +61,9 @@ enum class Command {
 
   BenchRunAll,
   BenchReport,
+
+  ViewTimelines,
+  ViewBars,
 };
 
 struct KeyEvent {
@@ -72,6 +80,7 @@ struct TuiState {
   };
 
   Screen screen = Screen::Timelines;
+  TimelineView timelineView = TimelineView::Timelines;
 
   // Simple per-screen cursors.
   int benchmarksSel = 0;

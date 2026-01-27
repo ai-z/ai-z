@@ -741,6 +741,11 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           continue;
         }
 
+        if (state.screen == Screen::Timelines && (cmd == Command::ViewTimelines || cmd == Command::ViewBars)) {
+          applyCommand(state, cfg, cmd);
+          continue;
+        }
+
         // Config screen actions are centralized in the core.
         if (state.screen == Screen::Config &&
             (cmd == Command::Toggle || cmd == Command::Defaults || cmd == Command::Save || cmd == Command::Activate)) {

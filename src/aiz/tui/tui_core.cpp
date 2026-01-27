@@ -264,6 +264,12 @@ void applyCommand(TuiState& state, Config& cfg, Command cmd) {
     if (cmd == Command::ToggleGpuOnly) state.processesGpuOnly = !state.processesGpuOnly;
     return;
   }
+
+  if (state.screen == Screen::Timelines) {
+    if (cmd == Command::ViewTimelines) state.timelineView = TimelineView::Timelines;
+    if (cmd == Command::ViewBars) state.timelineView = TimelineView::Bars;
+    return;
+  }
 }
 
 static void drawBodyLine(Frame& out, int y, const std::wstring& s, Style style) {
@@ -466,6 +472,30 @@ static void drawSectionTitleLine(Frame& out, int y, const std::string& title) {
   }
 }
 
+static void drawCenteredSectionLine(Frame& out, int y, const std::string& title, Style st) {
+  if (y < 0 || y >= out.height) return;
+
+  // Clear line.
+  for (int x = 0; x < out.width; ++x) {
+    auto& c = out.at(x, y);
+    c.ch = L' ';
+    c.style = static_cast<std::uint16_t>(Style::Default);
+  }
+
+  // Fill line with '-' in requested style.
+  for (int x = 0; x < out.width; ++x) {
+    auto& c = out.at(x, y);
+    c.ch = L'-';
+    c.style = static_cast<std::uint16_t>(st);
+  }
+
+  if (title.empty() || out.width <= 0) return;
+
+  const int textW = static_cast<int>(title.size());
+  const int start = std::max(0, (out.width - textW) / 2);
+  drawText(out, start, y, widenAscii(title), st);
+}
+
 static void drawScrollingBars(
     Frame& out,
     int topY,
@@ -590,6 +620,119 @@ static void drawScrollingBars(
       // Keep title values highlighted, but keep the bars neutral.
       c.style = static_cast<std::uint16_t>(Style::Default);
     }
+  }
+}
+
+static void drawHorizontalBar(Frame& out, int y, int leftX, int width, double value, double maxV) {
+  if (width <= 0) return;
+  if (y < 0 || y >= out.height) return;
+
+  // Clear line region.
+  for (int x = 0; x < width; ++x) {
+    const int xx = leftX + x;
+    if (xx < 0 || xx >= out.width) continue;
+    auto& c = out.at(xx, y);
+    c.ch = L' ';
+    c.style = static_cast<std::uint16_t>(Style::Default);
+  }
+
+  if (!std::isfinite(value) || maxV <= 0.0) return;
+  double v = std::clamp(value, 0.0, maxV);
+  const int filled = std::clamp(static_cast<int>(std::round((v / maxV) * static_cast<double>(width))), 0, width);
+
+  for (int x = 0; x < filled; ++x) {
+    const int xx = leftX + x;
+    if (xx < 0 || xx >= out.width) continue;
+    auto& c = out.at(xx, y);
+    c.ch = 0x2588;  // full block
+    c.style = static_cast<std::uint16_t>(Style::Default);
+  }
+}
+
+static void drawHorizontalBarNoClear(Frame& out, int y, int leftX, int width, double value, double maxV) {
+  if (width <= 0) return;
+  if (y < 0 || y >= out.height) return;
+  if (!std::isfinite(value) || maxV <= 0.0) return;
+
+  double v = std::clamp(value, 0.0, maxV);
+  const int filled = std::clamp(static_cast<int>(std::round((v / maxV) * static_cast<double>(width))), 0, width);
+
+  for (int x = 0; x < filled; ++x) {
+    const int xx = leftX + x;
+    if (xx < 0 || xx >= out.width) continue;
+    auto& c = out.at(xx, y);
+    c.ch = 0x2588;  // full block
+    c.style = static_cast<std::uint16_t>(Style::Default);
+  }
+}
+
+static void drawBarLineWithDots(
+  Frame& out,
+  int y,
+  const std::string& left,
+  const std::string& value,
+  const std::string& right,
+  int barStart,
+  double valueNum,
+  double maxV,
+  Style nameStyle) {
+  if (y < 0 || y >= out.height) return;
+
+  // Clear line.
+  for (int x = 0; x < out.width; ++x) {
+    auto& c = out.at(x, y);
+    c.ch = L' ';
+    c.style = static_cast<std::uint16_t>(Style::Default);
+  }
+
+  const std::string title = left + value;
+
+  // Left side: label in nameStyle, value in Default.
+  {
+    const std::wstring wtitle = widenAscii(title);
+    std::vector<Style> styles(wtitle.size(), nameStyle);
+    for (std::size_t i = left.size(); i < styles.size(); ++i) styles[i] = Style::Default;
+    drawTextStyled(out, 0, y, wtitle, styles);
+  }
+
+  // Right side: optional device name.
+  std::string rightFit;
+  int rightStart = out.width;
+  if (!right.empty() && out.width > 0) {
+    const std::size_t leftW = title.size();
+    const std::size_t maxRight = (leftW + 1 < static_cast<std::size_t>(out.width))
+        ? (static_cast<std::size_t>(out.width) - (leftW + 1))
+        : 0u;
+    if (maxRight > 0u) {
+      rightFit = right;
+      if (rightFit.size() > maxRight) {
+        rightFit = rightFit.substr(rightFit.size() - maxRight);
+      }
+      rightStart = std::max(0, out.width - static_cast<int>(rightFit.size()));
+      drawText(out, rightStart, y, widenAscii(rightFit), nameStyle);
+    }
+  }
+
+  const int minStart = std::min(out.width, static_cast<int>(title.size()) + 1);
+  const int barStartAligned = std::max(minStart, std::min(out.width, barStart));
+  const int barEnd = std::min(out.width, rightStart);
+
+  // Ensure spacing up to aligned bar start.
+  for (int x = minStart; x < barStartAligned; ++x) {
+    auto& c = out.at(x, y);
+    c.ch = L' ';
+    c.style = static_cast<std::uint16_t>(Style::Default);
+  }
+
+  // Dotted guide.
+  for (int x = barStartAligned; x < barEnd; ++x) {
+    auto& c = out.at(x, y);
+    c.ch = L'.';
+    c.style = static_cast<std::uint16_t>(Style::Default);
+  }
+
+  if (barEnd > barStartAligned) {
+    drawHorizontalBarNoClear(out, y, barStartAligned, barEnd - barStartAligned, valueNum, maxV);
   }
 }
 
@@ -811,8 +954,17 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   panels.push_back(Panel{gpuPrefix(0) + " Dec", cfg.showGpuDec, &state.latest.gpuDec, &state.gpuDecTl, nullptr, 100.0, false, gpuContext(0)});
 
   // PCIe split RX/TX (tweak restored).
-  panels.push_back(Panel{gpuPrefix(0) + " PCIe RX", cfg.showPcieRx, &state.latest.pcieRx, &state.pcieRxTl, nullptr, 32'000.0, false, gpuContext(0)});
-  panels.push_back(Panel{gpuPrefix(0) + " PCIe TX", cfg.showPcieTx, &state.latest.pcieTx, &state.pcieTxTl, nullptr, 32'000.0, false, gpuContext(0)});
+  double pcieMax = 32'000.0;
+  if (!state.latest.gpus.empty()) {
+    const auto& gt0 = state.latest.gpus[0];
+    if (gt0.pcieLinkGen && gt0.pcieLinkWidth) {
+      if (const auto cap = estimatePcieLinkCapMiBps(*gt0.pcieLinkGen, *gt0.pcieLinkWidth)) {
+        pcieMax = *cap;
+      }
+    }
+  }
+  panels.push_back(Panel{gpuPrefix(0) + " PCIe RX", cfg.showPcieRx, &state.latest.pcieRx, &state.pcieRxTl, nullptr, pcieMax, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " PCIe TX", cfg.showPcieTx, &state.latest.pcieTx, &state.pcieTxTl, nullptr, pcieMax, false, gpuContext(0)});
 
   // Disk/network last.
   panels.push_back(Panel{"Disk Read", cfg.showDiskRead, &state.latest.diskRead, &state.diskReadTl, nullptr, 5000.0, false, state.diskDevice});
@@ -830,37 +982,84 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
     return;
   }
 
+  const bool barView = (state.timelineView == TimelineView::Bars);
   const int labelRows = 1;
   const int n = static_cast<int>(panels.size());
-  const int minGraphRows = 3;
+  const int minGraphRows = barView ? 0 : 3;
   const int perPanel = std::max(labelRows + minGraphRows, usable / std::max(1, n));
 
   int y = top;
+  int barStartCol = 0;
+  if (barView) {
+    std::size_t maxTitle = 0;
+    for (const auto& p : panels) {
+      std::string section = p.name;
+      std::string value;
+      if (p.sample && p.sample->has_value()) {
+        section += ": ";
+        value = fmt1((*p.sample)->value) + " " + (*p.sample)->unit;
+      } else if (p.sample != nullptr) {
+        section += ": ";
+        value = "unavailable";
+      }
+      maxTitle = std::max(maxTitle, section.size() + value.size());
+    }
+    barStartCol = static_cast<int>(maxTitle) + 1;
+  }
+
+  std::string lastDeviceShown;
   for (int i = 0; i < n; ++i) {
     const auto& p = panels[static_cast<std::size_t>(i)];
+
+    if (barView && !p.device.empty() && p.device != lastDeviceShown) {
+      if (y >= out.height - bottomReserved) break;
+      drawCenteredSectionLine(out, y, p.device, Style::Hot);
+      lastDeviceShown = p.device;
+      ++y;
+      if (y >= out.height - bottomReserved) break;
+    }
+
     const int remainingPanels = n - i;
     const int remainingUsable = std::max(0, (out.height - bottomReserved) - y);
-    const int height = (remainingPanels == 1) ? std::max(0, remainingUsable) : std::min(perPanel, remainingUsable);
+    const int height = barView ? 1 : ((remainingPanels == 1) ? std::max(0, remainingUsable) : std::min(perPanel, remainingUsable));
     if (height <= 0) break;
 
-    const std::string right = p.device;
+    const std::string right;
+
     std::string section = p.name;
     if (p.sample && p.sample->has_value()) {
       section += ": ";
       const std::string value = fmt1((*p.sample)->value) + " " + (*p.sample)->unit;
-      drawSectionTitleLineSplit(out, y, section, value, right, metricNameStyle(cfg));
+      if (barView) {
+        drawBarLineWithDots(out, y, section, value, right, barStartCol, (*p.sample)->value, p.maxV,
+                            metricNameStyle(cfg));
+      } else {
+        drawSectionTitleLineSplit(out, y, section, value, right, metricNameStyle(cfg));
+      }
     } else if (p.sample != nullptr) {
       section += ": ";
-      drawSectionTitleLineSplit(out, y, section, "unavailable", right, metricNameStyle(cfg));
+      if (barView) {
+        drawBarLineWithDots(out, y, section, "unavailable", right, barStartCol,
+                            std::numeric_limits<double>::quiet_NaN(), p.maxV, metricNameStyle(cfg));
+      } else {
+        drawSectionTitleLineSplit(out, y, section, "unavailable", right, metricNameStyle(cfg));
+      }
     } else {
-      drawSectionTitleLineSplit(out, y, section, std::string{}, right, metricNameStyle(cfg));
+      if (barView) {
+        drawBarLineWithDots(out, y, section, std::string{}, right, barStartCol,
+                            std::numeric_limits<double>::quiet_NaN(), p.maxV, metricNameStyle(cfg));
+      } else {
+        drawSectionTitleLineSplit(out, y, section, std::string{}, right, metricNameStyle(cfg));
+      }
     }
 
-    const int graphTop = y + 1;
-    const int graphH = std::max(0, height - 1);
-    if (graphH > 0 && p.tl) {
-      const int sampleWindow = std::max(static_cast<int>(cfg.timelineSamples), out.width);
-      drawScrollingBars(out, graphTop, 0, graphH, out.width, *p.tl, p.maxV, sampleWindow, cfg.timelineAgg);
+    if (!barView) {
+      const int graphTop = y + 1;
+      const int graphH = std::max(0, height - 1);
+      if (graphH > 0 && p.tl) {
+        const int sampleWindow = std::max(static_cast<int>(cfg.timelineSamples), out.width);
+        drawScrollingBars(out, graphTop, 0, graphH, out.width, *p.tl, p.maxV, sampleWindow, cfg.timelineAgg);
+      }
     }
 
     y += height;
@@ -1656,6 +1855,26 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
       }
 
       i = (j > 0) ? (j - 1) : i;
+    }
+
+    // Viewmode labels: highlight "Timelines" and "H. Bars".
+    {
+      const std::wstring_view view1 = L"Timelines";
+      const std::wstring_view view2 = L"H. Bars";
+
+      const std::size_t pos1 = footer.find(view1);
+      if (pos1 != std::wstring_view::npos) {
+        for (std::size_t k = pos1; k < pos1 + view1.size() && k < st.size(); ++k) {
+          st[k] = Style::FooterBlock;
+        }
+      }
+
+      const std::size_t pos2 = footer.find(view2);
+      if (pos2 != std::wstring_view::npos) {
+        for (std::size_t k = pos2; k < pos2 + view2.size() && k < st.size(); ++k) {
+          st[k] = Style::FooterBlock;
+        }
+      }
     }
 
     drawTextStyled(out, 0, y, footer, st);
