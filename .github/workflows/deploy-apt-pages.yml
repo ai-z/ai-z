@@ -31,14 +31,36 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
+      - name: Install tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends jq unzip
+
       - name: Download APT repo artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: apt-repo
-          path: public
-          run-id: ${{ github.event_name == 'workflow_dispatch' && inputs.run_id || github.event.workflow_run.id }}
-          repository: ${{ github.repository }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.run_id || github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+
+          echo "Fetching artifacts for run: $RUN_ID"
+          json="$(gh api -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts")"
+
+          echo "Available artifacts (id\tname\texpired):"
+          echo "$json" | jq -r '.artifacts[] | "\(.id)\t\(.name)\t\(.expired)"' || true
+
+          artifact_id="$(echo "$json" | jq -r '.artifacts[] | select(.name=="apt-repo") | .id' | head -n 1)"
+          if [[ -z "${artifact_id}" || "${artifact_id}" == "null" ]]; then
+            echo "ERROR: Could not find artifact named 'apt-repo' for run $RUN_ID" >&2
+            exit 1
+          fi
+
+          rm -rf public artifact.zip
+          mkdir -p public
+          gh api -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > artifact.zip
+          unzip -q artifact.zip -d public
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
