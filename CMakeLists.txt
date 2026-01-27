@@ -415,24 +415,38 @@ install(TARGETS ai-z
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
+# Windows: bundle MSVC runtime DLLs app-locally when installing.
+# This makes portable zips/installers runnable on clean machines without requiring
+# the Visual C++ Redistributable to be preinstalled.
+if (MSVC)
+  include(InstallRequiredSystemLibraries)
+  if (CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+    install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
+      DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+  endif()
+endif()
+
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/docs/ai-z.1
   DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
 )
 
-# Packaging (Debian/Ubuntu)
+# Packaging
 set(CPACK_PACKAGE_NAME "ai-z")
 set(CPACK_PACKAGE_VENDOR "ai-z")
 set(CPACK_PACKAGE_CONTACT "ai-z")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "C++ TUI app for performance timelines (CPU/GPU/Disk/PCIe) and benchmarks")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
 
-set(CPACK_GENERATOR "DEB")
-set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
-set(CPACK_DEBIAN_PACKAGE_MAINTAINER "ai-z")
-set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
-set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+if (AI_Z_PLATFORM_LINUX)
+  set(CPACK_GENERATOR "DEB")
+  set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+  set(CPACK_DEBIAN_PACKAGE_MAINTAINER "ai-z")
+  set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+  set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 
-# Let dpkg-shlibdeps compute shared-library dependencies when available.
-set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+  # Let dpkg-shlibdeps compute shared-library dependencies when available.
+  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+endif()
 
 include(CPack)

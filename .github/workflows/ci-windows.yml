@@ -31,6 +31,7 @@ jobs:
         run: |
           cmake -S . -B build-ci -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_BINDIR=. `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake"
 
       - name: Build
@@ -44,40 +45,72 @@ jobs:
       - name: Package (zip)
         shell: pwsh
         run: |
-          $exe = Join-Path $PWD "build-ci\ai-z.exe"
+          $stage = Join-Path $PWD "dist\ai-z-windows-${{ github.sha }}"
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+
+          cmake --install build-ci --prefix $stage
+
+          $exe = Join-Path $stage "ai-z.exe"
           if (!(Test-Path $exe)) {
             throw "Expected ai-z.exe at $exe"
           }
 
-          # Bundle vcpkg runtime DLLs required by the executable.
-          # (On fresh machines, pdcurses.dll won't be on PATH.)
-          $dllDestDir = Join-Path $PWD "build-ci"
-          $pdcursesDest = Join-Path $dllDestDir "pdcurses.dll"
+          function Get-DependentDlls([string]$binaryPath) {
+            $out = & dumpbin /DEPENDENTS $binaryPath 2>$null
+            return $out |
+              Where-Object { $_ -match '^\s{4}[^\s]+\.dll\s*$' } |
+              ForEach-Object { $_.Trim() }
+          }
 
-          $candidateDlls = @()
+          # Copy non-system DLL dependencies from vcpkg next to the exe.
+          # (MSVC runtime DLLs are installed via InstallRequiredSystemLibraries in CMake.)
+          $systemDlls = @(
+            'KERNEL32.dll','USER32.dll','GDI32.dll','ADVAPI32.dll','SHELL32.dll','OLE32.dll','OLEAUT32.dll',
+            'WS2_32.dll','IPHLPAPI.dll','PSAPI.dll','NTDLL.dll','CRYPT32.dll','COMDLG32.dll','COMCTL32.dll',
+            'SHLWAPI.dll','VERSION.dll','IMM32.dll','UXTHEME.dll','DWMAPI.dll','SETUPAPI.dll','WINMM.dll'
+          )
+
+          $searchDirs = @()
           if ($env:VCPKG_INSTALLED_DIR) {
-            $candidateDlls += Join-Path $env:VCPKG_INSTALLED_DIR "x64-windows\bin\pdcurses.dll"
-            $candidateDlls += Join-Path $env:VCPKG_INSTALLED_DIR "x64-windows\debug\bin\pdcurses.dll"
+            $searchDirs += Join-Path $env:VCPKG_INSTALLED_DIR "x64-windows\bin"
           }
           if ($env:VCPKG_ROOT) {
-            $candidateDlls += Join-Path $env:VCPKG_ROOT "installed\x64-windows\bin\pdcurses.dll"
-            $candidateDlls += Join-Path $env:VCPKG_ROOT "installed\x64-windows\debug\bin\pdcurses.dll"
+            $searchDirs += Join-Path $env:VCPKG_ROOT "installed\x64-windows\bin"
           }
+          $searchDirs = $searchDirs | Where-Object { Test-Path $_ } | Select-Object -Unique
 
-          $pdcursesSrc = $candidateDlls | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $pdcursesSrc -and $env:VCPKG_ROOT) {
-            $pdcursesSrc = Get-ChildItem -Path (Join-Path $env:VCPKG_ROOT "installed") -Recurse -Filter "pdcurses.dll" -ErrorAction SilentlyContinue |
-              Select-Object -First 1 -ExpandProperty FullName
-          }
-          if (-not $pdcursesSrc) {
-            throw "pdcurses.dll not found under vcpkg install; cannot create a runnable zip."
-          }
+          $queue = New-Object System.Collections.Generic.Queue[string]
+          $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+          $queue.Enqueue($exe)
+          $seen.Add($exe) | Out-Null
 
-          Copy-Item -Force $pdcursesSrc $pdcursesDest
+          while ($queue.Count -gt 0) {
+            $bin = $queue.Dequeue()
+            foreach ($dll in (Get-DependentDlls $bin)) {
+              if ($systemDlls -contains $dll) { continue }
+
+              $dest = Join-Path $stage $dll
+              if (Test-Path $dest) {
+                if ($seen.Add($dest)) { $queue.Enqueue($dest) }
+                continue
+              }
+
+              $src = $searchDirs |
+                ForEach-Object { Join-Path $_ $dll } |
+                Where-Object { Test-Path $_ } |
+                Select-Object -First 1
+
+              if ($src) {
+                Copy-Item -Force $src $dest
+                if ($seen.Add($dest)) { $queue.Enqueue($dest) }
+              }
+            }
+          }
 
           $zip = Join-Path $PWD "ai-z-windows-${{ github.sha }}.zip"
           if (Test-Path $zip) { Remove-Item -Force $zip }
-          Compress-Archive -Path @($exe, $pdcursesDest) -DestinationPath $zip
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip
 
       - name: Upload zip artifact
         uses: actions/upload-artifact@v4

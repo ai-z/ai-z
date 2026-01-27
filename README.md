@@ -20,7 +20,10 @@ sudo apt install ai-z
 
 ### Windows 10/11
 
-TODO
+Download either the portable ZIP or the installer from the latest GitHub Release.
+
+- Portable: unzip and run `ai-z.exe`
+- Installer: run `ai-z-setup-<version>.exe`
 
 ## Build
 
