@@ -1,4 +1,4 @@
-name: Publish APT repo (GitHub Pages)
+name: Build APT repo (artifact)
 
 on:
   push:
@@ -8,19 +8,14 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - name: Checkout
@@ -66,14 +61,9 @@ jobs:
           deb_path="$(ls -1 build-release/*.deb | head -n 1)"
           ./packaging/apt/make_repo.sh "$deb_path" ./public stable main
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Upload APT repo artifact
+        uses: actions/upload-artifact@v4
         with:
+          name: apt-repo
           path: public
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          if-no-files-found: error
