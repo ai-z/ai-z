@@ -1,5 +1,9 @@
 # AI-Z
 
+[![CI](https://github.com/ai-z/ai-z/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/ai-z/ai-z/actions/workflows/ci.yml)
+[![CI (Linux)](https://github.com/ai-z/ai-z/actions/workflows/ci-linux.yml/badge.svg?branch=master)](https://github.com/ai-z/ai-z/actions/workflows/ci-linux.yml)
+[![CI (Windows)](https://github.com/ai-z/ai-z/actions/workflows/ci-windows.yml/badge.svg?branch=master)](https://github.com/ai-z/ai-z/actions/workflows/ci-windows.yml)
+
 Terminal app for monitoring CPU/GPU performance and AI related benchmarks.
 
 | GPU   | Linux | Windows |
