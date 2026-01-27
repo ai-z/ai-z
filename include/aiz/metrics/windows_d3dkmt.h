@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 
 namespace aiz {
 
@@ -20,6 +21,9 @@ struct D3dkmtVideoMemoryInfo {
 // Best-effort: queries video memory information for a DXGI adapter via D3DKMT.
 // Returns nullopt if D3DKMT is unavailable or the query fails.
 std::optional<D3dkmtVideoMemoryInfo> queryD3dkmtLocalVideoMemoryForLuid(const LUID& luid);
+
+// Diagnostics: list adapters and their D3DKMT local memory stats.
+std::string d3dkmtDiagnostics();
 
 }  // namespace aiz
 

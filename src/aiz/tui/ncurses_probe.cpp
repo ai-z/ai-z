@@ -9,6 +9,8 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <sstream>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -22,6 +24,19 @@ static std::string wideToUtf8(const wchar_t* s) {
   std::string out(len - 1, '\0');
   WideCharToMultiByte(CP_UTF8, 0, s, -1, out.data(), len, nullptr, nullptr);
   return out;
+}
+
+static bool isIgnoredAdapter(const DXGI_ADAPTER_DESC1& desc, const std::string& name) {
+  const bool isSoftware = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+  const bool isBasicRenderDriver = (desc.VendorId == 0x1414) || (name == "Microsoft Basic Render Driver");
+  return isSoftware || isBasicRenderDriver;
+}
+
+static std::string dxgiAdapterKey(const DXGI_ADAPTER_DESC1& desc, const std::string& name) {
+  std::ostringstream key;
+  key << desc.VendorId << ":" << desc.DeviceId << ":" << desc.SubSysId << ":" << desc.Revision << ":";
+  key << desc.DedicatedVideoMemory << ":" << desc.SharedSystemMemory << ":" << name;
+  return key.str();
 }
 #endif
 
@@ -94,14 +109,19 @@ unsigned int probeGpuCountFast() {
   }
 
   unsigned int count = 0;
+  std::unordered_map<std::string, bool> seen;
   for (UINT i = 0; ; ++i) {
     IDXGIAdapter1* adapter = nullptr;
     if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND) break;
     DXGI_ADAPTER_DESC1 desc{};
     if (SUCCEEDED(adapter->GetDesc1(&desc))) {
-      if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0) {
-        ++count;
+      const std::string name = wideToUtf8(desc.Description);
+      if (isIgnoredAdapter(desc, name)) {
+        adapter->Release();
+        continue;
       }
+      const std::string key = dxgiAdapterKey(desc, name);
+      if (seen.emplace(key, true).second) ++count;
     }
     adapter->Release();
   }
@@ -123,14 +143,20 @@ std::vector<std::string> probeGpuNamesFast(unsigned int gpuCount, bool hasNvml) 
   IDXGIFactory1* factory = nullptr;
   if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) {
     unsigned int hwIndex = 0;
+    std::unordered_map<std::string, bool> seen;
     for (UINT i = 0; ; ++i) {
       IDXGIAdapter1* adapter = nullptr;
       if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND) break;
       DXGI_ADAPTER_DESC1 desc{};
       if (SUCCEEDED(adapter->GetDesc1(&desc))) {
-        if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0) {
+        const std::string n = wideToUtf8(desc.Description);
+        if (isIgnoredAdapter(desc, n)) {
+          adapter->Release();
+          continue;
+        }
+        const std::string key = dxgiAdapterKey(desc, n);
+        if (seen.emplace(key, true).second) {
           if (hwIndex < names.size()) {
-            const std::string n = wideToUtf8(desc.Description);
             if (!n.empty()) names[hwIndex] = n;
           }
           ++hwIndex;

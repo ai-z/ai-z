@@ -7,15 +7,47 @@
 
 #include <dxgi1_2.h>
 
-#if !defined(AI_Z_HAS_ADLX_HEADERS)
-#error "ADLX headers are required for AMD metrics (AI_Z_HAS_ADLX_HEADERS not set)."
-#endif
+#if !defined(AI_Z_HAS_ADLX_HEADERS) || (AI_Z_HAS_ADLX_HEADERS == 0)
+
+namespace aiz {
+
+AdlxAvailability adlxAvailability() {
+  return {};
+}
+
+std::string adlxDiagnostics() {
+  return std::string("ADLX diagnostics (Windows)\n- status: unavailable (ADLX headers not found at build time)\n");
+}
+
+std::string pcieDiagnostics() {
+  return std::string("PCIe diagnostics (Windows)\n- status: unavailable (ADLX headers not found at build time)\n");
+}
+
+std::string amdPcieLinkNoteForDxgi(const std::optional<AmdAdapterLuid>&) {
+  return std::string("ADLX headers missing");
+}
+
+AdlxStatus adlxStatus() {
+  return AdlxStatus::Unusable;
+}
+
+std::optional<AmdPcieLink> readAdlxPcieLinkForDxgi(const std::optional<AmdAdapterLuid>&) {
+  return std::nullopt;
+}
+
+std::optional<AdlxGpuTelemetry> readAdlxTelemetryForDxgi(const std::optional<AmdAdapterLuid>&) {
+  return std::nullopt;
+}
+
+}  // namespace aiz
+
+#else
 
 #include <ADLX.h>
+#include <IPerformanceMonitoring.h>
 #include <ISystem.h>
 #include <ISystem1.h>
 #include <ISystem2.h>
-#include <IPerformanceMonitoring.h>
 
 #include <algorithm>
 #include <cctype>
@@ -704,6 +736,8 @@ std::string adlxDiagnostics() {
 }
 
 }  // namespace aiz
+
+#endif
 
 #else
 

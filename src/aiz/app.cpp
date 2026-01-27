@@ -4,6 +4,8 @@
 #include <aiz/config/config.h>
 #include <aiz/hw/hardware_info.h>
 #include <aiz/metrics/amd_adlx.h>
+#include <aiz/metrics/intel_igcl.h>
+#include <aiz/metrics/windows_d3dkmt.h>
 #include <aiz/tui/ui.h>
 #include <aiz/version.h>
 
@@ -13,6 +15,12 @@
 #include <string_view>
 
 namespace aiz {
+
+#if defined(_WIN32)
+namespace ncurses {
+std::string windowsPdhGpuMemoryDiagnostics();
+}  // namespace ncurses
+#endif
 
 static bool hasFlag(int argc, char** argv, std::string_view flag) {
   for (int i = 1; i < argc; ++i) {
@@ -34,6 +42,10 @@ static void printHelp(std::ostream& os) {
         "  --hardware   Print hardware info and exit (no TUI)\n"
       "  --diag-pcie  Print Windows PCIe link diagnostics and exit (Windows)\n"
         "  --diag-adlx  Print AMD ADLX diagnostics and exit (Windows)\n"
+        "  --diag-igcl  Print Intel IGCL diagnostics and exit (Windows)\n"
+        "  --diag-igcl-full  Print detailed Intel IGCL diagnostics (Windows)\n"
+      "  --diag-d3dkmt  Print D3DKMT VRAM diagnostics (Windows)\n"
+        "  --diag-pdh-gpu  Print PDH GPU memory diagnostics (Windows)\n"
         "  --lang TAG   UI language (en, zh-CN). Also reads AI_Z_LANG / LANG\n";
 }
 
@@ -106,6 +118,42 @@ int App::run(int argc, char** argv) {
     std::cout << adlxDiagnostics();
     #else
     std::cout << "--diag-adlx is only available on Windows.\n";
+    #endif
+    return 0;
+  }
+
+  if (hasFlag(argc, argv, "--diag-igcl")) {
+    #if defined(_WIN32)
+    std::cout << igclDiagnostics();
+    #else
+    std::cout << "--diag-igcl is only available on Windows.\n";
+    #endif
+    return 0;
+  }
+
+  if (hasFlag(argc, argv, "--diag-igcl-full")) {
+    #if defined(_WIN32)
+    std::cout << igclDiagnosticsDetailed();
+    #else
+    std::cout << "--diag-igcl-full is only available on Windows.\n";
+    #endif
+    return 0;
+  }
+
+  if (hasFlag(argc, argv, "--diag-d3dkmt")) {
+    #if defined(_WIN32)
+    std::cout << d3dkmtDiagnostics();
+    #else
+    std::cout << "--diag-d3dkmt is only available on Windows.\n";
+    #endif
+    return 0;
+  }
+
+  if (hasFlag(argc, argv, "--diag-pdh-gpu")) {
+    #if defined(_WIN32)
+    std::cout << ncurses::windowsPdhGpuMemoryDiagnostics();
+    #else
+    std::cout << "--diag-pdh-gpu is only available on Windows.\n";
     #endif
     return 0;
   }

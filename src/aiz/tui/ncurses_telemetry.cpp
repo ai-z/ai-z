@@ -2,6 +2,7 @@
 
 #include <aiz/metrics/nvidia_nvml.h>
 #include <aiz/metrics/amd_adlx.h>
+#include <aiz/metrics/intel_igcl.h>
 #if defined(AI_Z_PLATFORM_LINUX)
 #include <aiz/metrics/linux_gpu_sysfs.h>
 #endif
@@ -58,6 +59,34 @@ static bool windowsEnvFlagSet(const char* name) {
     return true;
   }
   return false;
+}
+
+static std::string wideToUtf8(const wchar_t* s) {
+  if (!s) return {};
+  int len = WideCharToMultiByte(CP_UTF8, 0, s, -1, nullptr, 0, nullptr, nullptr);
+  if (len <= 1) return {};
+  std::string out(len - 1, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, s, -1, out.data(), len, nullptr, nullptr);
+  return out;
+}
+
+static std::string wideViewToUtf8(std::wstring_view s) {
+  if (s.empty()) return {};
+  std::wstring tmp(s.begin(), s.end());
+  return wideToUtf8(tmp.c_str());
+}
+
+static bool isIgnoredAdapter(const DXGI_ADAPTER_DESC1& desc, const std::string& name) {
+  const bool isSoftware = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+  const bool isBasicRenderDriver = (desc.VendorId == 0x1414) || (name == "Microsoft Basic Render Driver");
+  return isSoftware || isBasicRenderDriver;
+}
+
+static std::string dxgiAdapterKey(const DXGI_ADAPTER_DESC1& desc, const std::string& name) {
+  std::ostringstream key;
+  key << desc.VendorId << ":" << desc.DeviceId << ":" << desc.SubSysId << ":" << desc.Revision << ":";
+  key << desc.DedicatedVideoMemory << ":" << desc.SharedSystemMemory << ":" << name;
+  return key.str();
 }
 
 struct PdhQueryState {
@@ -170,6 +199,9 @@ struct DxgiMemInfo {
   double usedGiB = 0.0;
   double totalGiB = 0.0;
   std::uint32_t vendorId = 0;
+  std::uint32_t deviceId = 0;
+  std::uint32_t revisionId = 0;
+  std::uint32_t subSysId = 0;
   std::string name;
 };
 
@@ -180,11 +212,18 @@ std::optional<DxgiMemInfo> readDxgiMemInfo(unsigned int index) {
   }
 
   unsigned int hwIndex = 0;
+  std::unordered_map<std::string, bool> seen;
   IDXGIAdapter1* adapter = nullptr;
   for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
     DXGI_ADAPTER_DESC1 desc{};
     if (SUCCEEDED(adapter->GetDesc1(&desc))) {
-      if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0) {
+      const std::string name = wideToUtf8(desc.Description);
+      if (isIgnoredAdapter(desc, name)) {
+        adapter->Release();
+        continue;
+      }
+      const std::string key = dxgiAdapterKey(desc, name);
+      if (!seen.emplace(key, true).second) {
         adapter->Release();
         continue;
       }
@@ -202,26 +241,26 @@ std::optional<DxgiMemInfo> readDxgiMemInfo(unsigned int index) {
         const bool okNonLocal = SUCCEEDED(adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, &nonLocal));
 
         const std::uint64_t dedicated = desc.DedicatedVideoMemory;
-        const std::uint64_t total = dedicated ? dedicated
-          : (okLocal && local.Budget ? local.Budget
-          : (okNonLocal ? nonLocal.Budget : 0));
-        const std::uint64_t used = dedicated ? (okLocal ? local.CurrentUsage : 0)
-          : (okNonLocal ? nonLocal.CurrentUsage : 0);
+        std::uint64_t total = 0;
+        if (dedicated) {
+          total = dedicated;
+        } else {
+          if (okLocal && local.Budget) total += local.Budget;
+          if (okNonLocal && nonLocal.Budget) total += nonLocal.Budget;
+        }
+        std::uint64_t used = 0;
+        if (okLocal) used += local.CurrentUsage;
+        if (okNonLocal) used += nonLocal.CurrentUsage;
 
         DxgiMemInfo info;
         info.luid = desc.AdapterLuid;
         info.totalGiB = total ? static_cast<double>(total) / (1024.0 * 1024.0 * 1024.0) : 0.0;
         info.usedGiB = used ? static_cast<double>(used) / (1024.0 * 1024.0 * 1024.0) : 0.0;
         info.vendorId = desc.VendorId;
-        info.name = std::wstring(desc.Description).empty() ? std::string() : std::string();
-        if (desc.Description[0] != L'\0') {
-          int len = WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, nullptr, 0, nullptr, nullptr);
-          if (len > 1) {
-            std::string out(len - 1, '\0');
-            WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, out.data(), len, nullptr, nullptr);
-            info.name = std::move(out);
-          }
-        }
+        info.deviceId = desc.DeviceId;
+        info.revisionId = desc.Revision;
+        info.subSysId = desc.SubSysId;
+        info.name = name;
         adapter3->Release();
         adapter->Release();
         factory->Release();
@@ -427,7 +466,174 @@ std::optional<PdhMemTotals> readWindowsGpuMemoryFromPdh(unsigned int index, cons
   return std::nullopt;
 }
 
+struct PdhProcMemTotals {
+  double usedGiB = 0.0;
+};
+
+std::optional<PdhProcMemTotals> readWindowsGpuProcessMemoryFromPdh(const std::optional<LUID>& luidOpt) {
+  if (!luidOpt) return std::nullopt;
+  if (windowsEnvFlagSet("AI_Z_DISABLE_PDH")) return std::nullopt;
+  static PdhQueryState dedicatedUsage;
+  static PdhQueryState sharedUsage;
+
+  auto du = readPdhArray(dedicatedUsage, L"\\GPU Process Memory(*)\\Dedicated Usage");
+  auto su = readPdhArray(sharedUsage, L"\\GPU Process Memory(*)\\Shared Usage");
+  if (!du) return std::nullopt;
+
+  double dedicatedBytes = 0.0;
+  double sharedBytes = 0.0;
+  for (DWORD i = 0; i < du->count; ++i) {
+    const auto* name = du->items[i].szName;
+    if (!name) continue;
+    const std::wstring_view inst(name);
+    LUID instLuid{};
+    if (!parseLuidFromInstance(inst, instLuid)) continue;
+    if (instLuid.HighPart != luidOpt->HighPart || instLuid.LowPart != luidOpt->LowPart) continue;
+    dedicatedBytes += static_cast<double>(du->items[i].FmtValue.largeValue);
+  }
+
+  if (su) {
+    for (DWORD i = 0; i < su->count; ++i) {
+      const auto* name = su->items[i].szName;
+      if (!name) continue;
+      const std::wstring_view inst(name);
+      LUID instLuid{};
+      if (!parseLuidFromInstance(inst, instLuid)) continue;
+      if (instLuid.HighPart != luidOpt->HighPart || instLuid.LowPart != luidOpt->LowPart) continue;
+      sharedBytes += static_cast<double>(su->items[i].FmtValue.largeValue);
+    }
+  }
+
+  const double used = dedicatedBytes + sharedBytes;
+  if (used <= 0.0) return std::nullopt;
+  PdhProcMemTotals out;
+  out.usedGiB = used / (1024.0 * 1024.0 * 1024.0);
+  return out;
+}
+
+
 }  // namespace
+#endif
+
+#if defined(_WIN32)
+std::string windowsPdhGpuMemoryDiagnostics() {
+  std::ostringstream oss;
+  oss << "PDH GPU memory diagnostics (Windows)\n";
+
+  if (windowsEnvFlagSet("AI_Z_DISABLE_PDH")) {
+    oss << "- status: disabled via AI_Z_DISABLE_PDH\n";
+    return oss.str();
+  }
+
+  static PdhQueryState dedicatedUsage;
+  static PdhQueryState dedicatedLimit;
+  static PdhQueryState sharedUsage;
+  static PdhQueryState sharedLimit;
+  static PdhQueryState procDedicated;
+  static PdhQueryState procShared;
+
+  auto du = readPdhArray(dedicatedUsage, L"\\GPU Adapter Memory(*)\\Dedicated Usage");
+  auto dl = readPdhArray(dedicatedLimit, L"\\GPU Adapter Memory(*)\\Dedicated Limit");
+  auto su = readPdhArray(sharedUsage, L"\\GPU Adapter Memory(*)\\Shared Usage");
+  auto sl = readPdhArray(sharedLimit, L"\\GPU Adapter Memory(*)\\Shared Limit");
+
+  auto pdu = readPdhArray(procDedicated, L"\\GPU Process Memory(*)\\Dedicated Usage");
+  auto psu = readPdhArray(procShared, L"\\GPU Process Memory(*)\\Shared Usage");
+
+  if (!du) {
+    oss << "- adapter memory counters: unavailable\n";
+  } else {
+    oss << "- adapter memory counters: ok\n";
+    for (DWORD i = 0; i < du->count; ++i) {
+      const auto* name = du->items[i].szName;
+      if (!name) continue;
+      const std::wstring_view inst(name);
+      LUID instLuid{};
+      const bool hasLuid = parseLuidFromInstance(inst, instLuid);
+      const double dedicatedUsed = static_cast<double>(du->items[i].FmtValue.largeValue);
+
+      double dedicatedLim = 0.0;
+      if (dl) {
+        for (DWORD j = 0; j < dl->count; ++j) {
+          const auto* name2 = dl->items[j].szName;
+          if (!name2) continue;
+          if (std::wstring_view(name2) == inst) {
+            dedicatedLim = static_cast<double>(dl->items[j].FmtValue.largeValue);
+            break;
+          }
+        }
+      }
+
+      double sharedUsed = 0.0;
+      if (su) {
+        for (DWORD j = 0; j < su->count; ++j) {
+          const auto* name2 = su->items[j].szName;
+          if (!name2) continue;
+          if (std::wstring_view(name2) == inst) {
+            sharedUsed = static_cast<double>(su->items[j].FmtValue.largeValue);
+            break;
+          }
+        }
+      }
+
+      double sharedLim = 0.0;
+      if (sl) {
+        for (DWORD j = 0; j < sl->count; ++j) {
+          const auto* name2 = sl->items[j].szName;
+          if (!name2) continue;
+          if (std::wstring_view(name2) == inst) {
+            sharedLim = static_cast<double>(sl->items[j].FmtValue.largeValue);
+            break;
+          }
+        }
+      }
+
+      oss << "  instance: " << wideViewToUtf8(inst) << "\n";
+      if (hasLuid) {
+        oss << "    luid: 0x" << std::hex << instLuid.HighPart << ":0x" << instLuid.LowPart << std::dec << "\n";
+      }
+      oss << "    dedicated used: " << (dedicatedUsed / (1024.0 * 1024.0 * 1024.0)) << " GiB\n";
+      if (dedicatedLim > 0.0) oss << "    dedicated limit: " << (dedicatedLim / (1024.0 * 1024.0 * 1024.0)) << " GiB\n";
+      if (sharedUsed > 0.0) oss << "    shared used: " << (sharedUsed / (1024.0 * 1024.0 * 1024.0)) << " GiB\n";
+      if (sharedLim > 0.0) oss << "    shared limit: " << (sharedLim / (1024.0 * 1024.0 * 1024.0)) << " GiB\n";
+    }
+  }
+
+  if (!pdu) {
+    oss << "- process memory counters: unavailable\n";
+  } else {
+    oss << "- process memory counters: ok\n";
+    for (DWORD i = 0; i < pdu->count; ++i) {
+      const auto* name = pdu->items[i].szName;
+      if (!name) continue;
+      const std::wstring_view inst(name);
+      LUID instLuid{};
+      const bool hasLuid = parseLuidFromInstance(inst, instLuid);
+      const double dedicatedUsed = static_cast<double>(pdu->items[i].FmtValue.largeValue);
+
+      double sharedUsed = 0.0;
+      if (psu) {
+        for (DWORD j = 0; j < psu->count; ++j) {
+          const auto* name2 = psu->items[j].szName;
+          if (!name2) continue;
+          if (std::wstring_view(name2) == inst) {
+            sharedUsed = static_cast<double>(psu->items[j].FmtValue.largeValue);
+            break;
+          }
+        }
+      }
+
+      oss << "  proc: " << wideViewToUtf8(inst) << "\n";
+      if (hasLuid) {
+        oss << "    luid: 0x" << std::hex << instLuid.HighPart << ":0x" << instLuid.LowPart << std::dec << "\n";
+      }
+      oss << "    dedicated used: " << (dedicatedUsed / (1024.0 * 1024.0 * 1024.0)) << " GiB\n";
+      if (sharedUsed > 0.0) oss << "    shared used: " << (sharedUsed / (1024.0 * 1024.0 * 1024.0)) << " GiB\n";
+    }
+  }
+
+  return oss.str();
+}
 #endif
 
 std::string formatRamText(const std::optional<RamUsage>& ram) {
@@ -481,8 +687,27 @@ std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index) {
 #if defined(_WIN32)
   std::optional<DxgiMemInfo> memInfo = readDxgiMemInfo(index);
   const bool isAmd = memInfo && (memInfo->vendorId == 0x1002 || memInfo->vendorId == 0x1022);
+  const bool isIntel = memInfo && (memInfo->vendorId == 0x8086);
   std::optional<AmdAdapterLuid> luid;
   if (memInfo) luid = AmdAdapterLuid{memInfo->luid.LowPart, memInfo->luid.HighPart};
+
+  if (isIntel && memInfo) {
+    IntelAdapterPciIds ids;
+    ids.vendorId = memInfo->vendorId;
+    ids.deviceId = memInfo->deviceId;
+    ids.revisionId = memInfo->revisionId;
+    ids.subSysId = memInfo->subSysId;
+
+    if (const auto igcl = readIgclTelemetryForPciIds(ids)) {
+      if (igcl->gpuUtilPct) t.utilPct = *igcl->gpuUtilPct;
+      if (igcl->tempC) t.tempC = *igcl->tempC;
+      if (igcl->powerW) t.watts = *igcl->powerW;
+      if (igcl->gpuClockMHz) t.gpuClockMHz = *igcl->gpuClockMHz;
+      if (igcl->memClockMHz) t.memClockMHz = *igcl->memClockMHz;
+      if (t.source.empty()) t.source = "igcl";
+      any = true;
+    }
+  }
 
   if (isAmd) {
     if (const auto adlx = readAdlxTelemetryForDxgi(luid)) {
@@ -498,15 +723,15 @@ std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index) {
     }
   }
 
-  // D3DKMT fallback for VRAM info when ADLX can't provide it.
-  if (isAmd && memInfo && (!t.vramUsedGiB || !t.vramTotalGiB || *t.vramTotalGiB <= 0.0)) {
+  // D3DKMT fallback for VRAM info when DXGI/ADLX can't provide it.
+  if (memInfo && (!t.vramUsedGiB || !t.vramTotalGiB || *t.vramTotalGiB <= 0.0)) {
     if (const auto d3 = queryD3dkmtLocalVideoMemoryForLuid(memInfo->luid)) {
       const double total = d3->budgetBytes ? static_cast<double>(d3->budgetBytes) / (1024.0 * 1024.0 * 1024.0) : 0.0;
       const double used = d3->currentUsageBytes ? static_cast<double>(d3->currentUsageBytes) / (1024.0 * 1024.0 * 1024.0) : 0.0;
       if ((!t.vramTotalGiB || *t.vramTotalGiB <= 0.0) && total > 0.0) {
         t.vramTotalGiB = total;
       }
-      if ((!t.vramUsedGiB || *t.vramUsedGiB <= 0.0) && used >= 0.0) {
+      if ((!t.vramUsedGiB || *t.vramUsedGiB <= 0.0) && used > 0.0) {
         t.vramUsedGiB = used;
       }
       if (t.source.empty()) t.source = "d3dkmt";
@@ -516,7 +741,9 @@ std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index) {
 
   // DXGI fallback for VRAM totals/usage.
   if (memInfo) {
-    if (!t.vramUsedGiB || *t.vramUsedGiB <= 0.0) t.vramUsedGiB = memInfo->usedGiB;
+    if ((!t.vramUsedGiB || *t.vramUsedGiB <= 0.0) && memInfo->usedGiB > 0.0) {
+      t.vramUsedGiB = memInfo->usedGiB;
+    }
     if (!t.vramTotalGiB || *t.vramTotalGiB <= 0.0) t.vramTotalGiB = memInfo->totalGiB;
     if (t.source.empty()) t.source = "dxgi";
     if ((t.vramTotalGiB && *t.vramTotalGiB > 0.0) || (t.vramUsedGiB && *t.vramUsedGiB > 0.0)) any = true;
@@ -557,8 +784,22 @@ std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index) {
     }
   }
 
+  if (memInfo && (!t.vramUsedGiB || *t.vramUsedGiB <= 0.0)) {
+    if (const auto procMem = readWindowsGpuProcessMemoryFromPdh(std::optional<LUID>(memInfo->luid))) {
+      t.vramUsedGiB = procMem->usedGiB;
+      if (t.source.empty()) t.source = "pdh-proc";
+      any = true;
+    }
+  }
+
   if (!t.memUtilPct && t.vramUsedGiB && t.vramTotalGiB && *t.vramTotalGiB > 0.0) {
     t.memUtilPct = std::clamp((*t.vramUsedGiB / *t.vramTotalGiB) * 100.0, 0.0, 100.0);
+  }
+
+  if (t.vramUsedGiB && *t.vramUsedGiB <= 0.0 && t.vramTotalGiB && *t.vramTotalGiB > 0.0) {
+    if (t.source == "dxgi" || t.source == "d3dkmt" || t.source == "pdh" || t.source == "pdh-proc") {
+      t.vramUsedGiB.reset();
+    }
   }
 
   if (any) return t;

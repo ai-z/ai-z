@@ -4,9 +4,11 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <dxgi1_4.h>
 
 #include <cstdint>
 #include <mutex>
+#include <sstream>
 
 namespace aiz {
 
@@ -106,6 +108,71 @@ std::optional<D3dkmtVideoMemoryInfo> queryD3dkmtLocalVideoMemoryForLuid(const LU
 
   closeAdapter();
   return out;
+}
+
+namespace {
+
+static std::string wideToUtf8(const wchar_t* s) {
+  if (!s) return {};
+  int len = WideCharToMultiByte(CP_UTF8, 0, s, -1, nullptr, 0, nullptr, nullptr);
+  if (len <= 1) return {};
+  std::string out(len - 1, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, s, -1, out.data(), len, nullptr, nullptr);
+  return out;
+}
+
+static bool isIgnoredAdapter(const DXGI_ADAPTER_DESC1& desc, const std::string& name) {
+  const bool isSoftware = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+  const bool isBasicRenderDriver = (desc.VendorId == 0x1414) || (name == "Microsoft Basic Render Driver");
+  return isSoftware || isBasicRenderDriver;
+}
+
+static std::string formatGiB(std::uint64_t bytes) {
+  if (!bytes) return std::string("--");
+  const double totalGiB = static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0);
+  std::ostringstream oss;
+  oss.setf(std::ios::fixed);
+  oss.precision(2);
+  oss << totalGiB << " GiB";
+  return oss.str();
+}
+
+}  // namespace
+
+std::string d3dkmtDiagnostics() {
+  std::ostringstream oss;
+  oss << "D3DKMT diagnostics (Windows)\n";
+
+  IDXGIFactory1* factory = nullptr;
+  if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) {
+    oss << "- factory: failed\n";
+    return oss.str();
+  }
+
+  unsigned int idx = 0;
+  for (UINT i = 0; ; ++i) {
+    IDXGIAdapter1* adapter = nullptr;
+    if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND) break;
+    DXGI_ADAPTER_DESC1 desc{};
+    if (SUCCEEDED(adapter->GetDesc1(&desc))) {
+      const std::string name = wideToUtf8(desc.Description);
+      if (!isIgnoredAdapter(desc, name)) {
+        oss << "  GPU" << idx++ << ": " << (name.empty() ? std::string("(unknown)") : name) << "\n";
+        if (const auto d3 = queryD3dkmtLocalVideoMemoryForLuid(desc.AdapterLuid)) {
+          oss << "    budget: " << formatGiB(d3->budgetBytes)
+              << " used: " << formatGiB(d3->currentUsageBytes) << "\n";
+          oss << "    available: " << formatGiB(d3->availableForReservationBytes)
+              << " reserved: " << formatGiB(d3->currentReservationBytes) << "\n";
+        } else {
+          oss << "    d3dkmt: unavailable\n";
+        }
+      }
+    }
+    adapter->Release();
+  }
+
+  factory->Release();
+  return oss.str();
 }
 
 }  // namespace aiz

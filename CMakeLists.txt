@@ -77,6 +77,11 @@ set(AI_Z_ONNXRUNTIME_ROOT "" CACHE PATH "ONNX Runtime root (contains include/ an
 # ai-z runtime-loads amdadlx64.dll, but compiling the interface calls needs headers.
 set(AI_Z_ADLX_ROOT "" CACHE PATH "ADLX SDK root (contains SDK/Include) for enabling ADLX integration")
 
+# Optional: Intel IGCL headers + C API wrapper sources.
+# IGCL runtime DLL is shipped with Intel graphics drivers on supported systems.
+# We keep this optional so builds work without Intel SDK bits.
+set(AI_Z_IGCL_ROOT "" CACHE PATH "IGCL SDK root (contains igcl_api.h and cApiWrapper.cpp) for enabling Intel telemetry")
+
 set(AI_Z_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/include/aiz/version.h.in
@@ -102,6 +107,7 @@ set(AI_Z_COMMON_SOURCES
   src/aiz/metrics/timeline.cpp
   src/aiz/metrics/nvidia_nvml.cpp
   src/aiz/metrics/amd_adlx.cpp
+  src/aiz/metrics/intel_igcl.cpp
   src/aiz/metrics/gpu_stub.cpp
   src/aiz/metrics/pcie_stub.cpp
   src/aiz/metrics/ram_usage.cpp
@@ -163,7 +169,45 @@ if (AI_Z_PLATFORM_WINDOWS)
     target_compile_definitions(ai-z PRIVATE AI_Z_HAS_ADLX_HEADERS=1)
     message(STATUS "ADLX headers found: ${AI_Z_ADLX_INCLUDE_DIR} (ADLX integration enabled)")
   else()
-    message(FATAL_ERROR "ADLX headers not found. ADLX is required on Windows builds (set AI_Z_ADLX_ROOT or provide ../ADLX/SDK/Include).")
+    target_compile_definitions(ai-z PRIVATE AI_Z_HAS_ADLX_HEADERS=0)
+    message(STATUS "ADLX headers not found; AMD ADLX telemetry disabled. To enable, set -DAI_Z_ADLX_ROOT=... (expects SDK/Include) or provide ../ADLX/SDK/Include.")
+  endif()
+
+  # Intel IGCL (optional)
+  set(AI_Z_IGCL_INCLUDE_HINTS "")
+  list(APPEND AI_Z_IGCL_INCLUDE_HINTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/igcl")
+  if (AI_Z_IGCL_ROOT)
+    list(APPEND AI_Z_IGCL_INCLUDE_HINTS "${AI_Z_IGCL_ROOT}")
+    list(APPEND AI_Z_IGCL_INCLUDE_HINTS "${AI_Z_IGCL_ROOT}/include")
+  endif()
+
+  find_path(AI_Z_IGCL_INCLUDE_DIR
+    NAMES igcl_api.h
+    HINTS ${AI_Z_IGCL_INCLUDE_HINTS}
+  )
+
+  set(AI_Z_IGCL_WRAPPER_HINTS "")
+  list(APPEND AI_Z_IGCL_WRAPPER_HINTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/igcl")
+  if (AI_Z_IGCL_ROOT)
+    list(APPEND AI_Z_IGCL_WRAPPER_HINTS "${AI_Z_IGCL_ROOT}")
+    list(APPEND AI_Z_IGCL_WRAPPER_HINTS "${AI_Z_IGCL_ROOT}/src")
+    list(APPEND AI_Z_IGCL_WRAPPER_HINTS "${AI_Z_IGCL_ROOT}/Source")
+    list(APPEND AI_Z_IGCL_WRAPPER_HINTS "${AI_Z_IGCL_ROOT}/source")
+  endif()
+
+  find_file(AI_Z_IGCL_WRAPPER_CPP
+    NAMES cApiWrapper.cpp
+    HINTS ${AI_Z_IGCL_WRAPPER_HINTS}
+  )
+
+  if (AI_Z_IGCL_INCLUDE_DIR AND AI_Z_IGCL_WRAPPER_CPP)
+    target_include_directories(ai-z PRIVATE ${AI_Z_IGCL_INCLUDE_DIR})
+    target_sources(ai-z PRIVATE ${AI_Z_IGCL_WRAPPER_CPP})
+    target_compile_definitions(ai-z PRIVATE AI_Z_HAS_IGCL_HEADERS=1)
+    message(STATUS "IGCL headers+wrapper found (Intel telemetry enabled): ${AI_Z_IGCL_INCLUDE_DIR}")
+  else()
+    target_compile_definitions(ai-z PRIVATE AI_Z_HAS_IGCL_HEADERS=0)
+    message(STATUS "IGCL headers+wrapper not found; Intel IGCL telemetry disabled. To enable, set -DAI_Z_IGCL_ROOT=... or place igcl_api.h + cApiWrapper.cpp under third_party/igcl/.")
   endif()
 endif()
 

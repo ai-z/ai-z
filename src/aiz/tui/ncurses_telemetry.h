@@ -28,6 +28,11 @@ struct GpuTelemetry {
 
 std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index);
 
+#if defined(_WIN32)
+// Diagnostics for Windows PDH GPU memory counters.
+std::string windowsPdhGpuMemoryDiagnostics();
+#endif
+
 std::string formatRamText(const std::optional<RamUsage>& ram);
 
 }  // namespace aiz::ncurses

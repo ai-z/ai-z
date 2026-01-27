@@ -2,12 +2,14 @@
 
 #include <aiz/dyn/cuda.h>
 #include <aiz/metrics/amd_adlx.h>
+#include <aiz/metrics/intel_igcl.h>
+#include <aiz/metrics/windows_d3dkmt.h>
 #include <aiz/metrics/nvidia_nvml.h>
 #include <aiz/platform/metrics/memory.h>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <dxgi1_2.h>
+#include <dxgi1_4.h>
 #include <intrin.h>
 
 #include <cmath>
@@ -15,6 +17,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace aiz {
@@ -124,8 +127,14 @@ struct DxgiGpuInfo {
   std::string name;
   std::uint64_t dedicatedBytes = 0;
   std::uint64_t sharedBytes = 0;
+  std::uint64_t localBudgetBytes = 0;
+  std::uint64_t localCurrentUsageBytes = 0;
   std::uint32_t vendorId = 0;
+  std::uint32_t deviceId = 0;
+  std::uint32_t subsysId = 0;
+  std::uint32_t revision = 0;
   std::optional<AmdAdapterLuid> adapterLuid;
+  unsigned int duplicateCount = 1;
 };
 
 static std::vector<DxgiGpuInfo> probeDxgiGpus() {
@@ -135,22 +144,59 @@ static std::vector<DxgiGpuInfo> probeDxgiGpus() {
   }
 
   std::vector<DxgiGpuInfo> gpus;
+  std::unordered_map<std::string, std::size_t> byKey;
   for (UINT i = 0; ; ++i) {
     IDXGIAdapter1* adapter = nullptr;
     if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND) break;
 
     DXGI_ADAPTER_DESC1 desc{};
     if (SUCCEEDED(adapter->GetDesc1(&desc))) {
-      if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0) {
+      // Skip known software / placeholder adapters.
+      const std::string name = wideToUtf8(desc.Description);
+      const bool isSoftware = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+      const bool isBasicRenderDriver = (desc.VendorId == 0x1414) || (name == "Microsoft Basic Render Driver");
+
+      if (!isSoftware && !isBasicRenderDriver) {
         DxgiGpuInfo info;
-        info.name = wideToUtf8(desc.Description);
+        info.name = name;
         info.dedicatedBytes = desc.DedicatedVideoMemory;
         info.sharedBytes = desc.SharedSystemMemory;
         info.vendorId = desc.VendorId;
+        info.deviceId = desc.DeviceId;
+        info.subsysId = desc.SubSysId;
+        info.revision = desc.Revision;
         // Prefer the adapter LUID for matching.
         info.adapterLuid = AmdAdapterLuid{static_cast<std::uint32_t>(desc.AdapterLuid.LowPart),
                   static_cast<std::int32_t>(desc.AdapterLuid.HighPart)};
-        gpus.push_back(std::move(info));
+
+        // Best-effort: query current local VRAM usage/budget via DXGI.
+        // This works on WDDM 2.x and provides useful stats for Intel as well.
+        {
+          IDXGIAdapter3* adapter3 = nullptr;
+          if (SUCCEEDED(adapter->QueryInterface(__uuidof(IDXGIAdapter3), reinterpret_cast<void**>(&adapter3))) && adapter3) {
+            DXGI_QUERY_VIDEO_MEMORY_INFO vm{};
+            if (SUCCEEDED(adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &vm))) {
+              info.localBudgetBytes = static_cast<std::uint64_t>(vm.Budget);
+              info.localCurrentUsageBytes = static_cast<std::uint64_t>(vm.CurrentUsage);
+            }
+            adapter3->Release();
+            adapter3 = nullptr;
+          }
+        }
+
+        // Collapse duplicate DXGI adapters that appear identical.
+        // This avoids listing the same physical GPU multiple times on some systems.
+        std::ostringstream key;
+        key << info.vendorId << ":" << info.deviceId << ":" << info.subsysId << ":" << info.revision << ":";
+        key << info.dedicatedBytes << ":" << info.sharedBytes << ":" << info.name;
+        const std::string k = key.str();
+
+        if (const auto it = byKey.find(k); it != byKey.end()) {
+          gpus[it->second].duplicateCount++;
+        } else {
+          byKey.emplace(k, gpus.size());
+          gpus.push_back(std::move(info));
+        }
       }
     }
 
@@ -248,7 +294,11 @@ static std::vector<std::string> probePerGpuLinesDxgi(const std::vector<DxgiGpuIn
   for (std::size_t i = 0; i < gpus.size(); ++i) {
     const auto& gpu = gpus[i];
     const std::string name = gpu.name.empty() ? std::string(kUnknown) : gpu.name;
-    lines.push_back("GPU" + std::to_string(i) + ": " + name);
+    {
+      std::string header = "GPU" + std::to_string(i) + ": " + name;
+      if (gpu.duplicateCount > 1) header += " (x" + std::to_string(gpu.duplicateCount) + ")";
+      lines.push_back(std::move(header));
+    }
 
     const std::uint64_t mem = gpu.dedicatedBytes ? gpu.dedicatedBytes : gpu.sharedBytes;
     if (mem) {
@@ -257,6 +307,29 @@ static std::vector<std::string> probePerGpuLinesDxgi(const std::vector<DxgiGpuIn
       if (gpu.dedicatedBytes) l << " (Dedicated)";
       else if (gpu.sharedBytes) l << " (Shared)";
       lines.push_back(l.str());
+    }
+
+    // Best-effort VRAM usage via D3DKMT (works without vendor SDKs).
+    {
+      std::uint64_t used = gpu.localCurrentUsageBytes;
+      std::uint64_t budget = gpu.localBudgetBytes;
+
+      if ((used == 0 && budget == 0) && gpu.adapterLuid) {
+        LUID luid{};
+        luid.LowPart = gpu.adapterLuid->lowPart;
+        luid.HighPart = gpu.adapterLuid->highPart;
+        if (const auto vm = queryD3dkmtLocalVideoMemoryForLuid(luid)) {
+          used = vm->currentUsageBytes;
+          budget = vm->budgetBytes;
+        }
+      }
+
+      if (used > 0 || budget > 0) {
+        std::ostringstream l;
+        l << indent << "VRAM used: " << formatGiB(used);
+        if (budget > 0) l << " / " << formatGiB(budget) << " budget";
+        lines.push_back(l.str());
+      }
     }
 
     // AMD PCIe link info via ADLX (best-effort).
@@ -310,6 +383,18 @@ std::vector<std::string> HardwareInfo::toLines() const {
       const auto st = adlxStatus();
       if (st == AdlxStatus::MissingDll) lines.push_back("ADLX: unavailable (amdadlx64.dll not found)");
       else lines.push_back("ADLX: unavailable");
+    }
+  }
+  {
+    const auto a = igclAvailability();
+    if (a.available) {
+      std::string s = a.backend.empty() ? std::string("available") : a.backend;
+      if (!a.dll.empty()) s += " (" + a.dll + ")";
+      lines.push_back("IGCL: " + s);
+    } else {
+      const auto st = igclStatus();
+      if (st == IgclStatus::MissingDll) lines.push_back("IGCL: unavailable (ControlLib.dll not found)");
+      else lines.push_back("IGCL: unavailable");
     }
   }
   lines.push_back("ROCm: " + (rocmVersion.empty() ? std::string(kUnknown) : rocmVersion));
