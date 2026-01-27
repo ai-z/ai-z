@@ -1,0 +1,79 @@
+name: Publish APT repo (GitHub Pages)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libncursesw5-dev \
+            opencl-headers \
+            ocl-icd-opencl-dev \
+            libvulkan-dev \
+            dpkg-dev \
+            apt-utils
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DBUILD_TESTING=OFF \
+            -DAI_Z_ENABLE_CUDA=ON \
+            -DAI_Z_ENABLE_OPENCL=ON \
+            -DAI_Z_ENABLE_VULKAN=ON
+
+      - name: Build
+        run: cmake --build build-release
+
+      - name: Package (.deb)
+        run: |
+          cd build-release
+          cpack -G DEB
+
+      - name: Generate APT repository tree
+        run: |
+          rm -rf public
+          mkdir -p public
+          deb_path="$(ls -1 build-release/*.deb | head -n 1)"
+          ./packaging/apt/make_repo.sh "$deb_path" ./public stable main
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
