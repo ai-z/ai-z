@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: "Numeric run ID of a successful 'Build APT repo (artifact)' run (from .../actions/runs/<id>)"
+        description: "Numeric run ID of a successful build run (from .../actions/runs/<id>). If you paste a tag like v0.1.1 here, it will be treated as a tag."
         required: false
         type: string
       tag:
@@ -51,9 +51,23 @@ jobs:
 
           resolve_run_id_from_tag() {
             local tag="$1"
+            if [[ -z "$tag" ]]; then
+              return 0
+            fi
             # Resolve tag -> SHA (works for lightweight and annotated tags)
             local ref_json sha obj_type obj_sha
-            ref_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}")"
+            if ! ref_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" 2>/dev/null)"; then
+              # Common convenience: accept bare versions like 0.1.0 by trying v0.1.0
+              if [[ "$tag" != v* ]]; then
+                if ref_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${tag}" 2>/dev/null)"; then
+                  tag="v${tag}"
+                else
+                  return 0
+                fi
+              else
+                return 0
+              fi
+            fi
             obj_type="$(echo "$ref_json" | jq -r '.object.type')"
             obj_sha="$(echo "$ref_json" | jq -r '.object.sha')"
 
@@ -75,8 +89,18 @@ jobs:
           RUN_ID=""
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             if [[ -n "${RUN_ID_INPUT:-}" ]]; then
-              RUN_ID="$RUN_ID_INPUT"
-            elif [[ -n "${TAG_INPUT:-}" ]]; then
+              # Be forgiving: if the user pasted a tag into the run_id field, treat it as a tag.
+              if [[ "$RUN_ID_INPUT" =~ ^[0-9]+$ ]]; then
+                RUN_ID="$RUN_ID_INPUT"
+              elif [[ -z "${TAG_INPUT:-}" ]]; then
+                TAG_INPUT="$RUN_ID_INPUT"
+              else
+                echo "ERROR: Both run_id and tag provided, but run_id is not numeric: '$RUN_ID_INPUT'" >&2
+                exit 1
+              fi
+            fi
+
+            if [[ -z "${RUN_ID}" && -n "${TAG_INPUT:-}" ]]; then
               RUN_ID="$(resolve_run_id_from_tag "$TAG_INPUT" || true)"
             fi
           else
@@ -86,6 +110,7 @@ jobs:
           if [[ -z "${RUN_ID}" || "${RUN_ID}" == "null" ]]; then
             echo "ERROR: No build run id resolved." >&2
             echo "Provide either 'run_id' (numeric) or 'tag' (e.g. v0.1.1) when running this workflow manually." >&2
+            echo "Tip: the 'tag' input also accepts bare versions like 0.1.0 (it will try v0.1.0)." >&2
             exit 1
           fi
 
