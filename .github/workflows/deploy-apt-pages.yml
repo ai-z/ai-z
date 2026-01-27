@@ -38,7 +38,10 @@ jobs:
       - name: Install tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends jq unzip
+          sudo apt-get install -y --no-install-recommends jq unzip python3 python3-pip
+
+      - name: Checkout (for README)
+        uses: actions/checkout@v4
 
       - name: Download APT repo artifact
         env:
@@ -161,8 +164,67 @@ jobs:
             mv artifact_tmp/* public/
           fi
 
+          # Avoid any Jekyll processing; this is a static artifact deploy.
+          touch public/.nojekyll
+
           echo "Published directory contents:" 
           find public -maxdepth 4 -type d -print | sed -n '1,120p'
+
+      - name: Build homepage from README.md
+        run: |
+          set -euo pipefail
+
+          python3 -m pip install --disable-pip-version-check --no-cache-dir markdown
+
+          python3 - <<'PY'
+          from __future__ import annotations
+          from pathlib import Path
+          import markdown
+
+          readme = Path('README.md').read_text(encoding='utf-8')
+
+          body = markdown.markdown(
+              readme,
+              extensions=[
+                  'fenced_code',
+                  'tables',
+                  'toc',
+              ],
+          )
+
+          html = f"""<!doctype html>
+          <html lang=\"en\">
+          <head>
+            <meta charset=\"utf-8\" />
+            <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+            <title>ai-z</title>
+            <style>
+              :root {{ color-scheme: light dark; }}
+              body {{ margin: 0; font: 16px/1.55 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, sans-serif; }}
+              main {{ max-width: 920px; margin: 0 auto; padding: 32px 20px; }}
+              h1,h2,h3 {{ line-height: 1.2; }}
+              pre {{ overflow-x: auto; padding: 12px 14px; border-radius: 8px; background: rgba(127,127,127,0.12); }}
+              code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; }}
+              a {{ color: inherit; }}
+              .hint {{ margin: 18px 0; padding: 12px 14px; border-radius: 10px; background: rgba(127,127,127,0.10); }}
+              .small {{ opacity: 0.75; font-size: 14px; }}
+            </style>
+          </head>
+          <body>
+            <main>
+              <div class=\"hint\">
+                <div><strong>APT repo:</strong> <code>deb [trusted=yes] https://www.ai-z.org/ stable main</code></div>
+                <div class=\"small\">(Unsigned repo; add signing later to remove <code>[trusted=yes]</code>.)</div>
+              </div>
+              {body}
+            </main>
+          </body>
+          </html>"""
+
+          out = Path('public/index.html')
+          out.write_text(html, encoding='utf-8')
+          print(f"Wrote {out} ({out.stat().st_size} bytes)")
+          PY
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
