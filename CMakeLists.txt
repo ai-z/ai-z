@@ -421,8 +421,12 @@ install(TARGETS ai-z
 if (MSVC)
   include(InstallRequiredSystemLibraries)
   if (CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+    set(AI_Z_INSTALL_RUNTIME_DEST "${CMAKE_INSTALL_BINDIR}")
+    if (AI_Z_INSTALL_RUNTIME_DEST STREQUAL "")
+      set(AI_Z_INSTALL_RUNTIME_DEST ".")
+    endif()
     install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
-      DESTINATION ${CMAKE_INSTALL_BINDIR}
+      DESTINATION "${AI_Z_INSTALL_RUNTIME_DEST}"
     )
   endif()
 endif()
