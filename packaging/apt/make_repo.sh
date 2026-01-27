@@ -35,8 +35,9 @@ cp -f "$deb_path" "$pool_dir/"
 # Generate Packages and Packages.gz
 (
   cd "$out_dir"
-  dpkg-scanpackages "pool" /dev/null > "$dists_dir/Packages"
-  gzip -fk "$dists_dir/Packages"
+  dists_dir_rel="dists/$suite/$component/binary-$arch"
+  dpkg-scanpackages "pool" /dev/null > "$dists_dir_rel/Packages"
+  gzip -fk "$dists_dir_rel/Packages"
 )
 
 # Optional Release file (not signed). For real distribution, sign Release/InRelease.
