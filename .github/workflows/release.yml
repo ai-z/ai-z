@@ -274,4 +274,4 @@ jobs:
 
           echo "Uploading to release tag: ${TAG}"
           printf ' - %s\n' "${files[@]}"
-          gh release upload "${TAG}" "${files[@]}" --clobber
+          gh release upload "${TAG}" "${files[@]}" --clobber --repo "${GITHUB_REPOSITORY}"
