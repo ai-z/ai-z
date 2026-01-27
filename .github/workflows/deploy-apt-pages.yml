@@ -206,16 +206,10 @@ jobs:
               pre {{ overflow-x: auto; padding: 12px 14px; border-radius: 8px; background: rgba(127,127,127,0.12); }}
               code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; }}
               a {{ color: inherit; }}
-              .hint {{ margin: 18px 0; padding: 12px 14px; border-radius: 10px; background: rgba(127,127,127,0.10); }}
-              .small {{ opacity: 0.75; font-size: 14px; }}
             </style>
           </head>
           <body>
             <main>
-              <div class=\"hint\">
-                <div><strong>APT repo:</strong> <code>deb [trusted=yes] https://www.ai-z.org/ stable main</code></div>
-                <div class=\"small\">(Unsigned repo; add signing later to remove <code>[trusted=yes]</code>.)</div>
-              </div>
               {body}
             </main>
           </body>
