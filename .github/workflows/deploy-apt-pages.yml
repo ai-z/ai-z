@@ -164,3 +164,15 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Print install instructions
+        run: |
+          set -euo pipefail
+          base_url='${{ steps.deployment.outputs.page_url }}'
+          echo "Deployed GitHub Pages base URL: ${base_url}"
+          echo "APT repo should be under: ${base_url}dists/stable"
+          echo
+          echo "Client install (unsigned):"
+          echo "  echo \"deb [trusted=yes] ${base_url} stable main\" | sudo tee /etc/apt/sources.list.d/ai-z.list"
+          echo "  sudo apt update"
+          echo "  sudo apt install ai-z"
