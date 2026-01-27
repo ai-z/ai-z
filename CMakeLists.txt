@@ -113,6 +113,7 @@ set(AI_Z_COMMON_SOURCES
   src/aiz/metrics/ram_usage.cpp
   src/aiz/metrics/process_list.cpp
   src/aiz/bench/bench_stub.cpp
+  src/aiz/bench/report.cpp
   src/aiz/bench/pcie_bandwidth_cuda_pergpu.cpp
   src/aiz/bench/pcie_bandwidth_opencl.cpp
   src/aiz/bench/gpu_compute_opencl.cpp

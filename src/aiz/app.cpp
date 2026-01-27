@@ -6,6 +6,7 @@
 #include <aiz/metrics/amd_adlx.h>
 #include <aiz/metrics/intel_igcl.h>
 #include <aiz/metrics/windows_d3dkmt.h>
+#include <aiz/bench/report.h>
 #include <aiz/tui/ui.h>
 #include <aiz/version.h>
 
@@ -33,13 +34,14 @@ static void printHelp(std::ostream& os) {
   os << "ai-z performance timelines (CPU/GPU/Disk/PCIe) and benchmarks\n"
         "\n"
         "Usage:\n"
-        "  ai-z [--debug] [--help|-h] [--version] [--hardware] [--lang <tag>]\n"
+        "  ai-z [--debug] [--help|-h] [--version] [--hardware] [--bench-report] [--lang <tag>]\n"
         "\n"
         "Options:\n"
         "  --debug      Run with synthetic/fake timelines\n"
         "  --help, -h   Show this help and exit\n"
         "  --version    Print version and exit\n"
         "  --hardware   Print hardware info and exit (no TUI)\n"
+        "  --bench-report  Run all benchmarks and write an HTML report\n"
       "  --diag-pcie  Print Windows PCIe link diagnostics and exit (Windows)\n"
         "  --diag-adlx  Print AMD ADLX diagnostics and exit (Windows)\n"
         "  --diag-igcl  Print Intel IGCL diagnostics and exit (Windows)\n"
@@ -163,6 +165,25 @@ int App::run(int argc, char** argv) {
     for (const auto& line : hw.toLines()) {
       std::cout << line << "\n";
     }
+    return 0;
+  }
+
+  if (hasFlag(argc, argv, "--bench-report")) {
+    const auto report = runBenchmarksAndGenerateHtmlReport();
+    if (!report) {
+      std::cerr << "Failed to generate benchmark report.\n";
+      return 1;
+    }
+
+    for (const auto& row : report->rows) {
+      if (row.isHeader) {
+        std::cout << "\n" << row.title << "\n";
+        continue;
+      }
+      std::cout << "  " << row.title << " : " << row.result << "\n";
+    }
+
+    std::cout << "\nREPORT SAVED: " << report->path << "\n";
     return 0;
   }
 

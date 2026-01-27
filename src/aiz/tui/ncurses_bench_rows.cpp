@@ -69,8 +69,6 @@ void rebuildBenchRows(TuiState& state, const HardwareInfo& hw, unsigned int gpuC
   }
 
   addHeader("CPU0 - " + (hw.cpuName.empty() ? std::string("unknown") : hw.cpuName));
-  addBench(makeCpuFp16FlopsBenchmark());
-  addBench(makeCpuFp32FlopsBenchmark());
   addBench(makeOrtCpuMatMulBenchmark());
   addBench(makeOrtCpuMemoryBandwidthBenchmark());
 }

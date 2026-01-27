@@ -143,17 +143,20 @@ ONNX Runtime benchmarks (CPU inference):
 	- Memory bandwidth (GB/s)
 - **Easy installation** (choose one method):
 
-	**Option 1: Via pip** (easiest, auto-detected):
-	```bash
-	pip install onnxruntime
-	# ai-z will automatically find it - no configuration needed!
-	```
-
-	**Option 2: System-wide** (for all users):
+	**Option 1: System-wide shared library** (recommended, no env vars):
 	```bash
 	wget https://github.com/microsoft/onnxruntime/releases/download/v1.18.0/onnxruntime-linux-x64-1.18.0.tgz
 	tar xzf onnxruntime-linux-x64-1.18.0.tgz
 	sudo cp onnxruntime-linux-x64-1.18.0/lib/libonnxruntime.so* /usr/local/lib/
+	sudo ldconfig
+	```
+
+	**Option 2: Pip + venv (PEP 668 friendly)**, then copy the shared library once:
+	```bash
+	python3 -m venv .venv
+	. .venv/bin/activate
+	pip install onnxruntime
+	sudo cp .venv/lib/python*/site-packages/onnxruntime/capi/libonnxruntime.so* /usr/local/lib/
 	sudo ldconfig
 	```
 
