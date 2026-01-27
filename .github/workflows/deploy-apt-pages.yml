@@ -5,6 +5,12 @@ on:
     workflows: ["Build APT repo (artifact)"]
     types:
       - completed
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run ID of the successful 'Build APT repo (artifact)' workflow to deploy"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -18,7 +24,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -30,7 +36,7 @@ jobs:
         with:
           name: apt-repo
           path: public
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ github.event_name == 'workflow_dispatch' && inputs.run_id || github.event.workflow_run.id }}
           repository: ${{ github.repository }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
