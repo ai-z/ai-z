@@ -147,11 +147,22 @@ jobs:
             exit 1
           fi
 
-          rm -rf public artifact.zip
-          mkdir -p public
+          rm -rf artifact.zip artifact_tmp public
           gh api -H 'Accept: application/vnd.github+json' \
             "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > artifact.zip
-          unzip -q artifact.zip -d public
+          unzip -q artifact.zip -d artifact_tmp
+
+          # upload-artifact usually preserves the top-level folder name (e.g. 'public/').
+          if [[ -d artifact_tmp/public ]]; then
+            mv artifact_tmp/public public
+          else
+            mkdir -p public
+            shopt -s dotglob
+            mv artifact_tmp/* public/
+          fi
+
+          echo "Published directory contents:" 
+          find public -maxdepth 4 -type d -print | sed -n '1,120p'
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
