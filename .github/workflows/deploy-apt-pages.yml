@@ -77,7 +77,7 @@ jobs:
               sha="$obj_sha"
             fi
 
-            echo "Resolved tag '$tag' to SHA: $sha"
+            echo "Resolved tag '$tag' to SHA: $sha" >&2
 
             # Find the most recent successful run of the build workflow for that SHA.
             # (Don't rely exclusively on server-side filtering; fetch recent runs and filter locally.)
