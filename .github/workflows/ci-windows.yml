@@ -48,9 +48,36 @@ jobs:
           if (!(Test-Path $exe)) {
             throw "Expected ai-z.exe at $exe"
           }
+
+          # Bundle vcpkg runtime DLLs required by the executable.
+          # (On fresh machines, pdcurses.dll won't be on PATH.)
+          $dllDestDir = Join-Path $PWD "build-ci"
+          $pdcursesDest = Join-Path $dllDestDir "pdcurses.dll"
+
+          $candidateDlls = @()
+          if ($env:VCPKG_INSTALLED_DIR) {
+            $candidateDlls += Join-Path $env:VCPKG_INSTALLED_DIR "x64-windows\bin\pdcurses.dll"
+            $candidateDlls += Join-Path $env:VCPKG_INSTALLED_DIR "x64-windows\debug\bin\pdcurses.dll"
+          }
+          if ($env:VCPKG_ROOT) {
+            $candidateDlls += Join-Path $env:VCPKG_ROOT "installed\x64-windows\bin\pdcurses.dll"
+            $candidateDlls += Join-Path $env:VCPKG_ROOT "installed\x64-windows\debug\bin\pdcurses.dll"
+          }
+
+          $pdcursesSrc = $candidateDlls | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $pdcursesSrc -and $env:VCPKG_ROOT) {
+            $pdcursesSrc = Get-ChildItem -Path (Join-Path $env:VCPKG_ROOT "installed") -Recurse -Filter "pdcurses.dll" -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $pdcursesSrc) {
+            throw "pdcurses.dll not found under vcpkg install; cannot create a runnable zip."
+          }
+
+          Copy-Item -Force $pdcursesSrc $pdcursesDest
+
           $zip = Join-Path $PWD "ai-z-windows-${{ github.sha }}.zip"
           if (Test-Path $zip) { Remove-Item -Force $zip }
-          Compress-Archive -Path $exe -DestinationPath $zip
+          Compress-Archive -Path @($exe, $pdcursesDest) -DestinationPath $zip
 
       - name: Upload zip artifact
         uses: actions/upload-artifact@v4
