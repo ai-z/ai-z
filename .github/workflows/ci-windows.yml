@@ -1,0 +1,59 @@
+name: CI (Windows)
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-zip:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Set up vcpkg (manifest)
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgJsonGlob: "**/vcpkg.json"
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build-ci -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake"
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build-ci
+
+      - name: Test
+        shell: pwsh
+        run: ctest --test-dir build-ci --output-on-failure
+
+      - name: Package (zip)
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "build-ci\ai-z.exe"
+          if (!(Test-Path $exe)) {
+            throw "Expected ai-z.exe at $exe"
+          }
+          $zip = Join-Path $PWD "ai-z-windows-${{ github.sha }}.zip"
+          if (Test-Path $zip) { Remove-Item -Force $zip }
+          Compress-Archive -Path $exe -DestinationPath $zip
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-z-windows-zip-${{ github.sha }}
+          path: ai-z-windows-${{ github.sha }}.zip
+          if-no-files-found: error
