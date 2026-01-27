@@ -40,13 +40,57 @@ cp -f "$deb_path" "$pool_dir/"
   gzip -fk "$dists_dir_rel/Packages"
 )
 
-# Optional Release file (not signed). For real distribution, sign Release/InRelease.
-if command -v apt-ftparchive >/dev/null 2>&1; then
-  (
-    cd "$out_dir"
-    apt-ftparchive release "dists/$suite" > "dists/$suite/Release"
-  )
-fi
+# Release file (not signed). For real distribution, sign Release/InRelease.
+# We generate it ourselves to ensure Suite/Codename are present (avoids apt warnings).
+(
+  cd "$out_dir"
+
+  release_dir="dists/$suite"
+  release_file="$release_dir/Release"
+
+  mkdir -p "$release_dir"
+
+  {
+    echo "Origin: $pkg"
+    echo "Label: $pkg"
+    echo "Suite: $suite"
+    echo "Codename: $suite"
+    echo "Date: $(date -Ru)"
+    echo "Architectures: $arch"
+    echo "Components: $component"
+    echo "Description: $pkg APT repository"
+
+    echo "MD5Sum:"
+    (cd "$release_dir" && find . -type f ! -name 'Release' ! -name 'InRelease' ! -name 'Release.gpg' -print0 \
+      | LC_ALL=C sort -z \
+      | while IFS= read -r -d '' f; do
+          rel="${f#./}"
+          size="$(stat -c%s "$rel")"
+          sum="$(md5sum "$rel" | awk '{print $1}')"
+          printf " %s %16s %s\n" "$sum" "$size" "$rel"
+        done)
+
+    echo "SHA1:"
+    (cd "$release_dir" && find . -type f ! -name 'Release' ! -name 'InRelease' ! -name 'Release.gpg' -print0 \
+      | LC_ALL=C sort -z \
+      | while IFS= read -r -d '' f; do
+          rel="${f#./}"
+          size="$(stat -c%s "$rel")"
+          sum="$(sha1sum "$rel" | awk '{print $1}')"
+          printf " %s %16s %s\n" "$sum" "$size" "$rel"
+        done)
+
+    echo "SHA256:"
+    (cd "$release_dir" && find . -type f ! -name 'Release' ! -name 'InRelease' ! -name 'Release.gpg' -print0 \
+      | LC_ALL=C sort -z \
+      | while IFS= read -r -d '' f; do
+          rel="${f#./}"
+          size="$(stat -c%s "$rel")"
+          sum="$(sha256sum "$rel" | awk '{print $1}')"
+          printf " %s %16s %s\n" "$sum" "$size" "$rel"
+        done)
+  } > "$release_file"
+)
 
 echo "Repo generated at: $out_dir"
 echo "Host it over HTTPS, then add on clients (unsigned example):"
