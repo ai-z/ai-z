@@ -39,14 +39,17 @@ int styleToAttr(std::uint16_t style) {
 chtype cellToChtype(wchar_t ch) {
   // Keep ncurses rendering conservative: prefer ASCII and ACS glyphs.
   // The core renderer uses Unicode block elements; map those to ncurses ACS.
+  
+  // Timeline bars: 0x2593 (dark shade block ▓)
   if (ch == 0x2593) {
-    #if defined(_WIN32)
-    // Some Windows terminals/curses builds are unstable with ACS glyphs.
-    return static_cast<chtype>('#');
-    #else
-    return ACS_CKBOARD;  // htop-esque solid block
-    #endif
+    return ACS_CKBOARD;  // Checkerboard pattern (works on both ncurses and PDCurses)
   }
+  
+  // Horizontal bars: 0x2588 (full block █)
+  if (ch == 0x2588) {
+    return ACS_BLOCK;    // Solid block (works on both ncurses and PDCurses)
+  }
+  
   if (ch == 0 || ch == L' ') return static_cast<chtype>(' ');
   if (ch >= 0 && ch <= 0x7f) return static_cast<chtype>(static_cast<unsigned char>(ch));
   return static_cast<chtype>('?');
