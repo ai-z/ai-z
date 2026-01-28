@@ -1,0 +1,38 @@
+// Windows resource file for ai-z
+// Embeds the application icon into the executable
+
+#include <windows.h>
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_ICON1 ICON "ai-z.ico"
+
+// Version information
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 0,1,0,0
+ PRODUCTVERSION 0,1,0,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS VOS__WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "ai-z"
+            VALUE "FileDescription", "AI-Z - GPU/CPU Performance Monitor"
+            VALUE "FileVersion", "0.1.0"
+            VALUE "InternalName", "ai-z"
+            VALUE "LegalCopyright", "Copyright (C) 2024-2026 ai-z"
+            VALUE "OriginalFilename", "ai-z.exe"
+            VALUE "ProductName", "AI-Z"
+            VALUE "ProductVersion", "0.1.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

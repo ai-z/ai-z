@@ -180,12 +180,20 @@ jobs:
 
           $outDir = Join-Path $PWD "dist"
           $sourceDir = Join-Path $PWD "dist\\ai-z-${{ env.TAG }}-windows-x64"
-          & $iscc `
-            "/DAppVersion=${{ env.TAG }}" `
-            "/DSourceDir=$sourceDir" `
-            "/DOutputDir=$outDir" `
-            "/DOutputBaseFilename=ai-z-${{ env.TAG }}-windows-x64-setup" `
-            "packaging\\windows\\ai-z.iss"
+          $iconFile = Join-Path $PWD "packaging\\windows\\ai-z.ico"
+          
+          $isccArgs = @(
+            "/DAppVersion=${{ env.TAG }}"
+            "/DSourceDir=$sourceDir"
+            "/DOutputDir=$outDir"
+            "/DOutputBaseFilename=ai-z-${{ env.TAG }}-windows-x64-setup"
+          )
+          if (Test-Path $iconFile) {
+            $isccArgs += "/DIconFile=$iconFile"
+          }
+          $isccArgs += "packaging\\windows\\ai-z.iss"
+          
+          & $iscc @isccArgs
 
           # Also emit a stable filename for /releases/latest/download/...
           Copy-Item -Force (Join-Path $outDir "ai-z-${{ env.TAG }}-windows-x64-setup.exe") (Join-Path $outDir "ai-z-windows-x64-setup.exe")

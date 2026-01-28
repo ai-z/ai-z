@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=AI-Z
+Comment=GPU/CPU Performance Monitor and Benchmarks
+Exec=ai-z
+Icon=ai-z
+Terminal=true
+Type=Application
+Categories=System;Monitor;Utility;
+Keywords=gpu;cpu;performance;benchmark;monitor;nvidia;amd;intel;

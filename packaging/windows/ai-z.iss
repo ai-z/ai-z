@@ -19,6 +19,10 @@
   #define OutputBaseFilename "ai-z-setup"
 #endif
 
+#ifndef IconFile
+  #define IconFile ""
+#endif
+
 [Setup]
 AppId={{9A4E9F4C-CC9A-4B58-B7C6-87CE1A0A8D7C}
 AppName={#AppName}
@@ -32,6 +36,9 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputBaseFilename}
+#if IconFile != ""
+SetupIconFile={#IconFile}
+#endif
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

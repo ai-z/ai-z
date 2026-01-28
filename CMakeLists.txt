@@ -151,6 +151,14 @@ endif()
 
 add_executable(ai-z ${AI_Z_COMMON_SOURCES} ${AI_Z_PLATFORM_SOURCES})
 
+# Windows: embed application icon and version info
+if (AI_Z_PLATFORM_WINDOWS)
+  set(AI_Z_RC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/ai-z.rc")
+  if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/ai-z.ico")
+    target_sources(ai-z PRIVATE ${AI_Z_RC_FILE})
+  endif()
+endif()
+
 target_include_directories(ai-z PRIVATE include)
 target_include_directories(ai-z PRIVATE ${AI_Z_GENERATED_DIR})
 
@@ -435,6 +443,21 @@ endif()
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/docs/ai-z.1
   DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
 )
+
+# Linux: install desktop entry and icons
+if (AI_Z_PLATFORM_LINUX)
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/ai-z.desktop
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications
+  )
+  
+  # Install icons to hicolor theme
+  set(AI_Z_ICON_SIZES 16 32 48 256)
+  foreach(size ${AI_Z_ICON_SIZES})
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/icons/hicolor/${size}x${size}/apps/ai-z.png
+      DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/${size}x${size}/apps
+    )
+  endforeach()
+endif()
 
 # Packaging
 set(CPACK_PACKAGE_NAME "ai-z")
