@@ -268,6 +268,10 @@ void applyCommand(TuiState& state, Config& cfg, Command cmd) {
   if (state.screen == Screen::Timelines) {
     if (cmd == Command::ViewTimelines) state.timelineView = TimelineView::Timelines;
     if (cmd == Command::ViewBars) state.timelineView = TimelineView::Bars;
+    if (cmd == Command::ViewMinimal) {
+      state.screen = Screen::Minimal;
+      return;
+    }
     return;
   }
 }
@@ -1830,7 +1834,6 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
         case 2: hot = L'W'; target = Screen::Hardware; break;    // Hardware (the 'w' in HardWare)
         case 3: hot = L'B'; target = Screen::Benchmarks; break;  // Bench
         case 4: hot = L'C'; target = Screen::Config; break;      // Config
-        case 5: hot = L'M'; target = Screen::Minimal; break;     // Minimal
         case 6: hot = L'P'; target = Screen::Processes; break;   // Processes
         case 10: hot = L'Q'; break;  // Quit
         default: break;
@@ -1857,22 +1860,32 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
       i = (j > 0) ? (j - 1) : i;
     }
 
-    // Viewmode labels: highlight "Timelines" and "H. Bars".
+    // Viewmode labels: highlight "Timelines", "H. Bars", and "Minimal".
     {
       const std::wstring_view view1 = L"Timelines";
       const std::wstring_view view2 = L"H. Bars";
+      const std::wstring_view view3 = L"Minimal";
 
       const std::size_t pos1 = footer.find(view1);
       if (pos1 != std::wstring_view::npos) {
         for (std::size_t k = pos1; k < pos1 + view1.size() && k < st.size(); ++k) {
-          st[k] = Style::FooterBlock;
+          st[k] = (state.screen == Screen::Timelines && state.timelineView == TimelineView::Timelines) 
+                  ? Style::FooterActive : Style::FooterBlock;
         }
       }
 
       const std::size_t pos2 = footer.find(view2);
       if (pos2 != std::wstring_view::npos) {
         for (std::size_t k = pos2; k < pos2 + view2.size() && k < st.size(); ++k) {
-          st[k] = Style::FooterBlock;
+          st[k] = (state.screen == Screen::Timelines && state.timelineView == TimelineView::Bars) 
+                  ? Style::FooterActive : Style::FooterBlock;
+        }
+      }
+
+      const std::size_t pos3 = footer.find(view3);
+      if (pos3 != std::wstring_view::npos) {
+        for (std::size_t k = pos3; k < pos3 + view3.size() && k < st.size(); ++k) {
+          st[k] = (state.screen == Screen::Minimal) ? Style::FooterActive : Style::FooterBlock;
         }
       }
     }

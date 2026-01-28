@@ -64,6 +64,7 @@ enum class Command {
 
   ViewTimelines,
   ViewBars,
+  ViewMinimal,
 };
 
 struct KeyEvent {
