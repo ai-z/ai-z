@@ -1,5 +1,7 @@
 #include <aiz/metrics/linux_gpu_sysfs.h>
 
+#include <aiz/metrics/amd_rocm_smi.h>
+
 #if defined(__linux__)
 #include <algorithm>
 #include <cctype>
@@ -76,6 +78,18 @@ static std::optional<std::string> readDriverFromUevent(const fs::path& devPath) 
   while (std::getline(f, line)) {
     if (line.rfind("DRIVER=", 0) == 0) {
       return line.substr(std::string("DRIVER=").size());
+    }
+  }
+  return std::nullopt;
+}
+
+static std::optional<std::string> readPciSlotFromUevent(const fs::path& devPath) {
+  std::ifstream f(devPath / "uevent");
+  if (!f) return std::nullopt;
+  std::string line;
+  while (std::getline(f, line)) {
+    if (line.rfind("PCI_SLOT_NAME=", 0) == 0) {
+      return line.substr(std::string("PCI_SLOT_NAME=").size());
     }
   }
   return std::nullopt;
@@ -207,6 +221,7 @@ std::vector<LinuxGpuDevice> enumerateLinuxGpus() {
     d.index = stable++;
     d.drmCard = cardPath.filename().string();
     d.sysfsDevicePath = devPath.string();
+    d.pciSlotName = readPciSlotFromUevent(devPath).value_or(std::string{});
 
     if (const auto vend = readTextFile(devPath / "vendor")) {
       d.vendor = vendorFromHex(*vend);
@@ -233,6 +248,23 @@ std::optional<LinuxGpuTelemetry> readLinuxGpuTelemetry(unsigned int index) {
 
   // Vendor-specific probes (best-effort).
   if (gpus[index].vendor == GpuVendor::Amd || gpus[index].driver == "amdgpu") {
+    // Prefer ROCm SMI, then fall back to sysfs.
+    if (const auto rocm = readRocmSmiTelemetryForPciBusId(gpus[index].pciSlotName)) {
+      return rocm;
+    }
+
+    // Fallback: use ROCm SMI by AMD-index if PCI mapping isn't available.
+    unsigned int amdIndex = 0;
+    for (unsigned int i = 0; i < gpus.size(); ++i) {
+      if (gpus[i].vendor == GpuVendor::Amd || gpus[i].driver == "amdgpu") {
+        if (i == index) break;
+        ++amdIndex;
+      }
+    }
+    if (const auto rocm = readRocmSmiTelemetryForIndex(amdIndex)) {
+      return rocm;
+    }
+
     fillAmdTelemetry(devPath, t);
   } else if (gpus[index].vendor == GpuVendor::Intel || gpus[index].driver == "i915" || gpus[index].driver == "xe") {
     fillIntelTelemetry(devPath, gpus[index].driver, t);

@@ -17,6 +17,7 @@ struct LinuxGpuDevice {
   unsigned int index = 0;          // stable index within our enumeration
   std::string drmCard;             // e.g. "card0"
   std::string sysfsDevicePath;     // e.g. "/sys/class/drm/card0/device"
+  std::string pciSlotName;         // e.g. "0000:03:00.0" (from PCI_SLOT_NAME)
   GpuVendor vendor = GpuVendor::Unknown;
   std::string driver;             // e.g. "amdgpu", "i915", "xe", "nvidia"
 };

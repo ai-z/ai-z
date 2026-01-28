@@ -2,6 +2,10 @@
 
 #include <aiz/metrics/nvidia_nvml.h>
 
+#if defined(AI_Z_PLATFORM_LINUX)
+#include <aiz/metrics/linux_gpu_sysfs.h>
+#endif
+
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -70,6 +74,13 @@ std::optional<Sample> GpuMemoryUtilCollector::sample() {
 
     return Sample{t->memUtilPct, "%", label};
   }
+
+#if defined(AI_Z_PLATFORM_LINUX)
+  if (const auto lt = readLinuxGpuTelemetry(0); lt && lt->vramUsedGiB && lt->vramTotalGiB && *lt->vramTotalGiB > 0.0) {
+    const double pct = (*lt->vramUsedGiB / *lt->vramTotalGiB) * 100.0;
+    return Sample{pct, "%", lt->source.empty() ? std::string("sysfs") : lt->source};
+  }
+#endif
 
 #if defined(_WIN32)
   if (const auto pct = readWindowsVramUtil()) {

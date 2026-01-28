@@ -131,6 +131,7 @@ if (AI_Z_PLATFORM_LINUX)
     src/aiz/platform/linux/metrics/memory_linux.cpp
     src/aiz/platform/linux/metrics/disk_linux.cpp
     src/aiz/platform/linux/metrics/network_linux.cpp
+    src/aiz/metrics/amd_rocm_smi.cpp
     src/aiz/metrics/linux_gpu_sysfs.cpp
     src/aiz/hw/hardware_info.cpp
   )
