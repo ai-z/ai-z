@@ -6,6 +6,10 @@
     {
       "name": "pdcurses",
       "platform": "windows"
+    },
+    {
+      "name": "opencl",
+      "platform": "windows"
     }
   ]
 }

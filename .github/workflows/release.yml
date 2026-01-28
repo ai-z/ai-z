@@ -59,11 +59,6 @@ jobs:
           echo "VULKAN_SDK=$sdkPath" >> $env:GITHUB_ENV
           echo "$sdkPath\Bin" >> $env:GITHUB_PATH
 
-      - name: Install OpenCL SDK
-        shell: pwsh
-        run: |
-          vcpkg install opencl:x64-windows --x-install-root="$env:VCPKG_ROOT\installed"
-
       - name: Configure
         shell: pwsh
         run: |
