@@ -47,7 +47,13 @@ chtype cellToChtype(wchar_t ch) {
   
   // Horizontal bars: 0x2588 (full block █)
   if (ch == 0x2588) {
-    return ACS_BLOCK;    // Solid block (works on both ncurses and PDCurses)
+#ifdef _WIN32
+    // On Windows/PDCurses, ACS_BLOCK doesn't render correctly.
+    // Use the same character as timeline bars instead.
+    return ACS_CKBOARD;
+#else
+    return ACS_BLOCK;    // Solid block (works on ncurses)
+#endif
   }
   
   if (ch == 0 || ch == L' ') return static_cast<chtype>(' ');
