@@ -56,7 +56,7 @@ jobs:
       - name: Stage portable folder
         shell: pwsh
         run: |
-          $stage = Join-Path $PWD "dist\\ai-z-windows-${{ env.TAG }}"
+          $stage = Join-Path $PWD "dist\\ai-z-${{ env.TAG }}-windows-x64"
           if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
           New-Item -ItemType Directory -Path $stage | Out-Null
 
@@ -134,9 +134,13 @@ jobs:
       - name: Create zip
         shell: pwsh
         run: |
-          $zip = Join-Path $PWD "dist\\ai-z-windows-${{ env.TAG }}.zip"
-          if (Test-Path $zip) { Remove-Item -Force $zip }
-          Compress-Archive -Path (Join-Path $PWD "dist\\ai-z-windows-${{ env.TAG }}\\*") -DestinationPath $zip
+          $zipVersioned = Join-Path $PWD "dist\\ai-z-${{ env.TAG }}-windows-x64.zip"
+          $zipLatest = Join-Path $PWD "dist\\ai-z-windows-x64.zip"
+          if (Test-Path $zipVersioned) { Remove-Item -Force $zipVersioned }
+          if (Test-Path $zipLatest) { Remove-Item -Force $zipLatest }
+
+          Compress-Archive -Path (Join-Path $PWD "dist\\ai-z-${{ env.TAG }}-windows-x64\\*") -DestinationPath $zipVersioned
+          Copy-Item -Force $zipVersioned $zipLatest
 
       - name: Build installer (Inno Setup)
         if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_installer) || github.event_name == 'release' }}
@@ -150,19 +154,24 @@ jobs:
           }
 
           $outDir = Join-Path $PWD "dist"
-          $sourceDir = Join-Path $PWD "dist\\ai-z-windows-${{ env.TAG }}"
+          $sourceDir = Join-Path $PWD "dist\\ai-z-${{ env.TAG }}-windows-x64"
           & $iscc `
             "/DAppVersion=${{ env.TAG }}" `
             "/DSourceDir=$sourceDir" `
             "/DOutputDir=$outDir" `
-            "/DOutputBaseFilename=ai-z-setup-${{ env.TAG }}" `
+            "/DOutputBaseFilename=ai-z-${{ env.TAG }}-windows-x64-setup" `
             "packaging\\windows\\ai-z.iss"
+
+          # Also emit a stable filename for /releases/latest/download/...
+          Copy-Item -Force (Join-Path $outDir "ai-z-${{ env.TAG }}-windows-x64-setup.exe") (Join-Path $outDir "ai-z-windows-x64-setup.exe")
 
       - name: Upload artifact (zip)
         uses: actions/upload-artifact@v4
         with:
           name: release-windows
-          path: dist/ai-z-windows-${{ env.TAG }}.zip
+          path: |
+            dist/ai-z-${{ env.TAG }}-windows-x64.zip
+            dist/ai-z-windows-x64.zip
           if-no-files-found: error
 
       - name: Upload artifact (installer)
@@ -170,7 +179,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-windows-installer
-          path: dist/ai-z-setup-${{ env.TAG }}.exe
+          path: |
+            dist/ai-z-${{ env.TAG }}-windows-x64-setup.exe
+            dist/ai-z-windows-x64-setup.exe
           if-no-files-found: error
 
   build-linux:
@@ -215,7 +226,9 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p dist
-          cp -v build-release/*.deb dist/
+          deb_path="$(ls -1 build-release/*.deb | head -n 1)"
+          cp -v "$deb_path" "dist/ai-z-${TAG}-linux-amd64.deb"
+          cp -v "$deb_path" "dist/ai-z-linux-amd64.deb"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -265,7 +278,14 @@ jobs:
           set -euo pipefail
 
           shopt -s nullglob
-          files=(dist/**/ai-z-windows-${TAG}.zip dist/**/*.deb dist/**/ai-z-setup-${TAG}.exe)
+          files=(
+            dist/**/ai-z-${TAG}-windows-x64.zip
+            dist/**/ai-z-windows-x64.zip
+            dist/**/ai-z-${TAG}-windows-x64-setup.exe
+            dist/**/ai-z-windows-x64-setup.exe
+            dist/**/ai-z-${TAG}-linux-amd64.deb
+            dist/**/ai-z-linux-amd64.deb
+          )
           if (( ${#files[@]} == 0 )); then
             echo "ERROR: no release assets found under dist/" >&2
             find dist -maxdepth 4 -type f -print >&2 || true
