@@ -9,10 +9,12 @@ Terminal app for monitoring CPU/GPU performance and AI related benchmarks.
 | GPU   | Linux | Windows |
 |-------|:-----:|:-------:|
 | NVIDIA | ✓ | ✓ |
-| AMD | ✓ | ✓* |
-| Intel | ✓ | ✓ |
+| AMD | ✓* | ✓* |
+| Intel | ✓* | ✓* |
 
-\* PCIE bandwidth is missing
+\* some metrics are missing
+
+![Timeline screenshot](screenshots/timelines01.png)
 
 ## Install
 ### Ubuntu/Debian
@@ -37,6 +39,53 @@ Direct downloads (always point at the latest release):
 - Installer: run `ai-z-windows-x64-setup.exe`
 
 ## Build
+
+### Linux
+
+```bash
+sudo apt-get install -y build-essential cmake libncurses-dev
+cmake -S . -B build
+cmake --build build -j
+./build/ai-z
+```
+
+Optional (developer): enable extra compiler warnings:
+
+```bash
+cmake -S . -B build -DAI_Z_ENABLE_WARNINGS=ON
+cmake --build build -j
+```
+
+### Build a `.deb`
+
+Prereqs:
+
+```bash
+sudo apt-get install -y build-essential cmake dpkg-dev
+```
+
+Build + package:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+cpack --config build/CPackConfig.cmake -G DEB
+```
+
+Note: If you want the resulting `.deb` to install on Ubuntu 22.04, build the
+package on Ubuntu 22.04 (or in a 22.04 container/chroot). Building on newer
+distros (e.g. 24.04+) will produce a package that depends on newer `libc6` and
+`libstdc++6` versions and will not be installable on 22.04.
+
+This produces something like `ai-z_0.1.0_amd64.deb` in the build directory.
+
+### Install locally
+
+For local installs (or downloading from a release page), users can install via apt:
+
+```bash
+sudo apt install ./ai-z_0.1.0_amd64.deb
+```
 
 ### Windows
 
@@ -81,54 +130,3 @@ The TUI application will launch in your terminal. Use:
 ```powershell
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake
 ```
-
-### Linux
-
-```bash
-sudo apt-get install -y build-essential cmake libncurses-dev
-cmake -S . -B build
-cmake --build build -j
-./build/ai-z
-```
-
-Optional (developer): enable extra compiler warnings:
-
-```bash
-cmake -S . -B build -DAI_Z_ENABLE_WARNINGS=ON
-cmake --build build -j
-```
-
-
-
-### Build a `.deb`
-
-Prereqs:
-
-```bash
-sudo apt-get install -y build-essential cmake dpkg-dev
-```
-
-Build + package:
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-cpack --config build/CPackConfig.cmake -G DEB
-```
-
-Note: If you want the resulting `.deb` to install on Ubuntu 22.04, build the
-package on Ubuntu 22.04 (or in a 22.04 container/chroot). Building on newer
-distros (e.g. 24.04+) will produce a package that depends on newer `libc6` and
-`libstdc++6` versions and will not be installable on 22.04.
-
-This produces something like `ai-z_0.1.0_amd64.deb` in the build directory.
-
-### Install locally
-
-For local installs (or downloading from a release page), users can install via apt:
-
-```bash
-sudo apt install ./ai-z_0.1.0_amd64.deb
-```
-
-
