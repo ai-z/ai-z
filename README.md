@@ -1,8 +1,14 @@
-# AI-Z
+<p align="center">
+  <img src="assets/logo.png" alt="AI-Z Logo" width="128">
+</p>
 
-[![CI](https://github.com/ai-z/ai-z/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/ai-z/ai-z/actions/workflows/ci.yml)
-[![CI (Linux)](https://github.com/ai-z/ai-z/actions/workflows/ci-linux.yml/badge.svg?branch=master)](https://github.com/ai-z/ai-z/actions/workflows/ci-linux.yml)
-[![CI (Windows)](https://github.com/ai-z/ai-z/actions/workflows/ci-windows.yml/badge.svg?branch=master)](https://github.com/ai-z/ai-z/actions/workflows/ci-windows.yml)
+<h1 align="center">AI-Z</h1>
+
+<p align="center">
+  <a href="https://github.com/ai-z/ai-z/actions/workflows/ci.yml"><img src="https://github.com/ai-z/ai-z/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
+  <a href="https://github.com/ai-z/ai-z/actions/workflows/ci-linux.yml"><img src="https://github.com/ai-z/ai-z/actions/workflows/ci-linux.yml/badge.svg?branch=master" alt="CI (Linux)"></a>
+  <a href="https://github.com/ai-z/ai-z/actions/workflows/ci-windows.yml"><img src="https://github.com/ai-z/ai-z/actions/workflows/ci-windows.yml/badge.svg?branch=master" alt="CI (Windows)"></a>
+</p>
 
 Terminal app for monitoring CPU/GPU performance and AI related benchmarks.
 

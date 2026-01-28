@@ -198,6 +198,8 @@ jobs:
             <meta charset=\"utf-8\" />
             <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
             <title>ai-z</title>
+            <link rel=\"icon\" href=\"favicon.ico\" type=\"image/x-icon\" />
+            <link rel=\"shortcut icon\" href=\"favicon.ico\" type=\"image/x-icon\" />
             <style>
               :root {{ color-scheme: light dark; }}
               body {{ margin: 0; font: 16px/1.55 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, sans-serif; }}
@@ -214,6 +216,13 @@ jobs:
             </main>
           </body>
           </html>"""
+
+          # Copy assets to public folder
+          import shutil
+          for asset in ['assets/favicon.ico', 'assets/logo.png']:
+              if Path(asset).exists():
+                  shutil.copy(asset, 'public/')
+                  print(f"Copied {{asset}} to public/")
 
           out = Path('public/index.html')
           out.write_text(html, encoding='utf-8')
