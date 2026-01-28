@@ -92,6 +92,11 @@ jobs:
           )
 
           $searchDirs = @()
+          # Manifest mode: vcpkg installs to build-dir/vcpkg_installed/{triplet}/bin
+          $manifestBinDir = Join-Path $PWD "build-release\\vcpkg_installed\\x64-windows\\bin"
+          if (Test-Path $manifestBinDir) {
+            $searchDirs += $manifestBinDir
+          }
           if ($env:VCPKG_INSTALLED_DIR) {
             $searchDirs += Join-Path $env:VCPKG_INSTALLED_DIR "x64-windows\\bin"
           }
@@ -122,9 +127,27 @@ jobs:
                 Select-Object -First 1
 
               if ($src) {
+                Write-Host "Copying DLL: $dll from $src"
                 Copy-Item -Force $src $dest
                 if ($seen.Add($dest)) { $queue.Enqueue($dest) }
+              } else {
+                Write-Host "Warning: DLL not found in search paths: $dll"
               }
+            }
+          }
+
+          # Verify critical DLLs are present
+          $pdcursesDll = Join-Path $stage "pdcurses.dll"
+          if (!(Test-Path $pdcursesDll)) {
+            Write-Host "ERROR: pdcurses.dll was not copied to staging directory!"
+            Write-Host "Search directories were: $($searchDirs -join ', ')"
+            Write-Host "Attempting manual search..."
+            $manualFind = Get-ChildItem -Path (Join-Path $PWD "build-release") -Recurse -Filter "pdcurses.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($manualFind) {
+              Write-Host "Found pdcurses.dll at: $($manualFind.FullName)"
+              Copy-Item -Force $manualFind.FullName $pdcursesDll
+            } else {
+              throw "pdcurses.dll not found anywhere in build directory"
             }
           }
 
