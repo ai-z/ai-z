@@ -239,7 +239,8 @@ jobs:
 
   build-linux:
     name: Build Linux .deb
-    runs-on: ubuntu-latest
+    # Build on Ubuntu 22.04 so the .deb installs on Ubuntu 22.04+.
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout

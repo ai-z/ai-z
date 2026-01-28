@@ -16,7 +16,8 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Build on Ubuntu 22.04 to keep runtime dependencies compatible with Jammy.
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout

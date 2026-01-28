@@ -116,6 +116,11 @@ cmake --build build -j
 cpack --config build/CPackConfig.cmake -G DEB
 ```
 
+Note: If you want the resulting `.deb` to install on Ubuntu 22.04, build the
+package on Ubuntu 22.04 (or in a 22.04 container/chroot). Building on newer
+distros (e.g. 24.04+) will produce a package that depends on newer `libc6` and
+`libstdc++6` versions and will not be installable on 22.04.
+
 This produces something like `ai-z_0.1.0_amd64.deb` in the build directory.
 
 ### Install locally

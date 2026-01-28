@@ -12,6 +12,11 @@ cmake --build build -j
 cpack --config build/CPackConfig.cmake -G DEB
 ```
 
+Compatibility note: to support Ubuntu 22.04 clients, generate the `.deb` on
+Ubuntu 22.04 (or in a 22.04 container/chroot). If you build on newer distros,
+the package will depend on newer `libc6`/`libstdc++6` and `apt install ai-z`
+will fail on 22.04.
+
 This will produce `ai-z_*.deb`.
 
 ## Create a repo directory
