@@ -741,7 +741,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           continue;
         }
 
-        if (state.screen == Screen::Timelines && (cmd == Command::ViewTimelines || cmd == Command::ViewBars || cmd == Command::ViewMinimal)) {
+        if ((state.screen == Screen::Timelines || state.screen == Screen::Minimal) && 
+            (cmd == Command::ViewTimelines || cmd == Command::ViewBars || cmd == Command::ViewMinimal)) {
           applyCommand(state, cfg, cmd);
           continue;
         }

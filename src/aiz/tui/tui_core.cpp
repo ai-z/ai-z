@@ -265,9 +265,17 @@ void applyCommand(TuiState& state, Config& cfg, Command cmd) {
     return;
   }
 
-  if (state.screen == Screen::Timelines) {
-    if (cmd == Command::ViewTimelines) state.timelineView = TimelineView::Timelines;
-    if (cmd == Command::ViewBars) state.timelineView = TimelineView::Bars;
+  if (state.screen == Screen::Timelines || state.screen == Screen::Minimal) {
+    if (cmd == Command::ViewTimelines) {
+      state.screen = Screen::Timelines;
+      state.timelineView = TimelineView::Timelines;
+      return;
+    }
+    if (cmd == Command::ViewBars) {
+      state.screen = Screen::Timelines;
+      state.timelineView = TimelineView::Bars;
+      return;
+    }
     if (cmd == Command::ViewMinimal) {
       state.screen = Screen::Minimal;
       return;

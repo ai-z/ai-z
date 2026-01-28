@@ -56,7 +56,7 @@ std::optional<Command> keyToCommand(int key, Screen screen) {
     if (key == '\n' || key == KEY_ENTER) return Command::Activate;
   }
 
-  if (screen == Screen::Timelines) {
+  if (screen == Screen::Timelines || screen == Screen::Minimal) {
     if (key == '1') return Command::ViewTimelines;
     if (key == '2') return Command::ViewBars;
     if (key == '3') return Command::ViewMinimal;
