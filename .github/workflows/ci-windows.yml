@@ -26,13 +26,26 @@ jobs:
           vcpkgJsonGlob: "**/vcpkg.json"
           vcpkgDirectory: "${{ github.workspace }}/_vcpkg"
 
+      - name: Install Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.1.1
+        with:
+          version: latest
+          cache: true
+
+      - name: Install OpenCL SDK
+        shell: pwsh
+        run: |
+          vcpkg install opencl:x64-windows --x-install-root="$env:VCPKG_ROOT\installed"
+
       - name: Configure
         shell: pwsh
         run: |
           cmake -S . -B build-ci -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_BINDIR=. `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake"
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DAI_Z_ENABLE_VULKAN=ON `
+            -DAI_Z_ENABLE_OPENCL=ON
 
       - name: Build
         shell: pwsh
