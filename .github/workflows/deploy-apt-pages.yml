@@ -219,10 +219,18 @@ jobs:
 
           # Copy assets to public folder
           import shutil
-          for asset in ['assets/favicon.ico', 'assets/logo.png']:
-              if Path(asset).exists():
-                  shutil.copy(asset, 'public/')
-                  print(f"Copied {{asset}} to public/")
+          # Create assets directory in public
+          Path('public/assets').mkdir(parents=True, exist_ok=True)
+          
+          # Copy favicon to root
+          if Path('assets/favicon.ico').exists():
+              shutil.copy('assets/favicon.ico', 'public/')
+              print(f"Copied assets/favicon.ico to public/")
+          
+          # Copy logo to assets subfolder to preserve paths
+          if Path('assets/logo.png').exists():
+              shutil.copy('assets/logo.png', 'public/assets/')
+              print(f"Copied assets/logo.png to public/assets/")
 
           out = Path('public/index.html')
           out.write_text(html, encoding='utf-8')
