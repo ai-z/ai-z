@@ -44,9 +44,11 @@ jobs:
       - name: Configure
         shell: pwsh
         run: |
+          $version = "${{ env.TAG }}" -replace '^v', ''
           cmake -S . -B build-release -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_BINDIR=. `
+            -DCMAKE_PROJECT_VERSION="$version" `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake"
 
       - name: Build
@@ -233,9 +235,11 @@ jobs:
 
       - name: Configure
         run: |
+          version="${TAG#v}"
           cmake -S . -B build-release -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_PROJECT_VERSION="$version" \
             -DBUILD_TESTING=OFF
 
       - name: Build

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ai-z VERSION 0.1.0 LANGUAGES C CXX)
+project(ai-z VERSION 0.1.16 LANGUAGES C CXX)
 
 # Helpful error message for Windows users who haven't set up vcpkg
 if(WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
