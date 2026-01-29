@@ -850,44 +850,55 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       getmaxyx(stdscr, rows, cols);
 
       #if defined(AI_Z_PLATFORM_WINDOWS)
-      // Some Windows curses backends don't reliably propagate resize to COLS/LINES.
-      // Query the real console window and force curses to resize if needed.
+      // Windows Terminal / ConPTY may not reliably send KEY_RESIZE.
+      // Poll the real console size every frame and resize if it changed.
       int winCols = 0, winRows = 0;
       if (windowsGetConsoleWindowSize(&winCols, &winRows) && winCols > 0 && winRows > 0) {
-        // If curses still reports the old size (or a resize key was seen), resize stdscr.
-        if (sawResizeKey || winCols != cols || winRows != rows) {
-          // The console won't allow the window to exceed the screen buffer size.
-          // Some terminal/PTY layers don't auto-grow it, so do it ourselves when possible.
+        const bool sizeChanged = (winCols != cols || winRows != rows);
+        const bool needResize = sawResizeKey || sizeChanged;
+        if (needResize) {
+          // Grow the console screen buffer if needed so the window can expand.
           windowsEnsureConsoleBufferAtLeast(winCols, winRows);
           windowsFixCursesEnvFromConsole();
+
           #if defined(PDC_BUILD)
+          // PDCurses: resize_term resizes stdscr and internal state.
+          // Pass 0,0 first to force a full internal reset, then real size.
+          resize_term(0, 0);
           resize_term(winRows, winCols);
           #elif defined(NCURSES_VERSION)
           resizeterm(winRows, winCols);
           #endif
+
+          // Force curses to completely repaint on next refresh.
+          wclear(stdscr);
+          clearok(stdscr, TRUE);
           forceFullRedraw = true;
         }
       } else if (sawResizeKey) {
         // Best-effort: if we saw a resize key but can't query the console size,
         // still force a full redraw.
+        wclear(stdscr);
+        clearok(stdscr, TRUE);
         forceFullRedraw = true;
       }
       #else
       if (sawResizeKey) {
         #if defined(PDC_BUILD)
         // PDCurses expects resize_term to be called after KEY_RESIZE.
+        resize_term(0, 0);
         resize_term(rows, cols);
         #elif defined(NCURSES_VERSION)
         // ncurses expects resizeterm to be called after KEY_RESIZE.
         resizeterm(rows, cols);
         #endif
+        wclear(stdscr);
+        clearok(stdscr, TRUE);
         forceFullRedraw = true;
       }
       #endif
 
       if (forceFullRedraw) {
-        clearok(stdscr, TRUE);
-        clear();
         havePrevFrame = false;
       }
     }
@@ -1301,8 +1312,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     // Render via shared core and blit to ncurses.
     const bool fullRedraw = forceFullRedraw || (rows != lastRows || cols != lastCols || state.screen != lastScreen);
     if (fullRedraw) {
+      wclear(stdscr);
       clearok(stdscr, TRUE);
-      clear();
       lastRows = rows;
       lastCols = cols;
       lastScreen = state.screen;
