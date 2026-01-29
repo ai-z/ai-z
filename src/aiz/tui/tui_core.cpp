@@ -1103,38 +1103,53 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
     const std::string right;
 
     std::string section = p.name;
+    const int titleY = barView ? y : (y + height - 1);
+
+    if (!barView) {
+      const int graphTop = y;
+      const int graphH = std::max(0, height - 1);
+      if (graphH > 0) {
+        if (p.tl) {
+          const int sampleWindow = std::max(static_cast<int>(cfg.timelineSamples), out.width);
+          drawScrollingBars(out, graphTop, 0, graphH, out.width, *p.tl, p.maxV, sampleWindow, cfg.timelineAgg);
+        } else {
+          // Clear graph region even if TL is unavailable.
+          for (int r = 0; r < graphH; ++r) {
+            const int yy = graphTop + r;
+            if (yy < 0 || yy >= out.height) continue;
+            for (int x = 0; x < out.width; ++x) {
+              auto& c = out.at(x, yy);
+              c.ch = L' ';
+              c.style = static_cast<std::uint16_t>(Style::Default);
+            }
+          }
+        }
+      }
+    }
+
     if (p.sample && p.sample->has_value()) {
       section += ": ";
       const std::string value = fmt1((*p.sample)->value) + " " + (*p.sample)->unit;
       if (barView) {
-        drawBarLineWithDots(out, y, section, value, right, barStartCol, (*p.sample)->value, p.maxV,
+        drawBarLineWithDots(out, titleY, section, value, right, barStartCol, (*p.sample)->value, p.maxV,
                             metricNameStyle(cfg));
       } else {
-        drawSectionTitleLineSplit(out, y, section, value, right, metricNameStyle(cfg));
+        drawSectionTitleLineSplit(out, titleY, section, value, right, metricNameStyle(cfg));
       }
     } else if (p.sample != nullptr) {
       section += ": ";
       if (barView) {
-        drawBarLineWithDots(out, y, section, "unavailable", right, barStartCol,
+        drawBarLineWithDots(out, titleY, section, "unavailable", right, barStartCol,
                             std::numeric_limits<double>::quiet_NaN(), p.maxV, metricNameStyle(cfg));
       } else {
-        drawSectionTitleLineSplit(out, y, section, "unavailable", right, metricNameStyle(cfg));
+        drawSectionTitleLineSplit(out, titleY, section, "unavailable", right, metricNameStyle(cfg));
       }
     } else {
       if (barView) {
-        drawBarLineWithDots(out, y, section, std::string{}, right, barStartCol,
+        drawBarLineWithDots(out, titleY, section, std::string{}, right, barStartCol,
                             std::numeric_limits<double>::quiet_NaN(), p.maxV, metricNameStyle(cfg));
       } else {
-        drawSectionTitleLineSplit(out, y, section, std::string{}, right, metricNameStyle(cfg));
-      }
-    }
-
-    if (!barView) {
-      const int graphTop = y + 1;
-      const int graphH = std::max(0, height - 1);
-      if (graphH > 0 && p.tl) {
-        const int sampleWindow = std::max(static_cast<int>(cfg.timelineSamples), out.width);
-        drawScrollingBars(out, graphTop, 0, graphH, out.width, *p.tl, p.maxV, sampleWindow, cfg.timelineAgg);
+        drawSectionTitleLineSplit(out, titleY, section, std::string{}, right, metricNameStyle(cfg));
       }
     }
 

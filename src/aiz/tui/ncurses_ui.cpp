@@ -435,7 +435,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
         // Prefer ASCII/ACS for conservative rendering, but allow wide glyphs
         // for localized UI strings.
-        if (c.ch == 0x2593) {
+        if (c.ch == 0x2593 || c.ch == 0x2588) {
           mvaddch(y, x, ncurses::cellToChtype(c.ch));
         } else if (c.ch >= 0 && c.ch <= 0x7f) {
           mvaddch(y, x, ncurses::cellToChtype(c.ch));
@@ -1223,7 +1223,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
             lastAttr = attr;
           }
 
-          if (c.ch == 0x2593) {
+          if (c.ch == 0x2593 || c.ch == 0x2588) {
             mvaddch(y, x, ncurses::cellToChtype(c.ch));
           } else if (c.ch >= 0 && c.ch <= 0x7f) {
             mvaddch(y, x, ncurses::cellToChtype(c.ch));
@@ -1257,7 +1257,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           lastAttr = attr;
         }
 
-        if (cur.ch == 0x2593) {
+        if (cur.ch == 0x2593 || cur.ch == 0x2588) {
           mvaddch(y, x, ncurses::cellToChtype(cur.ch));
         } else if (cur.ch >= 0 && cur.ch <= 0x7f) {
           mvaddch(y, x, ncurses::cellToChtype(cur.ch));
