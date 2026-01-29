@@ -232,8 +232,8 @@ jobs:
               shutil.copy('assets/logo.png', 'public/assets/')
               print(f"Copied assets/logo.png to public/assets/")
 
-            # Copy screenshots used by README so image links work on Pages.
-            if Path('screenshots').exists():
+          # Copy screenshots used by README so image links work on Pages.
+          if Path('screenshots').exists():
               shutil.copytree('screenshots', 'public/screenshots', dirs_exist_ok=True)
               print("Copied screenshots/ to public/screenshots/")
 
