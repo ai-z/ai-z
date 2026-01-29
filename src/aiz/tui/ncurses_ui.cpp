@@ -511,11 +511,23 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
     (void)rows;
-    erase();
+    clearok(stdscr, TRUE);
+    clear();
     ncurses::drawHeader(cols, "AI-Z - Starting");
     mvhline(2, 0, ' ', cols);
     mvaddnstr(2, 0, "Initializing NVML...", cols);
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    if (!aiz_windows_safe_refresh()) {
+      windowsAppendTuiLog("ai-z: EXCEPTION during refresh()\n");
+      const std::string msg =
+          "ai-z: TUI crashed during screen refresh in this terminal.\n"
+          "ai-z: try Windows Terminal/cmd.exe, or run --hardware.\n";
+      std::cerr << msg;
+      return 1;
+    }
+    #else
     refresh();
+    #endif
     // We drew directly via ncurses, so the terminal no longer matches prevFrame.
     havePrevFrame = false;
 
@@ -635,11 +647,23 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
     (void)rows;
-    erase();
+    clearok(stdscr, TRUE);
+    clear();
     ncurses::drawHeader(cols, "AI-Z - Initializing");
     mvhline(2, 0, ' ', cols);
     mvaddnstr(2, 0, "Probing hardware...", cols);
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    if (!aiz_windows_safe_refresh()) {
+      windowsAppendTuiLog("ai-z: EXCEPTION during refresh()\n");
+      const std::string msg =
+          "ai-z: TUI crashed during screen refresh in this terminal.\n"
+          "ai-z: try Windows Terminal/cmd.exe, or run --hardware.\n";
+      std::cerr << msg;
+      return;
+    }
+    #else
     refresh();
+    #endif
     // We drew directly via ncurses, so the terminal no longer matches prevFrame.
     havePrevFrame = false;
 
@@ -686,6 +710,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   };
 
   while (running) {
+    bool sawResizeKey = false;
     if (smokeMs) {
       const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
           std::chrono::steady_clock::now() - smokeStart);
@@ -712,6 +737,13 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       const std::vector<int> queuedKeys = ncurses::readAndDrainKeys(waitMs);
 
       for (const int k : queuedKeys) {
+        #if defined(KEY_RESIZE)
+        if (k == KEY_RESIZE) {
+          sawResizeKey = true;
+          continue;
+        }
+        #endif
+
         // Sampling / scroll speed stays backend-local for now.
         if (k == '+' || k == '=') {
           adjustRefreshMs(true);
@@ -786,6 +818,52 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           applyCommand(state, cfg, cmd);
           continue;
         }
+      }
+    }
+
+    // Handle terminal resize events (or missed resize notifications).
+    // On ncurses/PDCurses the application must explicitly resize the stdscr window.
+    bool forceFullRedraw = false;
+    {
+      int rows = 0, cols = 0;
+      getmaxyx(stdscr, rows, cols);
+
+      #if defined(AI_Z_PLATFORM_WINDOWS)
+      // Some Windows curses backends don't reliably propagate resize to COLS/LINES.
+      // Query the real console window and force curses to resize if needed.
+      int winCols = 0, winRows = 0;
+      if (windowsGetConsoleWindowSize(&winCols, &winRows) && winCols > 0 && winRows > 0) {
+        // If curses still reports the old size (or a resize key was seen), resize stdscr.
+        if (sawResizeKey || winCols != cols || winRows != rows) {
+          #if defined(PDC_BUILD)
+          resize_term(winRows, winCols);
+          #elif defined(NCURSES_VERSION)
+          resizeterm(winRows, winCols);
+          #endif
+          forceFullRedraw = true;
+        }
+      } else if (sawResizeKey) {
+        // Best-effort: if we saw a resize key but can't query the console size,
+        // still force a full redraw.
+        forceFullRedraw = true;
+      }
+      #else
+      if (sawResizeKey) {
+        #if defined(PDC_BUILD)
+        // PDCurses expects resize_term to be called after KEY_RESIZE.
+        resize_term(rows, cols);
+        #elif defined(NCURSES_VERSION)
+        // ncurses expects resizeterm to be called after KEY_RESIZE.
+        resizeterm(rows, cols);
+        #endif
+        forceFullRedraw = true;
+      }
+      #endif
+
+      if (forceFullRedraw) {
+        clearok(stdscr, TRUE);
+        clear();
+        havePrevFrame = false;
       }
     }
 
@@ -1196,9 +1274,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     }
 
     // Render via shared core and blit to ncurses.
-    const bool fullRedraw = (rows != lastRows || cols != lastCols || state.screen != lastScreen);
+    const bool fullRedraw = forceFullRedraw || (rows != lastRows || cols != lastCols || state.screen != lastScreen);
     if (fullRedraw) {
-      erase();
+      clearok(stdscr, TRUE);
+      clear();
       lastRows = rows;
       lastCols = cols;
       lastScreen = state.screen;
@@ -1277,7 +1356,19 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     prevFrame = std::move(frame);
     havePrevFrame = true;
     attrset(A_NORMAL);
+
+    #if defined(AI_Z_PLATFORM_WINDOWS)
+    if (!aiz_windows_safe_refresh()) {
+      windowsAppendTuiLog("ai-z: EXCEPTION during refresh()\n");
+      const std::string msg =
+          "ai-z: TUI crashed during screen refresh in this terminal.\n"
+          "ai-z: try Windows Terminal/cmd.exe, or run --hardware.\n";
+      std::cerr << msg;
+      return 1;
+    }
+    #else
     refresh();
+    #endif
 
   }
 
