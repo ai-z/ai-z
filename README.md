@@ -28,12 +28,12 @@ sudo apt install ai-z
 
 Download either the portable ZIP or the installer from the latest GitHub Release:
 
-https://github.com/ai-z/ai-z/releases/latest
+[Latest GitHub Release](https://github.com/ai-z/ai-z/releases/latest)
 
 Direct downloads (always point at the latest release):
 
-- https://github.com/ai-z/ai-z/releases/latest/download/ai-z-windows-x64.zip
-- https://github.com/ai-z/ai-z/releases/latest/download/ai-z-windows-x64-setup.exe
+- [Portable ZIP (x64)](https://github.com/ai-z/ai-z/releases/latest/download/ai-z-windows-x64.zip)
+- [Installer (x64)](https://github.com/ai-z/ai-z/releases/latest/download/ai-z-windows-x64-setup.exe)
 
 - Portable: unzip and run `ai-z.exe`
 - Installer: run `ai-z-windows-x64-setup.exe`
