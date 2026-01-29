@@ -72,6 +72,9 @@ static const char* metricNameColorToString(MetricNameColor v) {
 Config Config::load() {
   Config cfg;
   bool sawCpuHot = false;
+
+  bool sawCpuHotBars = false;
+
   std::ifstream in(configPath());
   if (!in.is_open()) {
     return cfg;
@@ -126,11 +129,36 @@ Config Config::load() {
     else if (key == "showPcieTx") cfg.showPcieTx = parseBool(val, cfg.showPcieTx);
     else if (key == "showRam") cfg.showRam = parseBool(val, cfg.showRam);
     else if (key == "showVram") cfg.showVram = parseBool(val, cfg.showVram);
+
+    // Bars view toggles (independent from Timelines)
+    else if (key == "showCpuBars") {
+      cfg.showCpuBars = parseBool(val, cfg.showCpuBars);
+      if (!sawCpuHotBars) cfg.showCpuHotBars = cfg.showCpuBars;
+    }
+    else if (key == "showCpuHotBars") {
+      cfg.showCpuHotBars = parseBool(val, cfg.showCpuHotBars);
+      sawCpuHotBars = true;
+    }
+    else if (key == "showGpuBars") { cfg.showGpuBars = parseBool(val, cfg.showGpuBars); }
+    else if (key == "showGpuMemBars") { cfg.showGpuMemBars = parseBool(val, cfg.showGpuMemBars); }
+    else if (key == "showGpuClockBars") { cfg.showGpuClockBars = parseBool(val, cfg.showGpuClockBars); }
+    else if (key == "showGpuMemClockBars") { cfg.showGpuMemClockBars = parseBool(val, cfg.showGpuMemClockBars); }
+    else if (key == "showGpuEncBars") { cfg.showGpuEncBars = parseBool(val, cfg.showGpuEncBars); }
+    else if (key == "showGpuDecBars") { cfg.showGpuDecBars = parseBool(val, cfg.showGpuDecBars); }
+    else if (key == "showDiskReadBars") { cfg.showDiskReadBars = parseBool(val, cfg.showDiskReadBars); }
+    else if (key == "showDiskWriteBars") { cfg.showDiskWriteBars = parseBool(val, cfg.showDiskWriteBars); }
+    else if (key == "showNetRxBars") { cfg.showNetRxBars = parseBool(val, cfg.showNetRxBars); }
+    else if (key == "showNetTxBars") { cfg.showNetTxBars = parseBool(val, cfg.showNetTxBars); }
+    else if (key == "showPcieRxBars") { cfg.showPcieRxBars = parseBool(val, cfg.showPcieRxBars); }
+    else if (key == "showPcieTxBars") { cfg.showPcieTxBars = parseBool(val, cfg.showPcieTxBars); }
+    else if (key == "showRamBars") { cfg.showRamBars = parseBool(val, cfg.showRamBars); }
+    else if (key == "showVramBars") { cfg.showVramBars = parseBool(val, cfg.showVramBars); }
     else if (key == "refreshMs") cfg.refreshMs = static_cast<std::uint32_t>(std::stoul(val));
     else if (key == "timelineSamples") cfg.timelineSamples = static_cast<std::uint32_t>(std::stoul(val));
     else if (key == "timelineAgg") cfg.timelineAgg = parseTimelineAgg(val, cfg.timelineAgg);
     else if (key == "metricNameColor") cfg.metricNameColor = parseMetricNameColor(val, cfg.metricNameColor);
   }
+
   return cfg;
 }
 
@@ -161,6 +189,24 @@ void Config::save() const {
   out << "showPcieTx=" << (showPcieTx ? "true" : "false") << "\n";
   out << "showRam=" << (showRam ? "true" : "false") << "\n";
   out << "showVram=" << (showVram ? "true" : "false") << "\n";
+
+  // Bars view toggles
+  out << "showCpuBars=" << (showCpuBars ? "true" : "false") << "\n";
+  out << "showCpuHotBars=" << (showCpuHotBars ? "true" : "false") << "\n";
+  out << "showGpuBars=" << (showGpuBars ? "true" : "false") << "\n";
+  out << "showGpuMemBars=" << (showGpuMemBars ? "true" : "false") << "\n";
+  out << "showGpuClockBars=" << (showGpuClockBars ? "true" : "false") << "\n";
+  out << "showGpuMemClockBars=" << (showGpuMemClockBars ? "true" : "false") << "\n";
+  out << "showGpuEncBars=" << (showGpuEncBars ? "true" : "false") << "\n";
+  out << "showGpuDecBars=" << (showGpuDecBars ? "true" : "false") << "\n";
+  out << "showDiskReadBars=" << (showDiskReadBars ? "true" : "false") << "\n";
+  out << "showDiskWriteBars=" << (showDiskWriteBars ? "true" : "false") << "\n";
+  out << "showNetRxBars=" << (showNetRxBars ? "true" : "false") << "\n";
+  out << "showNetTxBars=" << (showNetTxBars ? "true" : "false") << "\n";
+  out << "showPcieRxBars=" << (showPcieRxBars ? "true" : "false") << "\n";
+  out << "showPcieTxBars=" << (showPcieTxBars ? "true" : "false") << "\n";
+  out << "showRamBars=" << (showRamBars ? "true" : "false") << "\n";
+  out << "showVramBars=" << (showVramBars ? "true" : "false") << "\n";
   out << "refreshMs=" << refreshMs << "\n";
   out << "timelineSamples=" << timelineSamples << "\n";
   out << "timelineAgg=" << timelineAggToString(timelineAgg) << "\n";

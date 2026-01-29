@@ -32,7 +32,15 @@ TEST_CASE("Config::load returns defaults when no config exists") {
   const aiz::Config cfg = aiz::Config::load();
 
   REQUIRE(cfg.showCpu == true);
+  REQUIRE(cfg.showCpuBars == true);
   REQUIRE(cfg.showGpu == true);
+  REQUIRE(cfg.showGpuBars == true);
+  REQUIRE(cfg.showDiskReadBars == true);
+  REQUIRE(cfg.showDiskWriteBars == true);
+  REQUIRE(cfg.showNetRxBars == true);
+  REQUIRE(cfg.showNetTxBars == true);
+  REQUIRE(cfg.showRamBars == true);
+  REQUIRE(cfg.showVramBars == true);
   REQUIRE(cfg.refreshMs == 500);
   REQUIRE(cfg.timelineSamples == 120);
   REQUIRE(cfg.timelineAgg == aiz::TimelineAgg::Max);
@@ -56,15 +64,21 @@ TEST_CASE("Config::load parses basic toggles and backward-compat keys") {
   const aiz::Config cfg = aiz::Config::load();
 
   REQUIRE(cfg.showCpu == false);
+  // Bars toggles are independent and default to all-on unless set explicitly.
+  REQUIRE(cfg.showCpuBars == true);
 
   // Backward-compat: showDisk controls both read+write.
   REQUIRE(cfg.showDisk == false);
   REQUIRE(cfg.showDiskRead == false);
   REQUIRE(cfg.showDiskWrite == false);
+  REQUIRE(cfg.showDiskReadBars == true);
+  REQUIRE(cfg.showDiskWriteBars == true);
 
   // Backward-compat: showNet controls both Rx+Tx.
   REQUIRE(cfg.showNetRx == false);
   REQUIRE(cfg.showNetTx == false);
+  REQUIRE(cfg.showNetRxBars == true);
+  REQUIRE(cfg.showNetTxBars == true);
 
   // Synonym parsing.
   REQUIRE(cfg.timelineAgg == aiz::TimelineAgg::Avg);

@@ -47,6 +47,24 @@ static constexpr std::array<ConfigToggleItem, 16> kConfigToggleItems = {{
   {i18n::MsgId::ConfigToggleNetRx, &Config::showNetRx},
   {i18n::MsgId::ConfigToggleNetTx, &Config::showNetTx},
 }};
+static constexpr std::array<ConfigToggleItem, 16> kConfigToggleItemsBars = {{
+  {i18n::MsgId::ConfigToggleCpuUsage, &Config::showCpuBars},
+  {i18n::MsgId::ConfigToggleCpuHotCoreUsage, &Config::showCpuHotBars},
+  {i18n::MsgId::ConfigToggleRamUsage, &Config::showRamBars},
+  {i18n::MsgId::ConfigToggleGpuUsage, &Config::showGpuBars},
+  {i18n::MsgId::ConfigToggleGpuMemCtrl, &Config::showGpuMemBars},
+  {i18n::MsgId::ConfigToggleVramUsage, &Config::showVramBars},
+  {i18n::MsgId::ConfigToggleGpuClock, &Config::showGpuClockBars},
+  {i18n::MsgId::ConfigToggleGpuMemClock, &Config::showGpuMemClockBars},
+  {i18n::MsgId::ConfigToggleGpuEnc, &Config::showGpuEncBars},
+  {i18n::MsgId::ConfigToggleGpuDec, &Config::showGpuDecBars},
+  {i18n::MsgId::ConfigTogglePcieRx, &Config::showPcieRxBars},
+  {i18n::MsgId::ConfigTogglePcieTx, &Config::showPcieTxBars},
+  {i18n::MsgId::ConfigToggleDiskRead, &Config::showDiskReadBars},
+  {i18n::MsgId::ConfigToggleDiskWrite, &Config::showDiskWriteBars},
+  {i18n::MsgId::ConfigToggleNetRx, &Config::showNetRxBars},
+  {i18n::MsgId::ConfigToggleNetTx, &Config::showNetTxBars},
+ }};
 
 static constexpr int configToggleCount() {
   return static_cast<int>(kConfigToggleItems.size());
@@ -159,6 +177,24 @@ static std::size_t textWidth(std::wstring_view s) {
   return w;
 }
 
+static std::wstring clipToWidth(std::wstring_view s, std::size_t maxW) {
+  std::wstring out;
+  out.reserve(s.size());
+  std::size_t w = 0;
+  for (wchar_t ch : s) {
+    if (ch == kWideContinuation) continue;
+    int ww = 1;
+    if (ch != 0 && ch != L' ') {
+      const int wcw = ::wcwidth(ch);
+      if (wcw > 0) ww = wcw;
+    }
+    if (w + static_cast<std::size_t>(ww) > maxW) break;
+    out.push_back(ch);
+    w += static_cast<std::size_t>(ww);
+  }
+  return out;
+}
+
 
 void applyCommand(TuiState& state, Config& cfg, Command cmd) {
   switch (cmd) {
@@ -224,9 +260,19 @@ void applyCommand(TuiState& state, Config& cfg, Command cmd) {
     if (cmd == Command::Up) state.configSel = std::max(0, state.configSel - 1);
     if (cmd == Command::Down) state.configSel = std::min(configItemCount() - 1, state.configSel + 1);
 
+    if (cmd == Command::Left) {
+      state.configCol = 0;
+      return;
+    }
+    if (cmd == Command::Right) {
+      state.configCol = 1;
+      return;
+    }
+
     if (cmd == Command::Toggle) {
       if (state.configSel >= 0 && state.configSel < configToggleCount()) {
-        const auto& it = kConfigToggleItems[static_cast<std::size_t>(state.configSel)];
+        const auto& items = (state.configCol == 0) ? kConfigToggleItems : kConfigToggleItemsBars;
+        const auto& it = items[static_cast<std::size_t>(state.configSel)];
         cfg.*(it.field) = !(cfg.*(it.field));
       } else if (state.configSel == configMetricNameColorRowIndex()) {
         cfg.metricNameColor = (cfg.metricNameColor == MetricNameColor::Cyan)
@@ -749,6 +795,25 @@ static void drawBarLineWithDots(
 }
 
 static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, const Config& cfg) {
+  const bool barView = (state.timelineView == TimelineView::Bars);
+
+  const bool showCpu = barView ? cfg.showCpuBars : cfg.showCpu;
+  const bool showCpuHot = barView ? cfg.showCpuHotBars : cfg.showCpuHot;
+  const bool showRam = barView ? cfg.showRamBars : cfg.showRam;
+  const bool showGpu = barView ? cfg.showGpuBars : cfg.showGpu;
+  const bool showGpuMem = barView ? cfg.showGpuMemBars : cfg.showGpuMem;
+  const bool showVram = barView ? cfg.showVramBars : cfg.showVram;
+  const bool showGpuClock = barView ? cfg.showGpuClockBars : cfg.showGpuClock;
+  const bool showGpuMemClock = barView ? cfg.showGpuMemClockBars : cfg.showGpuMemClock;
+  const bool showGpuEnc = barView ? cfg.showGpuEncBars : cfg.showGpuEnc;
+  const bool showGpuDec = barView ? cfg.showGpuDecBars : cfg.showGpuDec;
+  const bool showPcieRx = barView ? cfg.showPcieRxBars : cfg.showPcieRx;
+  const bool showPcieTx = barView ? cfg.showPcieTxBars : cfg.showPcieTx;
+  const bool showDiskRead = barView ? cfg.showDiskReadBars : cfg.showDiskRead;
+  const bool showDiskWrite = barView ? cfg.showDiskWriteBars : cfg.showDiskWrite;
+  const bool showNetRx = barView ? cfg.showNetRxBars : cfg.showNetRx;
+  const bool showNetTx = barView ? cfg.showNetTxBars : cfg.showNetTx;
+
   auto renderStatsHeader = [&](Frame& f) -> int {
     // Multi-line header matches legacy ncurses layout:
     // row 0: CPU/RAM/DISK/NET
@@ -943,27 +1008,27 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   }
 
   std::vector<Panel> panels;
-  panels.push_back(Panel{"CPU", cfg.showCpu, &state.latest.cpu, &state.cpuTl, nullptr, 100.0, false, state.cpuDevice});
-  panels.push_back(Panel{"Hottest Core", cfg.showCpuHot, &state.latest.cpuMax, &state.cpuMaxTl, nullptr, 100.0, false, state.cpuDevice});
+  panels.push_back(Panel{"CPU", showCpu, &state.latest.cpu, &state.cpuTl, nullptr, 100.0, false, state.cpuDevice});
+  panels.push_back(Panel{"Hottest Core", showCpuHot, &state.latest.cpuMax, &state.cpuMaxTl, nullptr, 100.0, false, state.cpuDevice});
 
   // CPU/RAM first.
-  panels.push_back(Panel{"RAM", cfg.showRam, &state.latest.ramPct, &state.ramTl, nullptr, 100.0, false, state.ramDevice});
+  panels.push_back(Panel{"RAM", showRam, &state.latest.ramPct, &state.ramTl, nullptr, 100.0, false, state.ramDevice});
 
   // GPU usage before VRAM and MemCtrl.
-  if (cfg.showGpu) {
+  if (showGpu) {
     const std::size_t n = std::min(state.gpuTls.size(), gpuUsageSamples.size());
     for (std::size_t i = 0; i < n; ++i) {
       panels.push_back(Panel{gpuPrefix(i) + " USAGE", true, &gpuUsageSamples[i], &state.gpuTls[i], nullptr, 100.0, false, gpuContext(i)});
     }
   }
 
-  panels.push_back(Panel{gpuPrefix(0) + " VRAM", cfg.showVram, &state.latest.vramPct, &state.vramTl, nullptr, 100.0, false, gpuContext(0)});
-  panels.push_back(Panel{gpuPrefix(0) + " MemCtrl", cfg.showGpuMem, &state.latest.gpuMemUtil, &state.gpuMemUtilTl, nullptr, 100.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " VRAM", showVram, &state.latest.vramPct, &state.vramTl, nullptr, 100.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " MemCtrl", showGpuMem, &state.latest.gpuMemUtil, &state.gpuMemUtilTl, nullptr, 100.0, false, gpuContext(0)});
 
-  panels.push_back(Panel{gpuPrefix(0) + " MHz", cfg.showGpuClock, &state.latest.gpuClock, &state.gpuClockTl, nullptr, 3000.0, false, gpuContext(0)});
-  panels.push_back(Panel{gpuPrefix(0) + " Mem MHz", cfg.showGpuMemClock, &state.latest.gpuMemClock, &state.gpuMemClockTl, nullptr, 14000.0, false, gpuContext(0)});
-  panels.push_back(Panel{gpuPrefix(0) + " Enc", cfg.showGpuEnc, &state.latest.gpuEnc, &state.gpuEncTl, nullptr, 100.0, false, gpuContext(0)});
-  panels.push_back(Panel{gpuPrefix(0) + " Dec", cfg.showGpuDec, &state.latest.gpuDec, &state.gpuDecTl, nullptr, 100.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " MHz", showGpuClock, &state.latest.gpuClock, &state.gpuClockTl, nullptr, 3000.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " Mem MHz", showGpuMemClock, &state.latest.gpuMemClock, &state.gpuMemClockTl, nullptr, 14000.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " Enc", showGpuEnc, &state.latest.gpuEnc, &state.gpuEncTl, nullptr, 100.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " Dec", showGpuDec, &state.latest.gpuDec, &state.gpuDecTl, nullptr, 100.0, false, gpuContext(0)});
 
   // PCIe split RX/TX (tweak restored).
   double pcieMax = 32'000.0;
@@ -975,15 +1040,15 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
       }
     }
   }
-  panels.push_back(Panel{gpuPrefix(0) + " PCIe RX", cfg.showPcieRx, &state.latest.pcieRx, &state.pcieRxTl, nullptr, pcieMax, false, gpuContext(0)});
-  panels.push_back(Panel{gpuPrefix(0) + " PCIe TX", cfg.showPcieTx, &state.latest.pcieTx, &state.pcieTxTl, nullptr, pcieMax, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " PCIe RX", showPcieRx, &state.latest.pcieRx, &state.pcieRxTl, nullptr, pcieMax, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " PCIe TX", showPcieTx, &state.latest.pcieTx, &state.pcieTxTl, nullptr, pcieMax, false, gpuContext(0)});
 
   // Disk/network last.
-  panels.push_back(Panel{"Disk Read", cfg.showDiskRead, &state.latest.diskRead, &state.diskReadTl, nullptr, 5000.0, false, state.diskDevice});
-  panels.push_back(Panel{"Disk Write", cfg.showDiskWrite, &state.latest.diskWrite, &state.diskWriteTl, nullptr, 5000.0, false, state.diskDevice});
+  panels.push_back(Panel{"Disk Read", showDiskRead, &state.latest.diskRead, &state.diskReadTl, nullptr, 5000.0, false, state.diskDevice});
+  panels.push_back(Panel{"Disk Write", showDiskWrite, &state.latest.diskWrite, &state.diskWriteTl, nullptr, 5000.0, false, state.diskDevice});
 
-  panels.push_back(Panel{"Net RX", cfg.showNetRx, &state.latest.netRx, &state.netRxTl, nullptr, 5000.0, false, state.netDevice});
-  panels.push_back(Panel{"Net TX", cfg.showNetTx, &state.latest.netTx, &state.netTxTl, nullptr, 5000.0, false, state.netDevice});
+  panels.push_back(Panel{"Net RX", showNetRx, &state.latest.netRx, &state.netRxTl, nullptr, 5000.0, false, state.netDevice});
+  panels.push_back(Panel{"Net TX", showNetTx, &state.latest.netTx, &state.netTxTl, nullptr, 5000.0, false, state.netDevice});
 
   panels.erase(
       std::remove_if(panels.begin(), panels.end(), [](const Panel& p) { return !p.enabled; }),
@@ -994,7 +1059,6 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
     return;
   }
 
-  const bool barView = (state.timelineView == TimelineView::Bars);
   const int labelRows = 1;
   const int n = static_cast<int>(panels.size());
   const int minGraphRows = barView ? 0 : 3;
@@ -1358,11 +1422,24 @@ static void renderHelp(Frame& out, int bodyTop) {
 static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiState& state) {
   const int kToggleCount = configToggleCount();
 
+  // Keep the two toggle tables symmetric.
+  static_assert(kConfigToggleItems.size() == kConfigToggleItemsBars.size(), "toggle table mismatch");
+
+  const int width = std::max(0, out.width);
+  const int colGap = 2;
+  const int colW = std::max(1, (width - colGap) / 2);
+  const int colX0 = 0;
+  const int colX1 = std::min(width, colW + colGap);
+
   int y = bodyTop + 1;
   if (y < out.height - 2) {
-    ++y;  // spacer before Timelines
+    ++y;  // spacer before toggles
   }
-  drawBodyLine(out, y, std::wstring(i18n::tr(i18n::MsgId::ConfigSectionTimelines)), Style::Section);
+
+  // Section titles (two columns).
+  drawBodyLine(out, y, L"", Style::Default);
+  drawText(out, colX0, y, clipToWidth(i18n::tr(i18n::MsgId::ConfigSectionTimelines), static_cast<std::size_t>(colW)), Style::Section);
+  drawText(out, colX1, y, clipToWidth(L"H. Bars", static_cast<std::size_t>(std::max(0, width - colX1))), Style::Section);
   ++y;
 
   std::size_t maxLabelW = 0;
@@ -1374,21 +1451,35 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
   maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigReadonlyValueColor)));
   maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigReadonlyMetricNameColor)));
 
-  for (int i = 0; i < kToggleCount; ++i) {
-    std::wstring line = (i == state.configSel ? L"> " : L"  ");
-    const auto& it = kConfigToggleItems[static_cast<std::size_t>(i)];
+  auto drawToggleRow = [&](int x0, int colIndex, int rowIndex, const ConfigToggleItem& it, int yRow) {
+    if (yRow >= out.height - 2) return;
+    const bool selected = (rowIndex == state.configSel) && (state.configCol == colIndex);
+    std::wstring line = selected ? L"> " : L"  ";
+
     const std::wstring_view label = i18n::tr(it.label);
     line += label;
     const std::size_t labelW = textWidth(label);
     if (labelW < maxLabelW) line.append(maxLabelW - labelW, L' ');
     line += L": ";
+
     const std::wstring_view onOff = (cfg.*(it.field)) ? i18n::tr(i18n::MsgId::ConfigToggleOn)
                                                       : i18n::tr(i18n::MsgId::ConfigToggleOff);
     line += std::wstring(onOff);
-    if (y >= out.height - 2) break;
-    drawBodyLine(out, y, line, Style::Value);
+
+    drawText(out, x0, yRow, clipToWidth(line, static_cast<std::size_t>(colW)), Style::Value);
+
     const std::size_t valueStart = textWidth(std::wstring_view(line).substr(0, line.size() - onOff.size()));
-    drawText(out, static_cast<int>(valueStart), y, std::wstring(onOff), Style::Default);
+    if (static_cast<int>(valueStart) < colW) {
+      drawText(out, x0 + static_cast<int>(valueStart), yRow,
+               clipToWidth(onOff, static_cast<std::size_t>(std::max(0, colW - static_cast<int>(valueStart)))),
+               Style::Default);
+    }
+  };
+
+  for (int i = 0; i < kToggleCount; ++i) {
+    if (y >= out.height - 2) break;
+    drawToggleRow(colX0, 0, i, kConfigToggleItems[static_cast<std::size_t>(i)], y);
+    drawToggleRow(colX1, 1, i, kConfigToggleItemsBars[static_cast<std::size_t>(i)], y);
     ++y;
   }
 
@@ -1868,11 +1959,11 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
       i = (j > 0) ? (j - 1) : i;
     }
 
-    // Viewmode labels: highlight "Timelines", "H. Bars", and "Minimal".
+    // View labels: highlight the active view name.
     {
-      const std::wstring_view view1 = L"Timelines";
-      const std::wstring_view view2 = L"H. Bars";
-      const std::wstring_view view3 = L"Minimal";
+      const std::wstring_view view1 = i18n::tr(i18n::MsgId::FooterViewTimelines);
+      const std::wstring_view view2 = i18n::tr(i18n::MsgId::FooterViewBars);
+      const std::wstring_view view3 = i18n::tr(i18n::MsgId::FooterViewMinimal);
 
       const std::size_t pos1 = footer.find(view1);
       if (pos1 != std::wstring_view::npos) {
@@ -1918,7 +2009,7 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
       break;
     case Screen::Config:
       {
-        const std::wstring hint = L"Space:Toggle  S:Save  R:Reset to Defaults";
+        const std::wstring hint = L"Space:Toggle  Tab/←/→:Column  S:Save  R:Reset to Defaults";
         std::vector<Style> hintStyles(hint.size(), Style::Section);
 
         const std::size_t togglePos = hint.find(L"Toggle");

@@ -38,6 +38,25 @@ struct Config {
   bool showRam = false;
   bool showVram = false;
 
+  // H. Bars view display toggles (independent from Timelines view).
+  // Defaults are "all on" so H. Bars is maximally informative out of the box.
+  bool showCpuBars = true;
+  bool showCpuHotBars = true;
+  bool showGpuBars = true;
+  bool showGpuMemBars = true;
+  bool showGpuClockBars = true;
+  bool showGpuMemClockBars = true;
+  bool showGpuEncBars = true;
+  bool showGpuDecBars = true;
+  bool showDiskReadBars = true;
+  bool showDiskWriteBars = true;
+  bool showNetRxBars = true;
+  bool showNetTxBars = true;
+  bool showPcieRxBars = true;
+  bool showPcieTxBars = true;
+  bool showRamBars = true;
+  bool showVramBars = true;
+
   // Sampling
   std::uint32_t refreshMs = 500;
   std::uint32_t timelineSamples = 120;

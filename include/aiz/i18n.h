@@ -10,6 +10,10 @@ namespace aiz::i18n {
 enum class MsgId {
   FooterNav,
 
+  FooterViewTimelines,
+  FooterViewBars,
+  FooterViewMinimal,
+
   ScreenHelpTitle,
   ScreenConfigTitle,
   ScreenHardwareTitle,
@@ -21,6 +25,7 @@ enum class MsgId {
 
   ConfigTitle,
   ConfigSectionTimelines,
+  ConfigSectionBars,
   ConfigSectionMisc,
 
   ConfigToggleCpuUsage,

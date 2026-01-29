@@ -63,6 +63,9 @@ std::optional<Command> keyToCommand(int key, Screen screen) {
   }
 
   if (screen == Screen::Config) {
+    if (key == KEY_LEFT) return Command::Left;
+    if (key == KEY_RIGHT) return Command::Right;
+    if (key == '\t') return Command::Right;  // cycle columns
     if (key == ' ') return Command::Toggle;
     if (key == '\n' || key == KEY_ENTER) return Command::Activate;
     if (key == 's' || key == 'S') return Command::Save;

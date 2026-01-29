@@ -733,7 +733,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
         // Navigation + selection changes are centralized.
         if (cmd == Command::NavHelp || cmd == Command::NavHardware || cmd == Command::NavBenchmarks || cmd == Command::NavConfig ||
-          cmd == Command::NavMinimal || cmd == Command::NavProcesses || cmd == Command::Back || cmd == Command::Up || cmd == Command::Down) {
+          cmd == Command::NavMinimal || cmd == Command::NavProcesses || cmd == Command::Back || cmd == Command::Up || cmd == Command::Down ||
+          cmd == Command::Left || cmd == Command::Right) {
           applyCommand(state, cfg, cmd);
           if (state.screen == Screen::Hardware || state.screen == Screen::Benchmarks) {
             ensureHardwareAndBenches();
@@ -749,7 +750,8 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
         // Config screen actions are centralized in the core.
         if (state.screen == Screen::Config &&
-            (cmd == Command::Toggle || cmd == Command::Defaults || cmd == Command::Save || cmd == Command::Activate)) {
+            (cmd == Command::Toggle || cmd == Command::Defaults || cmd == Command::Save || cmd == Command::Activate ||
+             cmd == Command::Left || cmd == Command::Right)) {
           applyCommand(state, cfg, cmd);
           continue;
         }
@@ -1006,11 +1008,11 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
     state.cpuTl.push(cpu ? cpu->value : 0.0);
     state.cpuMaxTl.push(cpuMax ? cpuMax->value : 0.0);
-    state.gpuMemUtilTl.push((gpuMemUtil && cfg.showGpuMem) ? gpuMemUtil->value : 0.0);
-    state.gpuClockTl.push((gpuClock && cfg.showGpuClock) ? gpuClock->value : 0.0);
-    state.gpuMemClockTl.push((gpuMemClock && cfg.showGpuMemClock) ? gpuMemClock->value : 0.0);
-    state.gpuEncTl.push((gpuEnc && cfg.showGpuEnc) ? gpuEnc->value : 0.0);
-    state.gpuDecTl.push((gpuDec && cfg.showGpuDec) ? gpuDec->value : 0.0);
+    state.gpuMemUtilTl.push((gpuMemUtil && (cfg.showGpuMem || cfg.showGpuMemBars)) ? gpuMemUtil->value : 0.0);
+    state.gpuClockTl.push((gpuClock && (cfg.showGpuClock || cfg.showGpuClockBars)) ? gpuClock->value : 0.0);
+    state.gpuMemClockTl.push((gpuMemClock && (cfg.showGpuMemClock || cfg.showGpuMemClockBars)) ? gpuMemClock->value : 0.0);
+    state.gpuEncTl.push((gpuEnc && (cfg.showGpuEnc || cfg.showGpuEncBars)) ? gpuEnc->value : 0.0);
+    state.gpuDecTl.push((gpuDec && (cfg.showGpuDec || cfg.showGpuDecBars)) ? gpuDec->value : 0.0);
     state.ramTl.push(ramPct ? ramPct->value : 0.0);
     state.vramTl.push(vramPct ? vramPct->value : 0.0);
     state.diskReadTl.push(diskRead ? diskRead->value : 0.0);
@@ -1190,7 +1192,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
     for (unsigned int i = 0; i < gpuCount; ++i) {
       ensureTimelineCapacity(state.gpuTls[static_cast<std::size_t>(i)], desiredSamples);
       const auto& s = (i < gpuSamples.size()) ? gpuSamples[static_cast<std::size_t>(i)] : std::optional<Sample>{};
-      state.gpuTls[static_cast<std::size_t>(i)].push((s && cfg.showGpu) ? s->value : 0.0);
+      state.gpuTls[static_cast<std::size_t>(i)].push((s && (cfg.showGpu || cfg.showGpuBars)) ? s->value : 0.0);
     }
 
     // Render via shared core and blit to ncurses.

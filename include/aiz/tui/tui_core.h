@@ -46,6 +46,8 @@ enum class Command {
 
   Up,
   Down,
+  Left,
+  Right,
   Activate,
   Toggle,
   Save,
@@ -86,6 +88,7 @@ struct TuiState {
   // Simple per-screen cursors.
   int benchmarksSel = 0;
   int configSel = 0;
+  int configCol = 0;  // 0 = Timelines, 1 = H. Bars
 
   // Benchmarks screen.
   std::vector<std::unique_ptr<IBenchmark>> benches;

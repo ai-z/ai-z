@@ -35,7 +35,11 @@ bool isZhCnTag(const std::string& tag) {
 constexpr std::wstring_view en(MsgId id) {
   switch (id) {
     case MsgId::FooterNav:
-      return L"ESCMain F1Help F2Hardware F3Benchmark F4Config F6Processes F10Quit Viewmode: 1. Timelines 2. H. Bars 3. Minimal";
+      return L"ESCMain F1Help F2Hardware F3Benchmark F4Config F6Processes F10Quit View: 1Timelines 2H. Bars 3Minimal";
+
+    case MsgId::FooterViewTimelines: return L"Timelines";
+    case MsgId::FooterViewBars: return L"H. Bars";
+    case MsgId::FooterViewMinimal: return L"Minimal";
 
     case MsgId::ScreenHelpTitle: return L"Help";
     case MsgId::ScreenConfigTitle: return L"Config";
@@ -49,6 +53,7 @@ constexpr std::wstring_view en(MsgId id) {
 
     case MsgId::ConfigTitle: return L"Config";
     case MsgId::ConfigSectionTimelines: return L"Timelines";
+    case MsgId::ConfigSectionBars: return L"H. Bars";
     case MsgId::ConfigSectionMisc: return L"Misc";
 
     case MsgId::ConfigToggleCpuUsage: return L"CPU usage";
@@ -77,7 +82,7 @@ constexpr std::wstring_view en(MsgId id) {
     case MsgId::ConfigReadonlyValueColor: return L"Value color";
     case MsgId::ConfigReadonlyMetricNameColor: return L"Metric name color";
     case MsgId::ConfigFooterKeys:
-      return L"Space/Enter: toggle/activate   S: save   R: reset to defaults   Esc: back";
+      return L"Space: toggle   Tab/Left/Right: column   S: save   R: reset   Esc: back";
 
     case MsgId::HardwareFooterKeys:
       return L"r: refresh   Esc: back";
@@ -92,7 +97,11 @@ constexpr std::wstring_view en(MsgId id) {
 constexpr std::wstring_view zhCN(MsgId id) {
   switch (id) {
     case MsgId::FooterNav:
-      return L"ESCMain F1帮助 F2硬件 F3基准 F4配置 F6进程 F10退出 Viewmode: 1. Timelines 2. H. Bars 3. Minimal";
+      return L"ESCMain F1帮助 F2硬件 F3基准 F4配置 F6进程 F10退出 视图: 1时间线 2柱状 3简洁";
+
+    case MsgId::FooterViewTimelines: return L"时间线";
+    case MsgId::FooterViewBars: return L"柱状";
+    case MsgId::FooterViewMinimal: return L"简洁";
 
     case MsgId::ScreenHelpTitle: return L"帮助";
     case MsgId::ScreenConfigTitle: return L"配置";
@@ -106,6 +115,7 @@ constexpr std::wstring_view zhCN(MsgId id) {
 
     case MsgId::ConfigTitle: return L"配置";
     case MsgId::ConfigSectionTimelines: return L"时间线";
+    case MsgId::ConfigSectionBars: return L"柱状";
     case MsgId::ConfigSectionMisc: return L"其他";
 
     case MsgId::ConfigToggleCpuUsage: return L"CPU 使用率";
@@ -134,7 +144,7 @@ constexpr std::wstring_view zhCN(MsgId id) {
     case MsgId::ConfigReadonlyValueColor: return L"数值颜色";
     case MsgId::ConfigReadonlyMetricNameColor: return L"指标名称颜色";
     case MsgId::ConfigFooterKeys:
-      return L"Space/Enter：切换/执行   s：保存   d：默认值   Esc：返回";
+      return L"Space：切换   Tab/Left/Right：列   S：保存   R：重置   Esc：返回";
 
     case MsgId::HardwareFooterKeys:
       return L"r：刷新   Esc：返回";
