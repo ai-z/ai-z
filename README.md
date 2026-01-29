@@ -4,7 +4,7 @@
 [![CI (Linux)](https://github.com/ai-z/ai-z/actions/workflows/ci-linux.yml/badge.svg?branch=master)](https://github.com/ai-z/ai-z/actions/workflows/ci-linux.yml)
 [![CI (Windows)](https://github.com/ai-z/ai-z/actions/workflows/ci-windows.yml/badge.svg?branch=master)](https://github.com/ai-z/ai-z/actions/workflows/ci-windows.yml)
 
-Terminal app for monitoring CPU/NPU/GPU performance and AI related benchmarks.
+Terminal app for real-time monitoring of CPU/NPU/GPU performance timelines and AI related benchmarks. Supports AMD/Intel/NVIDIA. Provides many metrics all in one app to provide a holistic view including PCIE bandwidth, GPU Memory Controller usage, hottest core utilization, disk, network. Benchmarks CUDA, Vulkan, OpenCL and ONNX
 
 | N/GPU   | Linux | Windows |
 |-------|:-----:|:-------:|
@@ -14,7 +14,7 @@ Terminal app for monitoring CPU/NPU/GPU performance and AI related benchmarks.
 
 \* some metrics are missing
 
-![Timeline screenshot](screenshots/timelines01.png)
+<img src="screenshots/timelines01.png" alt="Timeline screenshot" style="max-width: 100%; height: auto;">
 
 ## Install
 ### Ubuntu/Debian
