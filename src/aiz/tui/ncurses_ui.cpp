@@ -214,6 +214,27 @@ static bool windowsGetConsoleWindowSize(int* cols, int* rows) {
   return true;
 }
 
+static void windowsEnsureConsoleBufferAtLeast(int cols, int rows) {
+  const HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+  if (hOut == INVALID_HANDLE_VALUE) return;
+
+  CONSOLE_SCREEN_BUFFER_INFO csbi{};
+  if (!GetConsoleScreenBufferInfo(hOut, &csbi)) return;
+
+  const int curCols = static_cast<int>(csbi.dwSize.X);
+  const int curRows = static_cast<int>(csbi.dwSize.Y);
+  if (curCols >= cols && curRows >= rows) return;
+
+  // Windows console limits are 16-bit signed for COORD.
+  const int targetCols = std::clamp(cols, 1, 32767);
+  const int targetRows = std::clamp(rows, 1, 32767);
+
+  COORD newSize;
+  newSize.X = static_cast<SHORT>(std::max(curCols, targetCols));
+  newSize.Y = static_cast<SHORT>(std::max(curRows, targetRows));
+  (void)SetConsoleScreenBufferSize(hOut, newSize);
+}
+
 static void windowsFixCursesEnvFromConsole() {
   // Some terminals/PTY layers end up with bogus LINES/COLUMNS values (even negative),
   // which can cause PDCurses to refuse to initialize.
@@ -835,6 +856,10 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
       if (windowsGetConsoleWindowSize(&winCols, &winRows) && winCols > 0 && winRows > 0) {
         // If curses still reports the old size (or a resize key was seen), resize stdscr.
         if (sawResizeKey || winCols != cols || winRows != rows) {
+          // The console won't allow the window to exceed the screen buffer size.
+          // Some terminal/PTY layers don't auto-grow it, so do it ourselves when possible.
+          windowsEnsureConsoleBufferAtLeast(winCols, winRows);
+          windowsFixCursesEnvFromConsole();
           #if defined(PDC_BUILD)
           resize_term(winRows, winCols);
           #elif defined(NCURSES_VERSION)
