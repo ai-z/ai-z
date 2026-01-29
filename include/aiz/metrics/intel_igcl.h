@@ -28,6 +28,24 @@ struct IgclGpuTelemetry {
   std::optional<double> powerW;
   std::optional<unsigned int> gpuClockMHz;
   std::optional<unsigned int> memClockMHz;
+
+  // PCIe link info (via ctlPciGetState).
+  std::optional<int> pcieLinkWidth;
+  std::optional<int> pcieLinkGen;
+
+  // Fan speed (RPM).
+  std::optional<double> fanSpeedRpm;
+
+  // VRAM bandwidth (MB/s).
+  std::optional<double> vramReadBandwidthMBps;
+  std::optional<double> vramWriteBandwidthMBps;
+
+  // VRAM temperature (Celsius).
+  std::optional<double> vramTempC;
+
+  // Throttle state: empty if not throttled, otherwise indicates reason.
+  // Possible values: "PWR" (power limited), "TMP" (thermal), "CUR" (current), "VLT" (voltage), "IDLE" (low utilization)
+  std::string throttleState;
 };
 
 struct IgclAvailability {

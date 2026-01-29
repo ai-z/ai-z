@@ -704,6 +704,17 @@ std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index) {
       if (igcl->powerW) t.watts = *igcl->powerW;
       if (igcl->gpuClockMHz) t.gpuClockMHz = *igcl->gpuClockMHz;
       if (igcl->memClockMHz) t.memClockMHz = *igcl->memClockMHz;
+      // PCIe link info.
+      if (igcl->pcieLinkWidth && *igcl->pcieLinkWidth > 0) {
+        t.pcieLinkWidth = static_cast<unsigned int>(*igcl->pcieLinkWidth);
+      }
+      if (igcl->pcieLinkGen && *igcl->pcieLinkGen > 0) {
+        t.pcieLinkGen = static_cast<unsigned int>(*igcl->pcieLinkGen);
+      }
+      // Throttle state as pstate for Intel GPUs.
+      if (!igcl->throttleState.empty()) {
+        t.pstate = igcl->throttleState;
+      }
       if (t.source.empty()) t.source = "igcl";
       any = true;
     }
@@ -736,6 +747,22 @@ std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index) {
       }
       if (t.source.empty()) t.source = "d3dkmt";
       any = true;
+    }
+  }
+
+  // D3DKMT fallback for performance data (temp, power, fan) - works for any vendor.
+  if (memInfo) {
+    if (!t.tempC || !t.watts) {
+      if (const auto perf = queryD3dkmtAdapterPerfData(memInfo->luid)) {
+        if (!t.tempC && perf->temperatureC > 0.0) {
+          t.tempC = perf->temperatureC;
+        }
+        if (!t.watts && perf->powerWatts && *perf->powerWatts > 0.0) {
+          t.watts = *perf->powerWatts;
+        }
+        if (t.source.empty()) t.source = "d3dkmt";
+        any = true;
+      }
     }
   }
 

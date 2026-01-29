@@ -26,6 +26,9 @@ struct IgclSample {
   double lastGpuEnergyJ = -1.0;
   double lastGlobalActivityS = -1.0;
   double lastMediaActivityS = -1.0;
+  // VRAM bandwidth counters (bytes).
+  double lastVramReadBandwidthBytes = -1.0;
+  double lastVramWriteBandwidthBytes = -1.0;
 };
 
 struct IgclDeviceInfo {
@@ -235,6 +238,25 @@ static std::optional<double> readFrequencyForDomain(ctl_device_adapter_handle_t 
   return std::nullopt;
 }
 
+struct IgclPciLinkInfo {
+  int width = -1;
+  int gen = -1;
+};
+
+static std::optional<IgclPciLinkInfo> readPciLinkForDevice(ctl_device_adapter_handle_t h) {
+  ctl_pci_state_t state{};
+  state.Size = sizeof(state);
+  state.Version = 0;
+  if (ctlPciGetState(h, &state) != CTL_RESULT_SUCCESS) return std::nullopt;
+
+  IgclPciLinkInfo out;
+  if (state.speed.width > 0) out.width = state.speed.width;
+  if (state.speed.gen > 0) out.gen = state.speed.gen;
+
+  if (out.width > 0 || out.gen > 0) return out;
+  return std::nullopt;
+}
+
 #endif  // AI_Z_HAS_IGCL_HEADERS
 
 }  // namespace
@@ -300,7 +322,7 @@ std::string igclDiagnosticsDetailed() {
 
     ctl_power_telemetry_t p{};
     p.Size = sizeof(p);
-    p.Version = 0;
+    p.Version = 1;
     const bool powerOk = (ctlPowerTelemetryGet(d.handle, &p) == CTL_RESULT_SUCCESS);
     oss << "    power telemetry: " << (powerOk ? "ok" : "failed") << "\n";
     if (powerOk) {
@@ -309,6 +331,31 @@ std::string igclDiagnosticsDetailed() {
       oss << "      energy: " << formatTelemetryItem(p.gpuEnergyCounter) << "\n";
       oss << "      activity: " << formatTelemetryItem(p.globalActivityCounter) << "\n";
       oss << "      timestamp: " << formatTelemetryItem(p.timeStamp) << "\n";
+      oss << "      vram_temp: " << formatTelemetryItem(p.vramCurrentTemperature) << "\n";
+      oss << "      vram_read_bw: " << formatTelemetryItem(p.vramReadBandwidth) << "\n";
+      oss << "      vram_write_bw: " << formatTelemetryItem(p.vramWriteBandwidth) << "\n";
+      for (int f = 0; f < CTL_FAN_COUNT; ++f) {
+        if (p.fanSpeed[f].bSupported) {
+          oss << "      fan[" << f << "]: " << formatTelemetryItem(p.fanSpeed[f]) << "\n";
+        }
+      }
+      // Throttle/limiting flags.
+      oss << "      limits: power=" << (p.gpuPowerLimited ? "yes" : "no")
+          << " temp=" << (p.gpuTemperatureLimited ? "yes" : "no")
+          << " current=" << (p.gpuCurrentLimited ? "yes" : "no")
+          << " voltage=" << (p.gpuVoltageLimited ? "yes" : "no")
+          << " util=" << (p.gpuUtilizationLimited ? "yes" : "no") << "\n";
+    }
+
+    // PCIe link info.
+    ctl_pci_state_t pciState{};
+    pciState.Size = sizeof(pciState);
+    pciState.Version = 0;
+    const auto pciResult = ctlPciGetState(d.handle, &pciState);
+    if (pciResult == CTL_RESULT_SUCCESS) {
+      oss << "    pcie: width=" << pciState.speed.width << " gen=" << pciState.speed.gen << "\n";
+    } else {
+      oss << "    pcie: failed (0x" << std::hex << static_cast<int>(pciResult) << std::dec << ")\n";
     }
 
     const auto temp = readTemperatureForDevice(d.handle);
@@ -343,7 +390,7 @@ std::optional<IgclGpuTelemetry> readIgclTelemetryForPciIds(const IntelAdapterPci
 
   ctl_power_telemetry_t p{};
   p.Size = sizeof(p);
-  p.Version = 0;
+  p.Version = 1;  // Version 1 supports more telemetry fields (fan speed, VR temps, etc.)
   const bool powerOk = (ctlPowerTelemetryGet(*dev, &p) == CTL_RESULT_SUCCESS);
 
   IgclGpuTelemetry out;
@@ -352,6 +399,8 @@ std::optional<IgclGpuTelemetry> readIgclTelemetryForPciIds(const IntelAdapterPci
   std::optional<double> energy;
   std::optional<double> globalAct;
   std::optional<double> mediaAct;
+  std::optional<double> vramReadBytes;
+  std::optional<double> vramWriteBytes;
 
   if (powerOk) {
     const auto temp = toDouble(p.gpuCurrentTemperature);
@@ -364,6 +413,52 @@ std::optional<IgclGpuTelemetry> readIgclTelemetryForPciIds(const IntelAdapterPci
     energy = toDouble(p.gpuEnergyCounter);
     globalAct = toDouble(p.globalActivityCounter);
     mediaAct = toDouble(p.mediaActivityCounter);
+
+    // Read VRAM temperature.
+    const auto vramTemp = toDouble(p.vramCurrentTemperature);
+    if (vramTemp && *vramTemp > 0.0) out.vramTempC = *vramTemp;
+
+    // Read fan speed (first supported fan).
+    for (int i = 0; i < CTL_FAN_COUNT; ++i) {
+      if (p.fanSpeed[i].bSupported) {
+        const auto fan = toDouble(p.fanSpeed[i]);
+        if (fan && *fan >= 0.0) {
+          out.fanSpeedRpm = *fan;
+          break;
+        }
+      }
+    }
+
+    // Read VRAM bandwidth counters (for calculating MB/s).
+    // Use the instantaneous bandwidth fields if available (version > 0).
+    const auto vramReadBw = toDouble(p.vramReadBandwidth);
+    if (vramReadBw && *vramReadBw >= 0.0) {
+      out.vramReadBandwidthMBps = *vramReadBw;
+    }
+    const auto vramWriteBw = toDouble(p.vramWriteBandwidth);
+    if (vramWriteBw && *vramWriteBw >= 0.0) {
+      out.vramWriteBandwidthMBps = *vramWriteBw;
+    }
+
+    // Read throttle state from limiting flags.
+    // Priority: power > thermal > current > voltage > utilization (idle)
+    if (p.gpuPowerLimited) {
+      out.throttleState = "PWR";
+    } else if (p.gpuTemperatureLimited) {
+      out.throttleState = "TMP";
+    } else if (p.gpuCurrentLimited) {
+      out.throttleState = "CUR";
+    } else if (p.gpuVoltageLimited) {
+      out.throttleState = "VLT";
+    } else if (p.gpuUtilizationLimited) {
+      out.throttleState = "IDLE";
+    }
+
+    // Fallback: calculate from counters if instantaneous values unavailable.
+    if (!out.vramReadBandwidthMBps || !out.vramWriteBandwidthMBps) {
+      vramReadBytes = toDouble(p.vramReadBandwidthCounter);
+      vramWriteBytes = toDouble(p.vramWriteBandwidthCounter);
+    }
 
     IgclSample& s = st.samples[*dev];
     if (ts && energy && s.lastTimestampS >= 0.0 && s.lastGpuEnergyJ >= 0.0) {
@@ -382,11 +477,32 @@ std::optional<IgclGpuTelemetry> readIgclTelemetryForPciIds(const IntelAdapterPci
       }
     }
 
+    // Calculate VRAM bandwidth from counters if instantaneous values unavailable.
+    if (ts && s.lastTimestampS >= 0.0) {
+      const double dt = *ts - s.lastTimestampS;
+      if (dt > 0.0) {
+        if (!out.vramReadBandwidthMBps && vramReadBytes && s.lastVramReadBandwidthBytes >= 0.0) {
+          const double db = *vramReadBytes - s.lastVramReadBandwidthBytes;
+          if (db >= 0.0) {
+            out.vramReadBandwidthMBps = (db / dt) / (1024.0 * 1024.0);
+          }
+        }
+        if (!out.vramWriteBandwidthMBps && vramWriteBytes && s.lastVramWriteBandwidthBytes >= 0.0) {
+          const double db = *vramWriteBytes - s.lastVramWriteBandwidthBytes;
+          if (db >= 0.0) {
+            out.vramWriteBandwidthMBps = (db / dt) / (1024.0 * 1024.0);
+          }
+        }
+      }
+    }
+
     // Update sample state.
     if (ts) s.lastTimestampS = *ts;
     if (energy) s.lastGpuEnergyJ = *energy;
     if (globalAct) s.lastGlobalActivityS = *globalAct;
     if (mediaAct) s.lastMediaActivityS = *mediaAct;
+    if (vramReadBytes) s.lastVramReadBandwidthBytes = *vramReadBytes;
+    if (vramWriteBytes) s.lastVramWriteBandwidthBytes = *vramWriteBytes;
   }
 
   if (!out.tempC) {
@@ -401,6 +517,12 @@ std::optional<IgclGpuTelemetry> readIgclTelemetryForPciIds(const IntelAdapterPci
     if (const auto f = readFrequencyForDomain(*dev, CTL_FREQ_DOMAIN_MEMORY)) {
       if (*f >= 0.0) out.memClockMHz = static_cast<unsigned int>(*f);
     }
+  }
+
+  // Read PCIe link info.
+  if (const auto pci = readPciLinkForDevice(*dev)) {
+    if (pci->width > 0) out.pcieLinkWidth = pci->width;
+    if (pci->gen > 0) out.pcieLinkGen = pci->gen;
   }
 
   if (!out.tempC && !out.powerW && !out.gpuClockMHz && !out.gpuUtilPct) return std::nullopt;
