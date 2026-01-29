@@ -1,5 +1,34 @@
 cmake_minimum_required(VERSION 3.16)
-project(ai-z VERSION 0.1.16 LANGUAGES C CXX)
+
+# Versioning
+#
+# - Release builds should pass an explicit override (e.g. from a tag).
+# - Developer builds can derive from git tags (vX.Y.Z) when available.
+# - If neither is available (e.g. source archive without .git), fall back.
+set(AI_Z_VERSION_FALLBACK "0.1.16")
+set(AI_Z_VERSION_OVERRIDE "" CACHE STRING "Override ai-z version (e.g. 0.1.17)")
+option(AI_Z_VERSION_FROM_GIT "Derive version from git tags (vX.Y.Z) when available" ON)
+
+set(AI_Z_VERSION "${AI_Z_VERSION_FALLBACK}")
+if (AI_Z_VERSION_OVERRIDE)
+  set(AI_Z_VERSION "${AI_Z_VERSION_OVERRIDE}")
+elseif (AI_Z_VERSION_FROM_GIT)
+  find_package(Git QUIET)
+  if (GIT_FOUND AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/.git")
+    execute_process(
+      COMMAND "${GIT_EXECUTABLE}" describe --tags --match "v[0-9]*" --abbrev=0
+      WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+      OUTPUT_VARIABLE AI_Z_GIT_TAG
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET
+    )
+    if (AI_Z_GIT_TAG MATCHES "^v([0-9]+\\.[0-9]+\\.[0-9]+)")
+      set(AI_Z_VERSION "${CMAKE_MATCH_1}")
+    endif()
+  endif()
+endif()
+
+project(ai-z VERSION ${AI_Z_VERSION} LANGUAGES C CXX)
 
 # Helpful error message for Windows users who haven't set up vcpkg
 if(WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)

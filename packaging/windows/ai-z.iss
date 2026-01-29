@@ -1,4 +1,5 @@
 #define AppName "ai-z"
+#define AppDisplayName "AI-Z"
 #define AppPublisher "ai-z"
 #define AppURL "https://www.ai-z.org/"
 #define AppExeName "ai-z.exe"
@@ -25,7 +26,7 @@
 
 [Setup]
 AppId={{9A4E9F4C-CC9A-4B58-B7C6-87CE1A0A8D7C}
-AppName={#AppName}
+AppName={#AppDisplayName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
@@ -53,8 +54,8 @@ Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "A
 Source: "{#SourceDir}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\\{#AppName}"; Filename: "{app}\\{#AppExeName}"
-Name: "{autodesktop}\\{#AppName}"; Filename: "{app}\\{#AppExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\\{#AppDisplayName}"; Filename: "{app}\\{#AppExeName}"
+Name: "{autodesktop}\\{#AppDisplayName}"; Filename: "{app}\\{#AppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\\{#AppExeName}"; Description: "Run {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\\{#AppExeName}"; Description: "Run {#AppDisplayName}"; Flags: nowait postinstall skipifsilent

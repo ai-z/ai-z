@@ -11,11 +11,20 @@
 #include <aiz/version.h>
 
 #include <cstdlib>
+#include <cstdio>
 #include <iostream>
 #include <optional>
 #include <string_view>
 
+#if defined(_WIN32)
+  #include <windows.h>
+#else
+  #include <unistd.h>
+#endif
+
 namespace aiz {
+
+static constexpr const char* kAppDisplayName = "AI-Z";
 
 #if defined(_WIN32)
 namespace ncurses {
@@ -31,7 +40,7 @@ static bool hasFlag(int argc, char** argv, std::string_view flag) {
 }
 
 static void printHelp(std::ostream& os) {
-  os << "ai-z performance timelines (CPU/GPU/Disk/PCIe) and benchmarks\n"
+  os << "AI-Z performance timelines (CPU/GPU/Disk/PCIe) and benchmarks\n"
         "\n"
         "Usage:\n"
         "  ai-z [--debug] [--help|-h] [--version] [--hardware] [--bench-report] [--lang <tag>]\n"
@@ -49,6 +58,24 @@ static void printHelp(std::ostream& os) {
       "  --diag-d3dkmt  Print D3DKMT VRAM diagnostics (Windows)\n"
         "  --diag-pdh-gpu  Print PDH GPU memory diagnostics (Windows)\n"
         "  --lang TAG   UI language (en, zh-CN). Also reads AI_Z_LANG / LANG\n";
+}
+
+static void setTerminalTitle(std::string_view title) {
+#if defined(_WIN32)
+  // Best-effort; no harm if it fails.
+  std::wstring w;
+  w.reserve(title.size());
+  for (const char c : title) w.push_back(static_cast<wchar_t>(static_cast<unsigned char>(c)));
+  (void)SetConsoleTitleW(w.c_str());
+#else
+  // Only emit OSC title sequences when stdout is a TTY.
+  if (!::isatty(::fileno(stdout))) return;
+  // OSC 0 (icon + window title), BEL-terminated.
+  std::fputs("\x1b]0;", stdout);
+  std::fwrite(title.data(), 1, title.size(), stdout);
+  std::fputc('\a', stdout);
+  std::fflush(stdout);
+#endif
 }
 
 static std::optional<std::string_view> flagValue(int argc, char** argv, std::string_view flag) {
@@ -101,7 +128,7 @@ int App::run(int argc, char** argv) {
   }
 
   if (hasFlag(argc, argv, "--version")) {
-    std::cout << "ai-z " << AIZ_VERSION << "\n";
+    std::cout << kAppDisplayName << " " << AIZ_VERSION << "\n";
     std::cout << AIZ_WEBSITE << "\n";
     return 0;
   }
@@ -188,6 +215,9 @@ int App::run(int argc, char** argv) {
   }
 
   initUiLanguage(argc, argv);
+
+  // Set the terminal/window title while the TUI is running.
+  setTerminalTitle(kAppDisplayName);
 
   Config config = Config::load();
   const bool debugMode = hasFlag(argc, argv, "--debug");

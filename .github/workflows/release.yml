@@ -66,7 +66,7 @@ jobs:
           cmake -S . -B build-release -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_BINDIR=. `
-            -DCMAKE_PROJECT_VERSION="$version" `
+            -DAI_Z_VERSION_OVERRIDE="$version" `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
             -DAI_Z_ENABLE_VULKAN=ON `
             -DAI_Z_ENABLE_OPENCL=ON
@@ -193,6 +193,8 @@ jobs:
         run: |
           choco install innosetup -y
 
+          $version = "${{ env.TAG }}" -replace '^v', ''
+
           $iscc = "C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe"
           if (!(Test-Path $iscc)) {
             throw "ISCC.exe not found at $iscc"
@@ -203,7 +205,7 @@ jobs:
           $iconFile = Join-Path $PWD "packaging\\windows\\ai-z.ico"
           
           $isccArgs = @(
-            "/DAppVersion=${{ env.TAG }}"
+            "/DAppVersion=$version"
             "/DSourceDir=$sourceDir"
             "/DOutputDir=$outDir"
             "/DOutputBaseFilename=ai-z-${{ env.TAG }}-windows-x64-setup"
@@ -268,7 +270,7 @@ jobs:
           cmake -S . -B build-release -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
-            -DCMAKE_PROJECT_VERSION="$version" \
+            -DAI_Z_VERSION_OVERRIDE="$version" \
             -DBUILD_TESTING=OFF
 
       - name: Build
