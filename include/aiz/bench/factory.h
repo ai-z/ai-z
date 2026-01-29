@@ -36,4 +36,9 @@ std::unique_ptr<IBenchmark> makeCpuFp32FlopsBenchmark();
 std::unique_ptr<IBenchmark> makeOrtCpuMatMulBenchmark();
 std::unique_ptr<IBenchmark> makeOrtCpuMemoryBandwidthBenchmark();
 
+// NPU (Neural Processing Unit) benchmarks
+std::unique_ptr<IBenchmark> makeIntelNpuMatMulBenchmark();
+std::unique_ptr<IBenchmark> makeAmdNpuMatMulBenchmark();
+std::unique_ptr<IBenchmark> makeNpuInfoBenchmark();
+
 }  // namespace aiz

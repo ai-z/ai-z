@@ -5,6 +5,7 @@
 #include <aiz/metrics/intel_igcl.h>
 #include <aiz/metrics/windows_d3dkmt.h>
 #include <aiz/metrics/nvidia_nvml.h>
+#include <aiz/metrics/npu_info.h>
 #include <aiz/platform/metrics/memory.h>
 
 #define WIN32_LEAN_AND_MEAN
@@ -421,6 +422,16 @@ std::vector<std::string> HardwareInfo::toLines() const {
     for (const auto& l : perGpuLines) lines.push_back(l);
   }
 
+  // NPU (Neural Processing Unit) details after GPU.
+  const bool hasPerNpu = !perNpuLines.empty();
+  if (hasPerNpu) {
+    lines.push_back(std::string());
+    for (const auto& l : perNpuLines) lines.push_back(l);
+  } else if (!npuSummary.empty() && npuSummary != kUnknown) {
+    lines.push_back(std::string());
+    lines.push_back("NPU: " + npuSummary);
+  }
+
   if (hasPerNic || hasPerDisk) lines.push_back(std::string());
   for (const auto& l : perNicLines) lines.push_back(l);
   for (const auto& l : perDiskLines) lines.push_back(l);
@@ -472,6 +483,28 @@ HardwareInfo HardwareInfo::probe() {
       }
     }
   }
+
+  // Probe NPU (Intel/AMD Neural Processing Units)
+  auto npuResult = probeNpuDevices();
+  if (npuResult.status == NpuStatus::Available && !npuResult.devices.empty()) {
+    // Build summary from first device
+    info.npuSummary = npuResult.devices[0].name;
+    if (npuResult.devices.size() > 1) {
+      info.npuSummary += " (+" + std::to_string(npuResult.devices.size() - 1) + " more)";
+    }
+
+    // Build per-NPU lines
+    for (std::size_t i = 0; i < npuResult.devices.size(); ++i) {
+      const auto& npu = npuResult.devices[i];
+      info.perNpuLines.push_back("NPU" + std::to_string(i) + ": " + npu.name);
+      for (const auto& detail : npu.detailLines) {
+        info.perNpuLines.push_back(detail);
+      }
+    }
+  } else {
+    info.npuSummary = kUnknown;
+  }
+
   return info;
 }
 

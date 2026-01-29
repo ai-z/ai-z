@@ -141,6 +141,7 @@ set(AI_Z_COMMON_SOURCES
   src/aiz/metrics/pcie_stub.cpp
   src/aiz/metrics/ram_usage.cpp
   src/aiz/metrics/process_list.cpp
+  src/aiz/metrics/npu_info.cpp
   src/aiz/bench/bench_stub.cpp
   src/aiz/bench/report.cpp
   src/aiz/bench/pcie_bandwidth_cuda_pergpu.cpp
@@ -149,6 +150,7 @@ set(AI_Z_COMMON_SOURCES
   src/aiz/bench/pcie_bandwidth_vulkan.cpp
   src/aiz/bench/gpu_compute_vulkan.cpp
   src/aiz/bench/onnxruntime_bench.cpp
+  src/aiz/bench/npu_bench.cpp
 )
 
 if (AI_Z_PLATFORM_LINUX)
@@ -162,6 +164,8 @@ if (AI_Z_PLATFORM_LINUX)
     src/aiz/platform/linux/metrics/network_linux.cpp
     src/aiz/metrics/amd_rocm_smi.cpp
     src/aiz/metrics/linux_gpu_sysfs.cpp
+    src/aiz/metrics/npu_intel_linux.cpp
+    src/aiz/metrics/npu_amd_linux.cpp
     src/aiz/hw/hardware_info.cpp
   )
 elseif (AI_Z_PLATFORM_WINDOWS)
@@ -174,6 +178,8 @@ elseif (AI_Z_PLATFORM_WINDOWS)
     src/aiz/platform/windows/metrics/disk_windows.cpp
     src/aiz/platform/windows/metrics/network_windows.cpp
     src/aiz/metrics/windows_d3dkmt.cpp
+    src/aiz/metrics/npu_intel_windows.cpp
+    src/aiz/metrics/npu_amd_windows.cpp
     src/aiz/hw/hardware_info_windows.cpp
   )
 endif()

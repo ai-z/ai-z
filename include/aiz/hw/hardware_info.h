@@ -31,12 +31,19 @@ struct HardwareInfo {
   // These are already formatted for display.
   std::vector<std::string> perDiskLines;
 
+  // Optional extra NPU detail lines (Intel/AMD Neural Processing Units).
+  // These are already formatted for display.
+  std::vector<std::string> perNpuLines;
+
   std::string vramSummary;
   std::string cudaVersion;
   std::string nvmlVersion;
   std::string rocmVersion;
   std::string openclVersion;
   std::string vulkanVersion;
+
+  // NPU-related info
+  std::string npuSummary;  // e.g., "Intel AI Boost (Meteor Lake)" or "AMD Ryzen AI"
 
   // Preformatted for UI rendering.
   std::vector<std::string> toLines() const;
