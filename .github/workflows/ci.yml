@@ -80,9 +80,6 @@ jobs:
           ninja install
 
       - name: Configure
-        env:
-          PKG_CONFIG_PATH: /ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build
-        run: cmake --build build
+        run: |
+          export PKG_CONFIG_PATH="/ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig:$PKG_CONFIG_PATH"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release

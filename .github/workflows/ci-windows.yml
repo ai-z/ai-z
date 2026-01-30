@@ -67,9 +67,10 @@ jobs:
           pkg-config --modversion notcurses
 
       - name: Configure ai-z
-        env:
-          PKG_CONFIG_PATH: /ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig
         run: |
+          export PKG_CONFIG_PATH="/ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig:$PKG_CONFIG_PATH"
+          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
+          pkg-config --modversion notcurses
           cmake -S . -B build-ci -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_BINDIR=. \
