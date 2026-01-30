@@ -273,10 +273,20 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
 
   // If TERM is not set or is "dumb", force a reasonable default
   const char* term = std::getenv("TERM");
+  if (debugMode) {
+    std::cerr << "ai-z: TERM=" << (term ? term : "(null)") << "\n";
+  }
   if (!term || std::strcmp(term, "") == 0 || std::strcmp(term, "dumb") == 0) {
     opts.termtype = "xterm-256color";
+    if (debugMode) {
+      std::cerr << "ai-z: overriding TERM to xterm-256color\n";
+    }
   }
 #endif
+
+  if (debugMode) {
+    std::cerr << "ai-z: initializing notcurses...\n";
+  }
 
   struct notcurses* nc = notcurses_init(&opts, nullptr);
   if (!nc) {
@@ -284,7 +294,23 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
     return 1;
   }
 
+  if (debugMode) {
+    std::cerr << "ai-z: notcurses initialized successfully\n";
+  }
+
   struct ncplane* stdplane = notcurses_stdplane(nc);
+
+  // Check terminal dimensions - if 0x0, something is wrong
+  unsigned debugRows = 0, debugCols = 0;
+  ncplane_dim_yx(stdplane, &debugRows, &debugCols);
+  if (debugMode) {
+    std::cerr << "ai-z: terminal size " << debugCols << "x" << debugRows << "\n";
+  }
+  if (debugRows == 0 || debugCols == 0) {
+    std::cerr << "ai-z: error: terminal reports 0x0 size. Check TERM environment variable.\n";
+    notcurses_stop(nc);
+    return 1;
+  }
 
   TuiState state;
   state.screen = Screen::Timelines;
