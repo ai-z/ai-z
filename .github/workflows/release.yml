@@ -66,28 +66,24 @@ jobs:
           
           # Patch notcurses for Windows classic console (conhost) compatibility.
           # ConHost bleeds terminal query responses as garbage text.
-          # We skip all terminal queries on Windows by making send_initial_queries return early.
+          # We skip all terminal queries on Windows by patching the function body.
           
-          # Find and patch send_initial_queries to return 0 immediately on Windows
-          # The function signature is: static int send_initial_queries(tinfo* ti, ...
-          # We add a check at the start: #ifdef __MINGW32__ return 0; #endif
+          # The function is: static int send_initial_queries(tinfo* ti, unsigned minimal, ...)
+          # We add: if(ti->qterm == TERMINAL_MSTERMINAL) return 0;
+          # This skips all queries (DSRCPR, DIRECTIVES, etc.) that ConHost bleeds.
           
-          # Use awk for more reliable multi-line patching
-          awk '
-          /^send_initial_queries\(tinfo\* ti,/ {
-            print $0
-            getline
-            print $0
-            print "#ifdef __MINGW32__"
-            print "  return 0; // Skip all queries on Windows - ConHost bleeds them"
-            print "#endif"
-            next
-          }
-          { print }
-          ' src/lib/termdesc.c > src/lib/termdesc.c.new && mv src/lib/termdesc.c.new src/lib/termdesc.c
+          # Also skip OSC 4 palette queries in send_initial_directives
+          sed -i 's/if(qterm != TERMINAL_LINUX)/if(qterm != TERMINAL_LINUX \&\& qterm != TERMINAL_MSTERMINAL)/' src/lib/termdesc.c
           
-          # Verify patch
-          grep -A5 "send_initial_queries" src/lib/termdesc.c | head -15
+          # Add early return for MSTERMINAL in send_initial_queries
+          # Find the line "int fd = ti->ttyfd;" in send_initial_queries and add check before it
+          sed -i '/send_initial_queries.*tinfo\* ti/,/int fd = ti->ttyfd;/{
+            s/int fd = ti->ttyfd;/if(ti->qterm == TERMINAL_MSTERMINAL) return 0; \/* Skip queries for Windows *\/\n  int fd = ti->ttyfd;/
+          }' src/lib/termdesc.c
+          
+          # Verify patches
+          echo "=== Checking patches ==="
+          grep -n "TERMINAL_MSTERMINAL" src/lib/termdesc.c | head -5
           
           mkdir build && cd build
           cmake .. \

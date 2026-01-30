@@ -279,11 +279,6 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
   // some terminals don't support
   opts.flags |= NCOPTION_NO_CLEAR_BITMAPS;
 #else
-  // On Linux over SSH, the terminal may not respond to capability queries,
-  // causing notcurses to hang or display nothing. Drain any pending input
-  // to avoid blocking.
-  opts.flags |= NCOPTION_DRAIN_INPUT;
-  
   // SSH sessions may have issues with font changes and bitmap clearing
   opts.flags |= NCOPTION_NO_FONT_CHANGES;
   opts.flags |= NCOPTION_NO_CLEAR_BITMAPS;
