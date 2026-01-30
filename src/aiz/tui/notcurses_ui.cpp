@@ -249,18 +249,22 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
   // 1. Windows Terminal (WT_SESSION set) - supports most VT/OSC sequences
   // 2. Classic Console (conhost) - limited VT support, no OSC palette queries
   //
-  // The classic console will print OSC sequences as garbage text, so we use
-  // a minimal terminal type that avoids sending them.
+  // The classic console will print OSC 4 palette sequences as garbage text.
+  // We detect Windows Terminal via WT_SESSION and adjust accordingly.
   const char* wtSession = std::getenv("WT_SESSION");
   if (wtSession && wtSession[0] != '\0') {
     // Windows Terminal: full xterm-256color support
     opts.termtype = "xterm-256color";
   } else {
-    // Classic Console: use a minimal type that won't send OSC sequences
-    // "ansi" avoids palette queries while still supporting basic colors
-    opts.termtype = "ansi";
+    // Classic Console (conhost): use vt220 which has no OSC capabilities
+    // and won't attempt to set/query palette colors. This provides basic
+    // 16-color support without sending unsupported escape sequences.
+    opts.termtype = "vt220";
   }
   opts.flags |= NCOPTION_DRAIN_INPUT;
+  // Don't clear the screen with DECALN (DEC Screen Alignment Test) which
+  // some terminals don't support
+  opts.flags |= NCOPTION_NO_CLEAR_BITMAPS;
 #else
   // On Linux over SSH, the terminal may not respond to capability queries,
   // causing notcurses to hang or display nothing. Drain any pending input
