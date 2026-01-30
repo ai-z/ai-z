@@ -275,13 +275,19 @@ target_sources(ai-z PRIVATE
 )
 
 # notcurses TUI library (cross-platform)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(NOTCURSES REQUIRED notcurses>=3.0)
-
-target_include_directories(ai-z PRIVATE ${NOTCURSES_INCLUDE_DIRS})
-target_link_libraries(ai-z PRIVATE ${NOTCURSES_LIBRARIES})
-target_link_directories(ai-z PRIVATE ${NOTCURSES_LIBRARY_DIRS})
-target_compile_options(ai-z PRIVATE ${NOTCURSES_CFLAGS_OTHER})
+# Try CMake config first (works better on Windows), fall back to pkg-config
+find_package(Notcurses CONFIG QUIET)
+if (Notcurses_FOUND)
+  message(STATUS "Found notcurses via CMake config")
+  target_link_libraries(ai-z PRIVATE Notcurses::Notcurses)
+else()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(NOTCURSES REQUIRED notcurses>=3.0)
+  target_include_directories(ai-z PRIVATE ${NOTCURSES_INCLUDE_DIRS})
+  target_link_libraries(ai-z PRIVATE ${NOTCURSES_LIBRARIES})
+  target_link_directories(ai-z PRIVATE ${NOTCURSES_LIBRARY_DIRS})
+  target_compile_options(ai-z PRIVATE ${NOTCURSES_CFLAGS_OTHER})
+endif()
 
 if (AI_Z_PLATFORM_LINUX)
   target_link_libraries(ai-z PRIVATE dl)

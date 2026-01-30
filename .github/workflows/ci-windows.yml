@@ -68,9 +68,13 @@ jobs:
 
       - name: Configure ai-z
         run: |
-          export PKG_CONFIG_PATH="/ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export PKG_CONFIG_PATH="/ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig:/ucrt64/share/pkgconfig:$PKG_CONFIG_PATH"
           echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
+          # Debug: show what pkg-config files exist
+          ls /ucrt64/lib/pkgconfig/ || true
+          ls /ucrt64/libdata/pkgconfig/ || true
           pkg-config --modversion notcurses
+          pkg-config --libs notcurses || true
           cmake -S . -B build-ci -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_BINDIR=. \
