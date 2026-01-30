@@ -279,7 +279,11 @@ target_sources(ai-z PRIVATE
 find_package(Notcurses CONFIG QUIET)
 if (Notcurses_FOUND)
   message(STATUS "Found notcurses via CMake config")
-  target_link_libraries(ai-z PRIVATE Notcurses::Notcurses)
+  # notcurses CMake config sets variables with -l flags, not imported targets
+  # Use the library names directly without the -l prefix
+  target_include_directories(ai-z PRIVATE ${Notcurses_INCLUDE_DIRS})
+  target_link_directories(ai-z PRIVATE ${Notcurses_LIBRARY_DIRS})
+  target_link_libraries(ai-z PRIVATE notcurses-core notcurses)
 else()
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(NOTCURSES REQUIRED notcurses>=3.0)

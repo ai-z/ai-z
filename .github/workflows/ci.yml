@@ -82,4 +82,4 @@ jobs:
       - name: Configure
         run: |
           export PKG_CONFIG_PATH="/ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig:$PKG_CONFIG_PATH"
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/ucrt64
