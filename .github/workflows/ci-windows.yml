@@ -19,6 +19,7 @@ jobs:
     env:
       COLORTERM: truecolor
       TERM: xterm
+      PKG_CONFIG_PATH: /ucrt64/lib/pkgconfig
 
     steps:
       - name: Install MSYS2 and dependencies
@@ -60,6 +61,9 @@ jobs:
             -DBUILD_EXECUTABLES=off
           ninja
           ninja install
+          # Verify installation
+          ls -la /ucrt64/lib/pkgconfig/notcurses*.pc
+          pkg-config --modversion notcurses
 
       - name: Configure ai-z
         run: |
