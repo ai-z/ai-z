@@ -20,6 +20,8 @@
 
 #include <clocale>
 #include <cctype>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 
 #if defined(AI_Z_PLATFORM_WINDOWS)
@@ -238,6 +240,10 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
   struct notcurses_options opts{};
   opts.flags = NCOPTION_SUPPRESS_BANNERS;
 
+  // Avoid sending queries that some terminals/SSH sessions don't handle well.
+  // This prevents notcurses from blocking on terminal capability detection.
+  opts.flags |= NCOPTION_NO_WINCH_SIGHANDLER;
+
 #if defined(AI_Z_PLATFORM_WINDOWS)
   // On Windows, notcurses may emit OSC sequences (e.g., palette queries) that
   // are not properly handled by the console, resulting in garbage output.
@@ -245,6 +251,17 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
   // avoid these issues.
   opts.termtype = "xterm-256color";
   opts.flags |= NCOPTION_DRAIN_INPUT;
+#else
+  // On Linux over SSH, the terminal may not respond to capability queries,
+  // causing notcurses to hang or display nothing. Drain any pending input
+  // to avoid blocking.
+  opts.flags |= NCOPTION_DRAIN_INPUT;
+
+  // If TERM is not set or is "dumb", force a reasonable default
+  const char* term = std::getenv("TERM");
+  if (!term || std::strcmp(term, "") == 0 || std::strcmp(term, "dumb") == 0) {
+    opts.termtype = "xterm-256color";
+  }
 #endif
 
   struct notcurses* nc = notcurses_init(&opts, nullptr);
