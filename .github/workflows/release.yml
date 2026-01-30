@@ -64,26 +64,7 @@ jobs:
           git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
           cd notcurses
           
-          # Patch notcurses for Windows classic console (conhost) compatibility.
-          # ConHost bleeds terminal query responses as garbage text.
-          # We skip all terminal queries by redefining macros to empty strings.
-          
-          # 1. Make DSRCPR empty (skips cursor position query that causes ^[[1;1R)
-          sed -i 's/#define DSRCPR "\\x1b\[6n"/#define DSRCPR "" \/\/ Patched/' src/lib/termdesc.c
-          
-          # 2. Make DIRECTIVES empty (skips OSC 10/11, keyboard queries, etc.)
-          sed -i 's/#define DIRECTIVES DEFFGQ/#define DIRECTIVES ""  \/\/ Patched for Windows\n#define DIRECTIVES_ORIG DEFFGQ/' src/lib/termdesc.c
-          
-          # 3. Make IDQUERIES empty (skips TRIDEVATTR, XTVERSION, etc.)
-          sed -i 's/#define IDQUERIES TRIDEVATTR/#define IDQUERIES ""  \/\/ Patched for Windows\n#define IDQUERIES_ORIG TRIDEVATTR/' src/lib/termdesc.c
-          
-          # 4. Skip OSC 4 palette queries in send_initial_directives
-          sed -i 's/send_initial_directives(queried_terminals_e qterm, int fd){/send_initial_directives(queried_terminals_e qterm, int fd){ return 0; \/\/ Windows patch/' src/lib/termdesc.c
-          
-          # Verify patches
-          echo "=== Checking patches ==="
-          grep -n "Patched\|Windows patch" src/lib/termdesc.c | head -10
-          
+          # Build notcurses without patches - handle compatibility at runtime
           mkdir build && cd build
           cmake .. \
             -GNinja \
@@ -254,25 +235,7 @@ jobs:
           git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
           cd notcurses
           
-          # Patch notcurses to skip ALL terminal queries for maximum SSH compatibility.
-          # SSH sessions often don't respond to terminal queries, causing hangs.
-          
-          # 1. Make DSRCPR empty (skips cursor position query)
-          sed -i 's/#define DSRCPR "\\x1b\[6n"/#define DSRCPR "" \/\/ Patched/' src/lib/termdesc.c
-          
-          # 2. Make DIRECTIVES empty (skips OSC 10/11, keyboard queries, etc.)
-          sed -i 's/#define DIRECTIVES DEFFGQ/#define DIRECTIVES ""  \/\/ Patched for SSH\n#define DIRECTIVES_ORIG DEFFGQ/' src/lib/termdesc.c
-          
-          # 3. Make IDQUERIES empty (skips device attribute queries)
-          sed -i 's/#define IDQUERIES TRIDEVATTR/#define IDQUERIES ""  \/\/ Patched for SSH\n#define IDQUERIES_ORIG TRIDEVATTR/' src/lib/termdesc.c
-          
-          # 4. Make send_initial_directives return 0 to skip OSC 4 palette queries
-          sed -i 's/send_initial_directives(queried_terminals_e qterm, int fd){/send_initial_directives(queried_terminals_e qterm, int fd){ return 0; \/\/ SSH patch/' src/lib/termdesc.c
-          
-          # Verify patches
-          echo "=== Checking patches ==="
-          grep -n "SSH\|Patched" src/lib/termdesc.c | head -5
-          
+          # Build notcurses without patches - handle compatibility at runtime
           mkdir build && cd build
           cmake .. -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
