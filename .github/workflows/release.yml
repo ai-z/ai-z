@@ -64,11 +64,30 @@ jobs:
           git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
           cd notcurses
           
-          # Patch notcurses to not send OSC 4 palette queries on Windows
-          # Classic Windows console (conhost) bleeds these sequences as garbage text.
-          # The patch modifies send_initial_directives() to skip OSC 4 queries for
-          # TERMINAL_MSTERMINAL, similar to how TERMINAL_LINUX is already excluded.
-          sed -i 's/if(qterm != TERMINAL_LINUX)/if(qterm != TERMINAL_LINUX \&\& qterm != TERMINAL_MSTERMINAL)/' src/lib/termdesc.c
+          # Patch notcurses for Windows classic console (conhost) compatibility.
+          # ConHost bleeds terminal query responses as garbage text.
+          # We skip all terminal queries on Windows by making send_initial_queries return early.
+          
+          # Find and patch send_initial_queries to return 0 immediately on Windows
+          # The function signature is: static int send_initial_queries(tinfo* ti, ...
+          # We add a check at the start: #ifdef __MINGW32__ return 0; #endif
+          
+          # Use awk for more reliable multi-line patching
+          awk '
+          /^send_initial_queries\(tinfo\* ti,/ {
+            print $0
+            getline
+            print $0
+            print "#ifdef __MINGW32__"
+            print "  return 0; // Skip all queries on Windows - ConHost bleeds them"
+            print "#endif"
+            next
+          }
+          { print }
+          ' src/lib/termdesc.c > src/lib/termdesc.c.new && mv src/lib/termdesc.c.new src/lib/termdesc.c
+          
+          # Verify patch
+          grep -A5 "send_initial_queries" src/lib/termdesc.c | head -15
           
           mkdir build && cd build
           cmake .. \
