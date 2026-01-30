@@ -63,9 +63,12 @@ jobs:
           ninja install
           # Verify installation
           ls -la /ucrt64/libdata/pkgconfig/notcurses*.pc
+          export PKG_CONFIG_PATH="/ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig:$PKG_CONFIG_PATH"
           pkg-config --modversion notcurses
 
       - name: Configure ai-z
+        env:
+          PKG_CONFIG_PATH: /ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig
         run: |
           cmake -S . -B build-ci -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \

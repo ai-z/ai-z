@@ -8,9 +8,13 @@ Standards-Version: 4.6.2
 Build-Depends:
  debhelper-compat (= 13),
  cmake,
+ ninja-build,
  g++,
+ git,
  pkg-config,
- libnotcurses-dev,
+ libncurses-dev,
+ libunistring-dev,
+ libdeflate-dev,
  opencl-headers,
  ocl-icd-opencl-dev,
  libvulkan-dev
