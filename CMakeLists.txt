@@ -30,19 +30,21 @@ endif()
 
 project(ai-z VERSION ${AI_Z_VERSION} LANGUAGES C CXX)
 
-# Helpful error message for Windows users who haven't set up vcpkg
-if(WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+# Helpful error message for Windows users building outside MSYS2
+if(WIN32 AND NOT MSYS AND NOT MINGW)
   message(WARNING "
   ╔══════════════════════════════════════════════════════════════════╗
-  ║  vcpkg not detected! PDCurses is required for Windows builds.   ║
+  ║  MSYS2/MinGW environment recommended for Windows builds.        ║
   ║                                                                  ║
-  ║  Quick setup (one-time):                                         ║
-  ║    git clone https://github.com/microsoft/vcpkg.git C:\\vcpkg    ║
-  ║    C:\\vcpkg\\bootstrap-vcpkg.bat                                 ║
+  ║  notcurses (TUI library) requires MSYS2 with UCRT64 toolchain.  ║
   ║                                                                  ║
-  ║  Then rebuild with:                                              ║
-  ║    cmake -S . -B build ^                                         ║
-  ║      -DCMAKE_TOOLCHAIN_FILE=C:\\vcpkg\\scripts\\buildsystems\\vcpkg.cmake ║
+  ║  Quick setup:                                                    ║
+  ║    1. Install MSYS2 from https://www.msys2.org/                 ║
+  ║    2. Open UCRT64 terminal                                       ║
+  ║    3. pacman -S mingw-w64-ucrt-x86_64-toolchain                 ║
+  ║       mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja   ║
+  ║       mingw-w64-ucrt-x86_64-ncurses mingw-w64-ucrt-x86_64-libunistring ║
+  ║    4. Build notcurses from source, then build ai-z              ║
   ║                                                                  ║
   ║  See README.md for full Windows build instructions.             ║
   ╚══════════════════════════════════════════════════════════════════╝
@@ -256,56 +258,34 @@ if (AI_Z_PLATFORM_WINDOWS)
   endif()
 endif()
 
-# TUI sources
+# TUI sources (notcurses backend)
 target_sources(ai-z PRIVATE
-  src/aiz/tui/platform_ui_ncurses.cpp
-  src/aiz/tui/ncurses_render.cpp
+  src/aiz/tui/platform_ui_notcurses.cpp
+  src/aiz/tui/notcurses_render.cpp
+  src/aiz/tui/notcurses_input.cpp
+  src/aiz/tui/notcurses_ui.cpp
+  src/aiz/tui/tui_core.cpp
+  # Shared helpers (don't depend on ncurses directly)
   src/aiz/tui/ncurses_probe.cpp
   src/aiz/tui/ncurses_telemetry.cpp
   src/aiz/tui/ncurses_bench.cpp
   src/aiz/tui/ncurses_bench_rows.cpp
   src/aiz/tui/ncurses_sampler.cpp
   src/aiz/tui/ncurses_bootprobe.cpp
-  src/aiz/tui/ncurses_input.cpp
-  src/aiz/tui/ncurses_ui.cpp
-  src/aiz/tui/tui_core.cpp
 )
 
-if (AI_Z_PLATFORM_WINDOWS)
-  target_sources(ai-z PRIVATE src/aiz/tui/win_curses_seh.c)
-endif()
+# notcurses TUI library (cross-platform)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(NOTCURSES REQUIRED notcurses>=3.0)
+
+target_include_directories(ai-z PRIVATE ${NOTCURSES_INCLUDE_DIRS})
+target_link_libraries(ai-z PRIVATE ${NOTCURSES_LIBRARIES})
+target_link_directories(ai-z PRIVATE ${NOTCURSES_LIBRARY_DIRS})
+target_compile_options(ai-z PRIVATE ${NOTCURSES_CFLAGS_OTHER})
 
 if (AI_Z_PLATFORM_LINUX)
-  # Prefer wide-character ncurses for localized UI strings.
-  set(CURSES_NEED_NCURSES TRUE)
-  set(CURSES_NEED_WIDE TRUE)
-  find_package(Curses REQUIRED)
-
-  find_library(AI_Z_NCURSESW_LIBRARY NAMES ncursesw)
-  if (AI_Z_NCURSESW_LIBRARY)
-    target_link_libraries(ai-z PRIVATE ${AI_Z_NCURSESW_LIBRARY})
-  else()
-    target_link_libraries(ai-z PRIVATE ${CURSES_LIBRARIES})
-  endif()
-
-  target_include_directories(ai-z PRIVATE ${CURSES_INCLUDE_DIR})
   target_link_libraries(ai-z PRIVATE dl)
 elseif (AI_Z_PLATFORM_WINDOWS)
-  # PDCurses via vcpkg or manual
-  find_package(unofficial-pdcurses CONFIG QUIET)
-  if (unofficial-pdcurses_FOUND)
-    target_link_libraries(ai-z PRIVATE unofficial::pdcurses::pdcurses)
-  else()
-    find_library(PDCURSES_LIBRARY NAMES pdcurses)
-    find_path(PDCURSES_INCLUDE_DIR curses.h)
-    if (PDCURSES_LIBRARY AND PDCURSES_INCLUDE_DIR)
-      target_link_libraries(ai-z PRIVATE ${PDCURSES_LIBRARY})
-      target_include_directories(ai-z PRIVATE ${PDCURSES_INCLUDE_DIR})
-    else()
-      message(FATAL_ERROR "PDCurses not found. Install via vcpkg or set PDCURSES_LIBRARY/PDCURSES_INCLUDE_DIR")
-    endif()
-  endif()
-  target_compile_definitions(ai-z PRIVATE PDC_WIDE=1)
   target_link_libraries(ai-z PRIVATE dxgi pdh setupapi)
 endif()
 

@@ -64,7 +64,7 @@ On Intel Arc/Iris GPUs, metrics are queried via Intel Graphics Control Library (
 ### Linux
 
 ```bash
-sudo apt-get install -y build-essential cmake libncurses-dev
+sudo apt-get install -y build-essential cmake pkg-config libnotcurses-dev
 cmake -S . -B build
 cmake --build build -j
 ./build/ai-z
@@ -111,43 +111,52 @@ sudo apt install ./ai-z_0.1.0_amd64.deb
 ### Windows
 
 **Prerequisites:**
-- Visual Studio 2019 or later (with C++ desktop development workload)
+- [MSYS2](https://www.msys2.org/) with UCRT64 environment
 - CMake 3.16+
-- vcpkg (for PDCurses dependency management)
 
 **One-time setup:**
 
-```powershell
-# 1. Install vcpkg (if not already installed)
-git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-C:\vcpkg\bootstrap-vcpkg.bat
+1. Install MSYS2 from https://www.msys2.org/
+2. Open the **UCRT64** terminal (not MSYS or MINGW64)
+3. Install dependencies:
 
-# 2. (Optional) Add vcpkg to your environment for convenience
-[Environment]::SetEnvironmentVariable('VCPKG_ROOT', 'C:\vcpkg', 'User')
+```bash
+pacman -S base-devel git \
+  mingw-w64-ucrt-x86_64-cmake \
+  mingw-w64-ucrt-x86_64-ninja \
+  mingw-w64-ucrt-x86_64-toolchain \
+  mingw-w64-ucrt-x86_64-ncurses \
+  mingw-w64-ucrt-x86_64-libunistring \
+  mingw-w64-ucrt-x86_64-libdeflate \
+  mingw-w64-ucrt-x86_64-pkg-config
 ```
 
-**Build:**
+4. Build and install notcurses:
 
-```powershell
-# Configure (tells CMake to use vcpkg for dependencies)
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
+```bash
+cd /tmp
+git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
+cd notcurses && mkdir build && cd build
+cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/ucrt64 \
+  -DUSE_MULTIMEDIA=none -DUSE_PANDOC=off -DUSE_DOCTEST=off -DUSE_QRCODEGEN=off
+ninja && ninja install
+```
 
-# Build
-cmake --build build --config Release -j
+**Build ai-z:**
+
+```bash
+# In MSYS2 UCRT64 terminal, from the ai-z source directory:
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
 ```
 
 **Run:**
 
-```powershell
-.\build\Release\ai-z.exe
+```bash
+./build/ai-z.exe
 ```
 
 The TUI application will launch in your terminal. Use:
 - Arrow keys or vim-style keys to navigate
 - `q` or `Ctrl+C` to quit
 - Check the UI for additional keyboard shortcuts
-
-**Alternative:** If you have vcpkg in a different location, adjust the path accordingly:
-```powershell
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake
-```

@@ -10,7 +10,7 @@ Build-Depends:
  cmake,
  g++,
  pkg-config,
- libncursesw5-dev,
+ libnotcurses-dev,
  opencl-headers,
  ocl-icd-opencl-dev,
  libvulkan-dev
