@@ -53,6 +53,7 @@ enum class MsgId {
   ConfigReadonlySamplingRate,
   ConfigReadonlyValueColor,
   ConfigReadonlyMetricNameColor,
+  ConfigReadonlyGraphStyle,
   ConfigFooterKeys,
 
   HardwareFooterKeys,

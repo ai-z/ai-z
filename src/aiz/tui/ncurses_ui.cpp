@@ -712,7 +712,7 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
   }
   const auto smokeStart = std::chrono::steady_clock::now();
 
-  constexpr std::uint32_t kRefreshMinMs = 50;
+  constexpr std::uint32_t kRefreshMinMs = 200;
   constexpr std::uint32_t kRefreshMaxMs = 5000;
 
   auto adjustRefreshMs = [&](bool faster) {

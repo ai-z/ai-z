@@ -17,6 +17,12 @@ enum class MetricNameColor {
   Yellow,
 };
 
+enum class TimelineGraphStyle {
+  Block,   // Classic block characters (█▓)
+  Braille, // Braille dot patterns for high resolution
+  Smooth,  // Half-block characters for smooth lines
+};
+
 struct Config {
   // Display toggles
   bool showCpu = true;
@@ -63,6 +69,7 @@ struct Config {
 
   // Timeline rendering
   TimelineAgg timelineAgg = TimelineAgg::Max;
+  TimelineGraphStyle timelineGraphStyle = TimelineGraphStyle::Braille;
 
   // UI colors
   MetricNameColor metricNameColor = MetricNameColor::Cyan;

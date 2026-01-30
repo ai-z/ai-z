@@ -69,6 +69,28 @@ static const char* metricNameColorToString(MetricNameColor v) {
   }
 }
 
+static TimelineGraphStyle parseTimelineGraphStyle(std::string v, TimelineGraphStyle fallback) {
+  for (char& c : v) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  if (v == "block" || v == "blocks" || v == "classic") return TimelineGraphStyle::Block;
+  if (v == "braille" || v == "dots" || v == "highres") return TimelineGraphStyle::Braille;
+  if (v == "smooth" || v == "halfblock" || v == "half-block") return TimelineGraphStyle::Smooth;
+  return fallback;
+}
+
+static const char* timelineGraphStyleToString(TimelineGraphStyle v) {
+  switch (v) {
+    case TimelineGraphStyle::Block:
+      return "block";
+    case TimelineGraphStyle::Smooth:
+      return "smooth";
+    case TimelineGraphStyle::Braille:
+    default:
+      return "braille";
+  }
+}
+
 Config Config::load() {
   Config cfg;
   bool sawCpuHot = false;
@@ -156,6 +178,7 @@ Config Config::load() {
     else if (key == "refreshMs") cfg.refreshMs = static_cast<std::uint32_t>(std::stoul(val));
     else if (key == "timelineSamples") cfg.timelineSamples = static_cast<std::uint32_t>(std::stoul(val));
     else if (key == "timelineAgg") cfg.timelineAgg = parseTimelineAgg(val, cfg.timelineAgg);
+    else if (key == "timelineGraphStyle") cfg.timelineGraphStyle = parseTimelineGraphStyle(val, cfg.timelineGraphStyle);
     else if (key == "metricNameColor") cfg.metricNameColor = parseMetricNameColor(val, cfg.metricNameColor);
   }
 
@@ -210,6 +233,7 @@ void Config::save() const {
   out << "refreshMs=" << refreshMs << "\n";
   out << "timelineSamples=" << timelineSamples << "\n";
   out << "timelineAgg=" << timelineAggToString(timelineAgg) << "\n";
+  out << "timelineGraphStyle=" << timelineGraphStyleToString(timelineGraphStyle) << "\n";
   out << "metricNameColor=" << metricNameColorToString(metricNameColor) << "\n";
 }
 

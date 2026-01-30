@@ -390,7 +390,7 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
   }
   const auto smokeStart = std::chrono::steady_clock::now();
 
-  constexpr std::uint32_t kRefreshMinMs = 50;
+  constexpr std::uint32_t kRefreshMinMs = 200;
   constexpr std::uint32_t kRefreshMaxMs = 5000;
 
   auto adjustRefreshMs = [&](bool faster) {
@@ -406,6 +406,9 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
     cfg.refreshMs = static_cast<std::uint32_t>(next);
   };
 
+  // Frame timing to prevent busy-looping.
+  auto lastFrameTime = std::chrono::steady_clock::now();
+
   while (running) {
     bool sawResize = false;
 
@@ -415,6 +418,18 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
       if (elapsed.count() >= static_cast<long long>(*smokeMs)) {
         break;
       }
+    }
+
+    // Enforce minimum frame time to prevent CPU spinning.
+    {
+      const auto now = std::chrono::steady_clock::now();
+      const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFrameTime).count();
+      const long targetMs = static_cast<long>(cfg.refreshMs);
+      if (elapsedMs < targetMs) {
+        const long remainingMs = targetMs - elapsedMs;
+        std::this_thread::sleep_for(std::chrono::milliseconds(remainingMs));
+      }
+      lastFrameTime = std::chrono::steady_clock::now();
     }
 
     ++uiTick;
@@ -427,10 +442,12 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
         std::lock_guard<std::mutex> lk(state.benchMutex);
         runningNow = state.benchmarksRunning;
       }
-      const std::uint32_t waitMs = runningNow ? std::min<std::uint32_t>(cfg.refreshMs, 100u) : cfg.refreshMs;
+      // Use a short timeout since frame pacing is handled by the sleep above.
+      // This allows responsive input while not blocking for the full refresh interval.
+      constexpr std::uint32_t kInputPollMs = 10;
 
       // Read first input with timeout.
-      auto ev = notcurses_impl::readInput(nc, waitMs, state.screen);
+      auto ev = notcurses_impl::readInput(nc, kInputPollMs, state.screen);
 
       // Collect this and any queued events.
       std::vector<notcurses_impl::InputEvent> events;

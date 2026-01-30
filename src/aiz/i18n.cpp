@@ -81,6 +81,7 @@ constexpr std::wstring_view en(MsgId id) {
     case MsgId::ConfigReadonlySamplingRate: return L"Sampling rate";
     case MsgId::ConfigReadonlyValueColor: return L"Value color";
     case MsgId::ConfigReadonlyMetricNameColor: return L"Metric name color";
+    case MsgId::ConfigReadonlyGraphStyle: return L"Graph style";
     case MsgId::ConfigFooterKeys:
       return L"Space: toggle   Tab/Left/Right: column   S: save   R: reset   Esc: back";
 
@@ -143,6 +144,7 @@ constexpr std::wstring_view zhCN(MsgId id) {
     case MsgId::ConfigReadonlySamplingRate: return L"采样间隔";
     case MsgId::ConfigReadonlyValueColor: return L"数值颜色";
     case MsgId::ConfigReadonlyMetricNameColor: return L"指标名称颜色";
+    case MsgId::ConfigReadonlyGraphStyle: return L"图表样式";
     case MsgId::ConfigFooterKeys:
       return L"Space：切换   Tab/Left/Right：列   S：保存   R：重置   Esc：返回";
 

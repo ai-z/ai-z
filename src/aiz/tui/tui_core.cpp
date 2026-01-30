@@ -71,13 +71,17 @@ static constexpr int configToggleCount() {
 }
 
 static constexpr int configItemCount() {
-  return configToggleCount() + 4;  // read-only misc rows
+  return configToggleCount() + 5;  // read-only misc rows (samples, rate, value color, metric color, graph style)
 }
 
 static constexpr int configMetricNameColorRowIndex() {
   // Read-only misc rows follow toggles in order:
-  // Samples per bucket, Sampling rate, Value color, Metric name color.
+  // Samples per bucket, Sampling rate, Value color, Metric name color, Graph style.
   return configToggleCount() + 3;
+}
+
+static constexpr int configGraphStyleRowIndex() {
+  return configToggleCount() + 4;
 }
 
 void Frame::resize(int w, int h) {
@@ -278,6 +282,20 @@ void applyCommand(TuiState& state, Config& cfg, Command cmd) {
         cfg.metricNameColor = (cfg.metricNameColor == MetricNameColor::Cyan)
             ? MetricNameColor::Green
             : MetricNameColor::Cyan;
+      } else if (state.configSel == configGraphStyleRowIndex()) {
+        // Cycle through graph styles: Braille -> Smooth -> Block -> Braille
+        switch (cfg.timelineGraphStyle) {
+          case TimelineGraphStyle::Braille:
+            cfg.timelineGraphStyle = TimelineGraphStyle::Smooth;
+            break;
+          case TimelineGraphStyle::Smooth:
+            cfg.timelineGraphStyle = TimelineGraphStyle::Block;
+            break;
+          case TimelineGraphStyle::Block:
+          default:
+            cfg.timelineGraphStyle = TimelineGraphStyle::Braille;
+            break;
+        }
       }
       return;
     }
@@ -430,6 +448,18 @@ static std::wstring metricNameColorLabel(const Config& cfg) {
   }
 }
 
+static std::wstring graphStyleLabel(const Config& cfg) {
+  switch (cfg.timelineGraphStyle) {
+    case TimelineGraphStyle::Block:
+      return L"block";
+    case TimelineGraphStyle::Smooth:
+      return L"smooth";
+    case TimelineGraphStyle::Braille:
+    default:
+      return L"braille";
+  }
+}
+
 
 static std::string fmt0(double v) {
   char buf[64]{};
@@ -562,8 +592,9 @@ static void drawScrollingBars(
     int width,
     const Timeline& tl,
     double maxV,
-  int sampleWindow,
-    TimelineAgg agg) {
+    int sampleWindow,
+    TimelineAgg agg,
+    TimelineGraphStyle graphStyle = TimelineGraphStyle::Block) {
   if (height <= 0 || width <= 0) return;
 
   const auto vals = tl.values();
@@ -585,60 +616,34 @@ static void drawScrollingBars(
 
   if (available <= 0 || maxV <= 0.0) return;
 
-  // Map samples to full width using a stable bucket size based on capacity.
-  const int cols = colsToDraw;
-  const int totalSamples = std::max(available, std::max(sampleWindow, width));
+  // Helper to compute value for a column, handling bucketing and aggregation.
+  auto computeColumnValue = [&](int col, int cols, int totalSamples) -> double {
+    const int missing = totalSamples - available;
+    const bool needsBucketing = totalSamples > cols;
 
-  const bool needsBucketing = totalSamples > cols;
-
-  if (!needsBucketing) {
-    // 1:1 mapping for the most recent samples, right-aligned.
-    const int count = std::min(cols, available);
-    const int xOffset = cols - count;
-    const int startIdx = std::max(0, available - count);
-
-    for (int i = 0; i < count; ++i) {
-      const int x = leftX + xOffset + i;
-      if (x < 0 || x >= out.width) continue;
-
-      const int idx = startIdx + i;
-      if (idx < 0 || idx >= available) continue;
-      double v = vals[static_cast<std::size_t>(idx)];
+    if (!needsBucketing) {
+      // 1:1 mapping for the most recent samples, right-aligned.
+      const int count = std::min(cols, available);
+      const int xOffset = cols - count;
+      const int idx = col - xOffset;
+      if (idx < 0 || idx >= available) return 0.0;
+      const int sampleIdx = std::max(0, available - count) + idx;
+      if (sampleIdx < 0 || sampleIdx >= available) return 0.0;
+      double v = vals[static_cast<std::size_t>(sampleIdx)];
       if (!std::isfinite(v)) v = 0.0;
-      v = std::clamp(v, 0.0, maxV);
-
-      const int barH = static_cast<int>(std::round((v / maxV) * static_cast<double>(height)));
-      const int clampedH = std::clamp(barH, 0, height);
-
-      for (int r = 0; r < clampedH; ++r) {
-        const int y = topY + (height - 1 - r);
-        if (y < 0 || y >= out.height) continue;
-        auto& c = out.at(x, y);
-        c.ch = 0x2593;  // dark shade block
-        // Timeline bars used to render in the default terminal color (white).
-        // Keep title values highlighted, but keep the bars neutral.
-        c.style = static_cast<std::uint16_t>(Style::Default);
-      }
+      return std::clamp(v, 0.0, maxV);
     }
-    return;
-  }
 
-  const int missing = totalSamples - available;  // leading samples not yet available
-
-  for (int i = 0; i < cols; ++i) {
-    const int x = leftX + i;
-    if (x < 0 || x >= out.width) continue;
-
-    const int start = static_cast<int>((static_cast<long long>(i) * totalSamples) / cols);
-    const int end = static_cast<int>((static_cast<long long>(i + 1) * totalSamples) / cols);
-    if (start >= end) continue;
+    const int start = static_cast<int>((static_cast<long long>(col) * totalSamples) / cols);
+    const int end = static_cast<int>((static_cast<long long>(col + 1) * totalSamples) / cols);
+    if (start >= end) return 0.0;
 
     int dataStart = start - missing;
     int dataEnd = end - missing;
-    if (dataEnd <= 0 || dataStart >= available) continue;
+    if (dataEnd <= 0 || dataStart >= available) return 0.0;
     dataStart = std::max(0, dataStart);
     dataEnd = std::min(available, dataEnd);
-    if (dataStart >= dataEnd) continue;
+    if (dataStart >= dataEnd) return 0.0;
 
     double v = 0.0;
     if (agg == TimelineAgg::Avg) {
@@ -652,7 +657,6 @@ static void drawScrollingBars(
       }
       v = (n > 0) ? (sum / static_cast<double>(n)) : 0.0;
     } else {
-      // Default: max in bucket (preserves spikes).
       double maxBucket = -std::numeric_limits<double>::infinity();
       for (int j = dataStart; j < dataEnd; ++j) {
         double s = vals[static_cast<std::size_t>(j)];
@@ -662,10 +666,107 @@ static void drawScrollingBars(
       if (!std::isfinite(maxBucket)) maxBucket = 0.0;
       v = maxBucket;
     }
-
     if (!std::isfinite(v)) v = 0.0;
-    v = std::clamp(v, 0.0, maxV);
+    return std::clamp(v, 0.0, maxV);
+  };
 
+  const int cols = colsToDraw;
+  const int totalSamples = std::max(available, std::max(sampleWindow, width));
+
+  if (graphStyle == TimelineGraphStyle::Braille) {
+    // Braille characters give 2x4 resolution per cell (2 columns × 4 rows of dots).
+    // Each cell represents 2 horizontal samples and 4 vertical dots.
+    // Unicode braille: 0x2800 + dot pattern bits.
+    // Dot numbering: 
+    //   1 4
+    //   2 5
+    //   3 6
+    //   7 8
+    // Bits: 1=0x01, 2=0x02, 3=0x04, 4=0x08, 5=0x10, 6=0x20, 7=0x40, 8=0x80
+
+    // We use 1 sample per column (not 2) for simplicity and better time resolution.
+    // Each cell height represents 4 vertical dots.
+    const int dotsPerCellV = 4;
+    const int totalDotsV = height * dotsPerCellV;
+
+    for (int i = 0; i < cols; ++i) {
+      const int x = leftX + i;
+      if (x < 0 || x >= out.width) continue;
+
+      double v = computeColumnValue(i, cols, totalSamples);
+      const int dotHeight = static_cast<int>(std::round((v / maxV) * static_cast<double>(totalDotsV)));
+      const int clampedDotH = std::clamp(dotHeight, 0, totalDotsV);
+
+      // Fill from bottom up.
+      for (int cellY = 0; cellY < height; ++cellY) {
+        const int y = topY + (height - 1 - cellY);
+        if (y < 0 || y >= out.height) continue;
+
+        // Calculate which dots in this cell should be lit.
+        const int cellDotStart = cellY * dotsPerCellV;  // bottom dot index of this cell
+        const int cellDotEnd = cellDotStart + dotsPerCellV;  // exclusive
+
+        wchar_t pattern = 0x2800;  // empty braille
+        // Dot bits: row 0 (bottom) = bits 7,8; row 1 = bits 3,6; row 2 = bits 2,5; row 3 (top) = bits 1,4
+        // But we're using single-column, so only left dots: 1,2,3,7 (bits 0x01, 0x02, 0x04, 0x40)
+        const int dotBits[4] = {0x40, 0x04, 0x02, 0x01};  // from bottom to top
+
+        for (int d = 0; d < dotsPerCellV; ++d) {
+          const int dotIdx = cellDotStart + d;
+          if (dotIdx < clampedDotH) {
+            pattern |= static_cast<wchar_t>(dotBits[d]);
+          }
+        }
+
+        if (pattern != 0x2800) {
+          auto& c = out.at(x, y);
+          c.ch = pattern;
+          c.style = static_cast<std::uint16_t>(Style::Value);  // Use value color for graph
+        }
+      }
+    }
+    return;
+  }
+
+  if (graphStyle == TimelineGraphStyle::Smooth) {
+    // Use half-block characters for 2x vertical resolution.
+    // ▀ (0x2580) = upper half, ▄ (0x2584) = lower half, █ (0x2588) = full block
+    const int halfRows = height * 2;  // 2 half-rows per cell
+
+    for (int i = 0; i < cols; ++i) {
+      const int x = leftX + i;
+      if (x < 0 || x >= out.width) continue;
+
+      double v = computeColumnValue(i, cols, totalSamples);
+      const int halfH = static_cast<int>(std::round((v / maxV) * static_cast<double>(halfRows)));
+      const int clampedHalfH = std::clamp(halfH, 0, halfRows);
+
+      // Fill from bottom up in half-cell increments.
+      int remainingHalves = clampedHalfH;
+      for (int cellY = 0; cellY < height && remainingHalves > 0; ++cellY) {
+        const int y = topY + (height - 1 - cellY);
+        if (y < 0 || y >= out.height) continue;
+
+        auto& c = out.at(x, y);
+        if (remainingHalves >= 2) {
+          c.ch = 0x2588;  // full block █
+          remainingHalves -= 2;
+        } else {
+          c.ch = 0x2584;  // lower half ▄
+          remainingHalves -= 1;
+        }
+        c.style = static_cast<std::uint16_t>(Style::Default);
+      }
+    }
+    return;
+  }
+
+  // Default: Block style (original implementation)
+  for (int i = 0; i < cols; ++i) {
+    const int x = leftX + i;
+    if (x < 0 || x >= out.width) continue;
+
+    double v = computeColumnValue(i, cols, totalSamples);
     const int barH = static_cast<int>(std::round((v / maxV) * static_cast<double>(height)));
     const int clampedH = std::clamp(barH, 0, height);
 
@@ -674,8 +775,6 @@ static void drawScrollingBars(
       if (y < 0 || y >= out.height) continue;
       auto& c = out.at(x, y);
       c.ch = 0x2593;  // dark shade block
-      // Timeline bars used to render in the default terminal color (white).
-      // Keep title values highlighted, but keep the bars neutral.
       c.style = static_cast<std::uint16_t>(Style::Default);
     }
   }
@@ -1111,7 +1210,7 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
       if (graphH > 0) {
         if (p.tl) {
           const int sampleWindow = std::max(static_cast<int>(cfg.timelineSamples), out.width);
-          drawScrollingBars(out, graphTop, 0, graphH, out.width, *p.tl, p.maxV, sampleWindow, cfg.timelineAgg);
+          drawScrollingBars(out, graphTop, 0, graphH, out.width, *p.tl, p.maxV, sampleWindow, cfg.timelineAgg, cfg.timelineGraphStyle);
         } else {
           // Clear graph region even if TL is unavailable.
           for (int r = 0; r < graphH; ++r) {
@@ -1535,6 +1634,7 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
                std::to_wstring(cfg.refreshMs) + L"ms");
   drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlyValueColor)), L"white (default)");
   drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlyMetricNameColor)), metricNameColorLabel(cfg));
+  drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlyGraphStyle)), graphStyleLabel(cfg));
 
 }
 
