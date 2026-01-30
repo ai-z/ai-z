@@ -256,42 +256,34 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
   opts.flags |= NCOPTION_NO_WINCH_SIGHANDLER;
 
 #if defined(AI_Z_PLATFORM_WINDOWS)
-  // On Windows, we need to handle two different console environments:
-  // 1. Windows Terminal (WT_SESSION set) - supports most VT/OSC sequences
-  // 2. Classic Console (conhost) - limited VT support, no OSC palette queries
-  //
-  // Note: We patch notcurses in CI to not send OSC 4 palette queries on
-  // Windows (TERMINAL_MSTERMINAL) since classic conhost bleeds them as garbage.
-  // The termtype setting here is mostly ignored by Windows builds since
-  // notcurses uses Windows Console API directly, but we set it anyway.
-  const char* wtSession = std::getenv("WT_SESSION");
-  if (wtSession && wtSession[0] != '\0') {
-    // Windows Terminal: full xterm-256color support
-    opts.termtype = "xterm-256color";
-  }
-  // For classic console, notcurses uses Windows Console API directly,
-  // termtype setting has no effect. Our patched notcurses skips OSC queries.
-  
-  opts.flags |= NCOPTION_DRAIN_INPUT;
+  // On Windows classic console, notcurses queries cause garbage output.
+  // We force a simple terminal type and disable input draining so keys work.
+  opts.termtype = "xterm-256color";
   // Don't attempt to change fonts or send advanced sequences
   opts.flags |= NCOPTION_NO_FONT_CHANGES;
-  // Don't clear the screen with DECALN (DEC Screen Alignment Test) which
-  // some terminals don't support
   opts.flags |= NCOPTION_NO_CLEAR_BITMAPS;
 #else
   // SSH sessions may have issues with font changes and bitmap clearing
   opts.flags |= NCOPTION_NO_FONT_CHANGES;
   opts.flags |= NCOPTION_NO_CLEAR_BITMAPS;
 
+  // Detect SSH session
+  const bool isSSH = std::getenv("SSH_CLIENT") != nullptr || 
+                     std::getenv("SSH_TTY") != nullptr ||
+                     std::getenv("SSH_CONNECTION") != nullptr;
+
   // If TERM is not set or is "dumb", force a reasonable default
   const char* term = std::getenv("TERM");
   if (debugMode) {
     std::cerr << "ai-z: TERM=" << (term ? term : "(null)") << "\n";
+    std::cerr << "ai-z: SSH session detected: " << (isSSH ? "yes" : "no") << "\n";
   }
-  if (!term || std::strcmp(term, "") == 0 || std::strcmp(term, "dumb") == 0) {
+  
+  // Always force xterm-256color for SSH to bypass query-based detection
+  if (isSSH || !term || std::strcmp(term, "") == 0 || std::strcmp(term, "dumb") == 0) {
     opts.termtype = "xterm-256color";
     if (debugMode) {
-      std::cerr << "ai-z: overriding TERM to xterm-256color\n";
+      std::cerr << "ai-z: forcing termtype to xterm-256color\n";
     }
   }
 #endif
