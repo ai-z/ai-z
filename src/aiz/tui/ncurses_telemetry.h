@@ -2,10 +2,25 @@
 
 #include <aiz/metrics/ram_usage.h>
 
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace aiz::ncurses {
+
+#if defined(_WIN32)
+// Per-process GPU usage from Windows PDH counters (GPU Engine).
+struct WindowsGpuProcessInfo {
+  std::uint32_t pid = 0;
+  double gpuUtilPct = 0.0;
+  double vramUsedGiB = 0.0;
+};
+
+// Read per-process GPU utilization and VRAM usage from Windows PDH counters.
+// Works for all GPU vendors (Intel, AMD, NVIDIA).
+std::vector<WindowsGpuProcessInfo> readWindowsGpuProcessList();
+#endif
 
 struct GpuTelemetry {
   std::optional<double> utilPct;

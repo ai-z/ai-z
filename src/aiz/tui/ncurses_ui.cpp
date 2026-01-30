@@ -1147,6 +1147,9 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
 
       std::vector<CpuProcessInfo> cpuTop = procSampler.sampleTop(cpuCount);
       std::vector<NvmlProcessInfo> gpuTop = readNvmlProcessInfo();
+#if defined(_WIN32)
+      std::vector<ncurses::WindowsGpuProcessInfo> winGpuTop = ncurses::readWindowsGpuProcessList();
+#endif
 
       std::unordered_map<int, TuiState::ProcessEntry> merged;
       merged.reserve(cpuTop.size() + gpuTop.size());
@@ -1190,6 +1193,42 @@ int NcursesUi::run(Config& cfg, bool debugMode) {
           }
         }
       }
+
+#if defined(_WIN32)
+      // Merge Windows PDH GPU process data (for Intel/AMD/all vendors).
+      for (const auto& wgp : winGpuTop) {
+        const int pid = static_cast<int>(wgp.pid);
+        if (!isUserProcess(pid)) continue;
+        auto it = merged.find(pid);
+        if (it == merged.end()) {
+          TuiState::ProcessEntry entry;
+          entry.pid = pid;
+          if (const auto id = readProcessIdentity(pid)) {
+            entry.name = id->name;
+            entry.cmdline = id->cmdline;
+            entry.ramBytes = id->ramBytes;
+          }
+          if (wgp.gpuUtilPct > 0.0) entry.gpuUtilPct = wgp.gpuUtilPct;
+          if (wgp.vramUsedGiB > 0.0) entry.vramUsedGiB = wgp.vramUsedGiB;
+          merged.emplace(pid, std::move(entry));
+        } else {
+          // Merge: prefer NVML data if already present, else use Windows PDH data.
+          if (!it->second.gpuUtilPct && wgp.gpuUtilPct > 0.0) {
+            it->second.gpuUtilPct = wgp.gpuUtilPct;
+          }
+          if (!it->second.vramUsedGiB && wgp.vramUsedGiB > 0.0) {
+            it->second.vramUsedGiB = wgp.vramUsedGiB;
+          }
+          if (it->second.cmdline.empty()) {
+            if (const auto id = readProcessIdentity(pid)) {
+              if (!id->cmdline.empty()) it->second.cmdline = id->cmdline;
+              if (it->second.name.empty()) it->second.name = id->name;
+              if (it->second.ramBytes == 0) it->second.ramBytes = id->ramBytes;
+            }
+          }
+        }
+      }
+#endif
 
       std::vector<TuiState::ProcessEntry> rows;
       rows.reserve(merged.size());

@@ -511,8 +511,108 @@ std::optional<PdhProcMemTotals> readWindowsGpuProcessMemoryFromPdh(const std::op
   return out;
 }
 
+// Parse PID from instance name like "pid_10160_luid_0x00000000_0x0000acd3_phys_0_eng_0_engtype_3d"
+bool parsePidFromInstance(std::wstring_view inst, std::uint32_t& pid) {
+  const std::wstring_view key = L"pid_";
+  if (inst.size() < key.size() || inst.substr(0, key.size()) != key) return false;
+  std::size_t pos = key.size();
+  std::uint32_t value = 0;
+  std::size_t start = pos;
+  while (pos < inst.size() && inst[pos] >= L'0' && inst[pos] <= L'9') {
+    value = value * 10 + static_cast<std::uint32_t>(inst[pos] - L'0');
+    ++pos;
+  }
+  if (pos == start) return false;
+  pid = value;
+  return true;
+}
+
+// Internal helper: per-process GPU utilization from GPU Engine counters.
+struct ProcGpuAccum {
+  double utilPct = 0.0;
+  double vramBytes = 0.0;
+};
+
+std::unordered_map<std::uint32_t, ProcGpuAccum> readWindowsGpuProcessMapInternal() {
+  std::unordered_map<std::uint32_t, ProcGpuAccum> out;
+  if (windowsEnvFlagSet("AI_Z_DISABLE_PDH")) return out;
+
+  // Read GPU Engine utilization per process.
+  static PdhQueryState gpuEngState;
+  auto engArr = readPdhArrayDouble(gpuEngState, L"\\GPU Engine(*)\\Utilization Percentage");
+  if (engArr) {
+    for (DWORD i = 0; i < engArr->count; ++i) {
+      const auto* name = engArr->items[i].szName;
+      if (!name) continue;
+      const std::wstring_view inst(name);
+      // Filter to relevant engine types.
+      if (!(containsEngType(inst, L"engtype_3D") ||
+            containsEngType(inst, L"engtype_Copy") ||
+            containsEngType(inst, L"engtype_Compute") ||
+            containsEngType(inst, L"engtype_VideoDecode") ||
+            containsEngType(inst, L"engtype_VideoEncode") ||
+            containsEngType(inst, L"engtype_VideoProcessing"))) {
+        continue;
+      }
+      std::uint32_t pid = 0;
+      if (!parsePidFromInstance(inst, pid) || pid == 0) continue;
+      double v = engArr->isLarge ? static_cast<double>(engArr->items[i].FmtValue.largeValue) : engArr->items[i].FmtValue.doubleValue;
+      if (!std::isfinite(v)) continue;
+      out[pid].utilPct += v;
+    }
+  }
+
+  // Read GPU Process Memory (VRAM) usage per process.
+  static PdhQueryState procDedState;
+  static PdhQueryState procSharedState;
+  auto pdu = readPdhArray(procDedState, L"\\GPU Process Memory(*)\\Dedicated Usage");
+  auto psu = readPdhArray(procSharedState, L"\\GPU Process Memory(*)\\Shared Usage");
+  if (pdu) {
+    for (DWORD i = 0; i < pdu->count; ++i) {
+      const auto* name = pdu->items[i].szName;
+      if (!name) continue;
+      const std::wstring_view inst(name);
+      std::uint32_t pid = 0;
+      if (!parsePidFromInstance(inst, pid) || pid == 0) continue;
+      const double bytes = static_cast<double>(pdu->items[i].FmtValue.largeValue);
+      if (bytes > 0.0) out[pid].vramBytes += bytes;
+    }
+  }
+  if (psu) {
+    for (DWORD i = 0; i < psu->count; ++i) {
+      const auto* name = psu->items[i].szName;
+      if (!name) continue;
+      const std::wstring_view inst(name);
+      std::uint32_t pid = 0;
+      if (!parsePidFromInstance(inst, pid) || pid == 0) continue;
+      const double bytes = static_cast<double>(psu->items[i].FmtValue.largeValue);
+      if (bytes > 0.0) out[pid].vramBytes += bytes;
+    }
+  }
+
+  return out;
+}
+
 
 }  // namespace
+#endif
+
+#if defined(_WIN32)
+std::vector<WindowsGpuProcessInfo> readWindowsGpuProcessList() {
+  std::vector<WindowsGpuProcessInfo> out;
+  const auto procMap = readWindowsGpuProcessMapInternal();
+  out.reserve(procMap.size());
+  for (const auto& kv : procMap) {
+    // Skip entries with no meaningful GPU activity.
+    if (kv.second.utilPct <= 0.0 && kv.second.vramBytes <= 0.0) continue;
+    WindowsGpuProcessInfo info;
+    info.pid = kv.first;
+    info.gpuUtilPct = std::clamp(kv.second.utilPct, 0.0, 100.0);
+    info.vramUsedGiB = kv.second.vramBytes / (1024.0 * 1024.0 * 1024.0);
+    out.push_back(info);
+  }
+  return out;
+}
 #endif
 
 #if defined(_WIN32)
