@@ -292,7 +292,16 @@ if (Notcurses_FOUND)
     find_library(NOTCURSES_STATIC NAMES libnotcurses.a notcurses HINTS ${Notcurses_LIBRARY_DIRS})
     if (NOTCURSES_CORE_STATIC AND NOTCURSES_STATIC)
       message(STATUS "Using static notcurses libraries")
-      target_link_libraries(ai-z PRIVATE ${NOTCURSES_CORE_STATIC} ${NOTCURSES_STATIC})
+      # Link order matters: notcurses -> notcurses-core -> dependencies
+      # On Linux, tinfo provides terminfo functions (tigetstr, tiparm, etc.)
+      target_link_libraries(ai-z PRIVATE
+        ${NOTCURSES_STATIC}
+        ${NOTCURSES_CORE_STATIC}
+        ncurses
+        tinfo
+        unistring
+        deflate
+      )
     else()
       message(WARNING "Static notcurses libraries not found, falling back to dynamic")
       target_link_libraries(ai-z PRIVATE notcurses-core notcurses)
@@ -312,11 +321,13 @@ else()
     if (NOTCURSES_CORE_STATIC AND NOTCURSES_STATIC)
       message(STATUS "Using static notcurses libraries: ${NOTCURSES_CORE_STATIC} ${NOTCURSES_STATIC}")
       target_include_directories(ai-z PRIVATE ${NOTCURSES_INCLUDE_DIRS})
-      # Static notcurses needs its dependencies linked
+      # Static notcurses needs its dependencies linked in correct order
+      # notcurses -> notcurses-core -> ncurses/tinfo -> unistring -> deflate
       target_link_libraries(ai-z PRIVATE
         ${NOTCURSES_STATIC}
         ${NOTCURSES_CORE_STATIC}
         ncurses
+        tinfo
         unistring
         deflate
       )
