@@ -300,22 +300,34 @@ elseif (AI_Z_PLATFORM_WINDOWS)
 endif()
 
 # Enable real ONNX Runtime benchmarks when headers are available.
+# Note: ONNX Runtime C API headers use MSVC-specific calling conventions that
+# don't work with MinGW/GCC, so we skip them on MSYS2/MinGW builds.
+option(AI_Z_ENABLE_ONNXRUNTIME "Enable ONNX Runtime C API header detection" ON)
+
 set(AI_Z_ONNXRUNTIME_INCLUDE_HINTS "")
-list(APPEND AI_Z_ONNXRUNTIME_INCLUDE_HINTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime")
+if (AI_Z_ENABLE_ONNXRUNTIME AND NOT MINGW)
+  list(APPEND AI_Z_ONNXRUNTIME_INCLUDE_HINTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime")
+endif()
 if (AI_Z_ONNXRUNTIME_ROOT)
   list(APPEND AI_Z_ONNXRUNTIME_INCLUDE_HINTS "${AI_Z_ONNXRUNTIME_ROOT}/include")
 endif()
 
-find_path(AI_Z_ONNXRUNTIME_INCLUDE_DIR
-  NAMES onnxruntime_c_api.h
-  HINTS ${AI_Z_ONNXRUNTIME_INCLUDE_HINTS}
-  PATHS /usr/local/include /usr/include
-)
+if (AI_Z_ENABLE_ONNXRUNTIME AND NOT MINGW)
+  find_path(AI_Z_ONNXRUNTIME_INCLUDE_DIR
+    NAMES onnxruntime_c_api.h
+    HINTS ${AI_Z_ONNXRUNTIME_INCLUDE_HINTS}
+    PATHS /usr/local/include /usr/include
+  )
+else()
+  set(AI_Z_ONNXRUNTIME_INCLUDE_DIR "")
+endif()
 
 if (AI_Z_ONNXRUNTIME_INCLUDE_DIR)
   target_include_directories(ai-z PRIVATE ${AI_Z_ONNXRUNTIME_INCLUDE_DIR})
   target_compile_definitions(ai-z PRIVATE AI_Z_HAS_ONNXRUNTIME_C_API=1)
   message(STATUS "ONNX Runtime C API headers found: ${AI_Z_ONNXRUNTIME_INCLUDE_DIR} (real ORT benchmarks enabled)")
+elseif (MINGW)
+  message(STATUS "ONNX Runtime C API headers skipped on MinGW (MSVC-specific calling conventions not supported)")
 else()
   message(STATUS "ONNX Runtime C API headers not found; ORT benchmarks will use lightweight proxy loops. Set -DAI_Z_ONNXRUNTIME_ROOT=... to enable real ORT execution.")
 endif()
