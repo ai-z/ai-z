@@ -22,7 +22,7 @@ Build-Depends:
 
 Package: ai-z
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, libnotcurses-core3 (>= 3.0)
+Depends: ${shlibs:Depends}, ${misc:Depends}
 Recommends: ocl-icd-libopencl1, libvulkan1
 Suggests: clinfo, vulkan-tools
 Description: TUI performance timelines and benchmarks (CPU/GPU/Disk/PCIe)

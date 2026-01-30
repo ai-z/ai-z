@@ -275,6 +275,9 @@ target_sources(ai-z PRIVATE
 )
 
 # notcurses TUI library (cross-platform)
+# Static linking is preferred for distribution packages to avoid runtime dependencies
+option(AI_Z_STATIC_NOTCURSES "Link notcurses statically (recommended for distribution)" OFF)
+
 # Try CMake config first (works better on Windows), fall back to pkg-config
 find_package(Notcurses CONFIG QUIET)
 if (Notcurses_FOUND)
@@ -283,13 +286,52 @@ if (Notcurses_FOUND)
   # Use the library names directly without the -l prefix
   target_include_directories(ai-z PRIVATE ${Notcurses_INCLUDE_DIRS})
   target_link_directories(ai-z PRIVATE ${Notcurses_LIBRARY_DIRS})
-  target_link_libraries(ai-z PRIVATE notcurses-core notcurses)
+  if (AI_Z_STATIC_NOTCURSES)
+    # Look for static libraries
+    find_library(NOTCURSES_CORE_STATIC NAMES libnotcurses-core.a notcurses-core HINTS ${Notcurses_LIBRARY_DIRS})
+    find_library(NOTCURSES_STATIC NAMES libnotcurses.a notcurses HINTS ${Notcurses_LIBRARY_DIRS})
+    if (NOTCURSES_CORE_STATIC AND NOTCURSES_STATIC)
+      message(STATUS "Using static notcurses libraries")
+      target_link_libraries(ai-z PRIVATE ${NOTCURSES_CORE_STATIC} ${NOTCURSES_STATIC})
+    else()
+      message(WARNING "Static notcurses libraries not found, falling back to dynamic")
+      target_link_libraries(ai-z PRIVATE notcurses-core notcurses)
+    endif()
+  else()
+    target_link_libraries(ai-z PRIVATE notcurses-core notcurses)
+  endif()
 else()
   find_package(PkgConfig REQUIRED)
-  pkg_check_modules(NOTCURSES REQUIRED notcurses>=3.0)
-  target_include_directories(ai-z PRIVATE ${NOTCURSES_INCLUDE_DIRS})
-  target_link_libraries(ai-z PRIVATE ${NOTCURSES_LIBRARIES})
-  target_link_directories(ai-z PRIVATE ${NOTCURSES_LIBRARY_DIRS})
+  if (AI_Z_STATIC_NOTCURSES)
+    pkg_check_modules(NOTCURSES REQUIRED IMPORTED_TARGET notcurses>=3.0)
+    pkg_check_modules(NOTCURSES_CORE REQUIRED IMPORTED_TARGET notcurses-core>=3.0)
+    # Get library directory and look for static libs
+    pkg_get_variable(NOTCURSES_LIBDIR notcurses libdir)
+    find_library(NOTCURSES_CORE_STATIC NAMES libnotcurses-core.a HINTS ${NOTCURSES_LIBDIR})
+    find_library(NOTCURSES_STATIC NAMES libnotcurses.a HINTS ${NOTCURSES_LIBDIR})
+    if (NOTCURSES_CORE_STATIC AND NOTCURSES_STATIC)
+      message(STATUS "Using static notcurses libraries: ${NOTCURSES_CORE_STATIC} ${NOTCURSES_STATIC}")
+      target_include_directories(ai-z PRIVATE ${NOTCURSES_INCLUDE_DIRS})
+      # Static notcurses needs its dependencies linked
+      target_link_libraries(ai-z PRIVATE
+        ${NOTCURSES_STATIC}
+        ${NOTCURSES_CORE_STATIC}
+        ncurses
+        unistring
+        deflate
+      )
+    else()
+      message(WARNING "Static notcurses libraries not found at ${NOTCURSES_LIBDIR}, falling back to dynamic")
+      target_include_directories(ai-z PRIVATE ${NOTCURSES_INCLUDE_DIRS})
+      target_link_libraries(ai-z PRIVATE ${NOTCURSES_LIBRARIES})
+      target_link_directories(ai-z PRIVATE ${NOTCURSES_LIBRARY_DIRS})
+    endif()
+  else()
+    pkg_check_modules(NOTCURSES REQUIRED notcurses>=3.0)
+    target_include_directories(ai-z PRIVATE ${NOTCURSES_INCLUDE_DIRS})
+    target_link_libraries(ai-z PRIVATE ${NOTCURSES_LIBRARIES})
+    target_link_directories(ai-z PRIVATE ${NOTCURSES_LIBRARY_DIRS})
+  endif()
   target_compile_options(ai-z PRIVATE ${NOTCURSES_CFLAGS_OTHER})
 endif()
 

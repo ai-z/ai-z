@@ -227,7 +227,7 @@ jobs:
             libvulkan-dev \
             dpkg-dev
 
-      - name: Build notcurses from source
+      - name: Build notcurses from source (static)
         run: |
           cd /tmp
           git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
@@ -240,12 +240,14 @@ jobs:
             -DUSE_PANDOC=off \
             -DUSE_DOCTEST=off \
             -DUSE_QRCODEGEN=off \
-            -DUSE_STATIC=off \
+            -DUSE_STATIC=on \
             -DBUILD_EXECUTABLES=off
           ninja
           sudo ninja install
           sudo ldconfig
           pkg-config --modversion notcurses
+          # Verify static libraries exist
+          ls -la /usr/lib/libnotcurses*.a || ls -la /usr/lib/x86_64-linux-gnu/libnotcurses*.a || true
 
       - name: Configure
         run: |
@@ -254,7 +256,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DAI_Z_VERSION_OVERRIDE="$version" \
-            -DBUILD_TESTING=OFF
+            -DBUILD_TESTING=OFF \
+            -DAI_Z_STATIC_NOTCURSES=ON
 
       - name: Build
         run: cmake --build build-release

@@ -30,6 +30,13 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+// These may not be defined in older SDK versions.
+#ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
+#define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
+#endif
+#ifndef ENABLE_VIRTUAL_TERMINAL_INPUT
+#define ENABLE_VIRTUAL_TERMINAL_INPUT 0x0200
+#endif
 #endif
 
 #include "notcurses_render.h"
@@ -198,13 +205,47 @@ private:
 
 }  // namespace
 
+#if defined(AI_Z_PLATFORM_WINDOWS)
+// Enable Virtual Terminal Processing so that the Windows console properly
+// interprets ANSI/VT escape sequences instead of printing them as gibberish.
+static bool enableWindowsVirtualTerminal() {
+  HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+  if (hOut == INVALID_HANDLE_VALUE) return false;
+  DWORD mode = 0;
+  if (!GetConsoleMode(hOut, &mode)) return false;
+  mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+  if (!SetConsoleMode(hOut, mode)) return false;
+
+  HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+  if (hIn == INVALID_HANDLE_VALUE) return false;
+  if (!GetConsoleMode(hIn, &mode)) return false;
+  mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
+  SetConsoleMode(hIn, mode);
+  return true;
+}
+#endif
+
 int NotcursesUi::run(Config& cfg, bool debugMode) {
   // Required for correct CJK width handling and wide-character output.
   std::setlocale(LC_ALL, "");
 
+#if defined(AI_Z_PLATFORM_WINDOWS)
+  // Enable VT processing before notcurses init so escape sequences work.
+  enableWindowsVirtualTerminal();
+#endif
+
   // Initialize notcurses.
   struct notcurses_options opts{};
   opts.flags = NCOPTION_SUPPRESS_BANNERS;
+
+#if defined(AI_Z_PLATFORM_WINDOWS)
+  // On Windows, notcurses may emit OSC sequences (e.g., palette queries) that
+  // are not properly handled by the console, resulting in garbage output.
+  // Using "xterm-256color" as the terminal type and draining input helps
+  // avoid these issues.
+  opts.termtype = "xterm-256color";
+  opts.flags |= NCOPTION_DRAIN_INPUT;
+#endif
 
   struct notcurses* nc = notcurses_init(&opts, nullptr);
   if (!nc) {
