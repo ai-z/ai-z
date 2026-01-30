@@ -455,8 +455,13 @@ if (BUILD_TESTING)
 endif()
 
 # Install
+set(AI_Z_INSTALL_BINDIR "${CMAKE_INSTALL_BINDIR}")
+if (AI_Z_INSTALL_BINDIR STREQUAL "")
+  set(AI_Z_INSTALL_BINDIR "bin")
+endif()
+
 install(TARGETS ai-z
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  RUNTIME DESTINATION "${AI_Z_INSTALL_BINDIR}"
 )
 
 # Windows: best-effort staging of Intel Level Zero loader next to ai-z.exe.
@@ -486,7 +491,7 @@ if (AI_Z_PLATFORM_WINDOWS)
       VERBATIM
     )
     install(FILES "${AI_Z_ZE_LOADER_DLL}"
-      DESTINATION ${CMAKE_INSTALL_BINDIR}
+      DESTINATION "${AI_Z_INSTALL_BINDIR}"
       OPTIONAL
     )
   endif()
@@ -498,12 +503,8 @@ endif()
 if (MSVC)
   include(InstallRequiredSystemLibraries)
   if (CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
-    set(AI_Z_INSTALL_RUNTIME_DEST "${CMAKE_INSTALL_BINDIR}")
-    if (AI_Z_INSTALL_RUNTIME_DEST STREQUAL "")
-      set(AI_Z_INSTALL_RUNTIME_DEST ".")
-    endif()
     install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
-      DESTINATION "${AI_Z_INSTALL_RUNTIME_DEST}"
+      DESTINATION "${AI_Z_INSTALL_BINDIR}"
     )
   endif()
 endif()
