@@ -228,6 +228,12 @@ static bool enableWindowsVirtualTerminal() {
 #endif
 
 int NotcursesUi::run(Config& cfg, bool debugMode) {
+  // Very early debug output to confirm function entry
+  if (debugMode) {
+    std::cerr << "ai-z: entering NotcursesUi::run()\n";
+    std::cerr.flush();
+  }
+
   // Required for correct CJK width handling and wide-character output.
   std::setlocale(LC_ALL, "");
 

@@ -221,7 +221,20 @@ int App::run(int argc, char** argv) {
 
   Config config = Config::load();
   const bool debugMode = hasFlag(argc, argv, "--debug");
+  
+  if (debugMode) {
+    std::cerr << "ai-z: debug mode enabled\n";
+    std::cerr << "ai-z: creating UI...\n";
+    std::cerr.flush();
+  }
+  
   auto ui = makeUi();
+  
+  if (debugMode) {
+    std::cerr << "ai-z: UI created, calling run()...\n";
+    std::cerr.flush();
+  }
+  
   return ui->run(config, debugMode);
 }
 
