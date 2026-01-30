@@ -76,6 +76,7 @@ jobs:
             -DBUILD_EXECUTABLES=off
           ninja
           ninja install
+          export PKG_CONFIG_PATH="/ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig:$PKG_CONFIG_PATH"
           pkg-config --modversion notcurses
 
       - name: Configure
