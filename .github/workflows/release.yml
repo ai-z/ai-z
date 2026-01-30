@@ -25,165 +25,111 @@ jobs:
   build-windows:
     name: Build Windows zip
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    env:
+      COLORTERM: truecolor
+      TERM: xterm
 
     steps:
+      - name: Install MSYS2 and dependencies
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >
+            base-devel
+            git
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-ncurses
+            mingw-w64-ucrt-x86_64-libunistring
+            mingw-w64-ucrt-x86_64-libdeflate
+            mingw-w64-ucrt-x86_64-pkg-config
+            mingw-w64-ucrt-x86_64-opencl-headers
+            mingw-w64-ucrt-x86_64-opencl-icd
+            zip
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: refs/tags/${{ env.TAG }}
 
-      - name: Set up MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Set up vcpkg (manifest)
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgJsonGlob: "**/vcpkg.json"
-          vcpkgDirectory: "${{ github.workspace }}/_vcpkg"
-
-      - name: Install Vulkan SDK
-        shell: pwsh
+      - name: Build notcurses from source
         run: |
-          $vulkanVersion = "1.3.290.0"
-          $installerUrl = "https://sdk.lunarg.com/sdk/download/$vulkanVersion/windows/VulkanSDK-$vulkanVersion-Installer.exe"
-          $installerPath = "$env:TEMP\VulkanSDK-Installer.exe"
-          
-          Write-Host "Downloading Vulkan SDK $vulkanVersion..."
-          Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
-          
-          Write-Host "Installing Vulkan SDK (silent)..."
-          Start-Process -FilePath $installerPath -ArgumentList "--accept-licenses", "--default-answer", "--confirm-command", "install" -Wait -NoNewWindow
-          
-          # Set environment variables for this job
-          $sdkPath = "C:\VulkanSDK\$vulkanVersion"
-          echo "VULKAN_SDK=$sdkPath" >> $env:GITHUB_ENV
-          echo "$sdkPath\Bin" >> $env:GITHUB_PATH
+          cd /tmp
+          git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
+          cd notcurses
+          mkdir build && cd build
+          cmake .. \
+            -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/ucrt64 \
+            -DUSE_MULTIMEDIA=none \
+            -DUSE_PANDOC=off \
+            -DUSE_DOCTEST=off \
+            -DUSE_QRCODEGEN=off \
+            -DUSE_STATIC=off \
+            -DBUILD_EXECUTABLES=off
+          ninja
+          ninja install
+          pkg-config --modversion notcurses
 
       - name: Configure
-        shell: pwsh
         run: |
-          $version = "${{ env.TAG }}" -replace '^v', ''
-          cmake -S . -B build-release -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_INSTALL_BINDIR=. `
-            -DAI_Z_VERSION_OVERRIDE="$version" `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
-            -DAI_Z_ENABLE_VULKAN=ON `
+          version="${{ env.TAG }}"
+          version="${version#v}"
+          export PKG_CONFIG_PATH="/ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig:$PKG_CONFIG_PATH"
+          cmake -S . -B build-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_BINDIR=. \
+            -DCMAKE_PREFIX_PATH=/ucrt64 \
+            -DAI_Z_VERSION_OVERRIDE="$version" \
+            -DAI_Z_ENABLE_VULKAN=OFF \
             -DAI_Z_ENABLE_OPENCL=ON
 
       - name: Build
-        shell: pwsh
         run: cmake --build build-release
 
       - name: Stage portable folder
         shell: pwsh
         run: |
-          $stage = Join-Path $PWD "dist\\ai-z-${{ env.TAG }}-windows-x64"
+          $stage = Join-Path $PWD "dist\ai-z-${{ env.TAG }}-windows-x64"
           if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
           New-Item -ItemType Directory -Path $stage | Out-Null
 
-          cmake --install build-release --prefix $stage
-
-          # CMake installs executables to bin/ by default; flatten for a simpler portable layout.
-          $binDir = Join-Path $stage "bin"
-          if (Test-Path (Join-Path $binDir "ai-z.exe")) {
-            Get-ChildItem -Path $binDir -Force | ForEach-Object {
-              Move-Item -Force $_.FullName $stage
-            }
-            Remove-Item -Recurse -Force $binDir
-          }
-
-          $exe = Join-Path $stage "ai-z.exe"
+          # Copy the built executable
+          $exe = "build-release/ai-z.exe"
           if (!(Test-Path $exe)) {
             throw "Expected ai-z.exe at $exe"
           }
+          Copy-Item $exe $stage
 
-          function Get-DependentDlls([string]$binaryPath) {
-            $out = & dumpbin /DEPENDENTS $binaryPath 2>$null
-            return $out |
-              Where-Object { $_ -match '^\s{4}[^\s]+\.dll\s*$' } |
-              ForEach-Object { $_.Trim() }
-          }
-
-          # Copy non-system DLL dependencies from vcpkg next to the exe.
-          # (MSVC runtime DLLs are installed via InstallRequiredSystemLibraries in CMake.)
-          $systemDlls = @(
-            'KERNEL32.dll','USER32.dll','GDI32.dll','ADVAPI32.dll','SHELL32.dll','OLE32.dll','OLEAUT32.dll',
-            'WS2_32.dll','IPHLPAPI.dll','PSAPI.dll','NTDLL.dll','CRYPT32.dll','COMDLG32.dll','COMCTL32.dll',
-            'SHLWAPI.dll','VERSION.dll','IMM32.dll','UXTHEME.dll','DWMAPI.dll','SETUPAPI.dll','WINMM.dll'
+          # Copy required MSYS2/MinGW DLLs
+          $msys2Bin = "D:\a\_temp\msys64\ucrt64\bin"
+          $requiredDlls = @(
+            "libnotcurses.dll",
+            "libnotcurses-core.dll",
+            "libncursesw6.dll",
+            "libunistring-5.dll",
+            "libdeflate.dll",
+            "libgcc_s_seh-1.dll",
+            "libstdc++-6.dll",
+            "libwinpthread-1.dll",
+            "libiconv-2.dll",
+            "libintl-8.dll"
           )
-
-          $searchDirs = @()
-          # Manifest mode: vcpkg installs to build-dir/vcpkg_installed/{triplet}/bin
-          $manifestBinDir = Join-Path $PWD "build-release\\vcpkg_installed\\x64-windows\\bin"
-          if (Test-Path $manifestBinDir) {
-            $searchDirs += $manifestBinDir
-          }
-          if ($env:VCPKG_INSTALLED_DIR) {
-            $searchDirs += Join-Path $env:VCPKG_INSTALLED_DIR "x64-windows\\bin"
-          }
-          if ($env:VCPKG_ROOT) {
-            $searchDirs += Join-Path $env:VCPKG_ROOT "installed\\x64-windows\\bin"
-          }
-          $searchDirs = $searchDirs | Where-Object { Test-Path $_ } | Select-Object -Unique
-
-          $queue = New-Object System.Collections.Generic.Queue[string]
-          $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
-          $queue.Enqueue($exe)
-          $seen.Add($exe) | Out-Null
-
-          while ($queue.Count -gt 0) {
-            $bin = $queue.Dequeue()
-            foreach ($dll in (Get-DependentDlls $bin)) {
-              if ($systemDlls -contains $dll) { continue }
-
-              $dest = Join-Path $stage $dll
-              if (Test-Path $dest) {
-                if ($seen.Add($dest)) { $queue.Enqueue($dest) }
-                continue
-              }
-
-              $src = $searchDirs |
-                ForEach-Object { Join-Path $_ $dll } |
-                Where-Object { Test-Path $_ } |
-                Select-Object -First 1
-
-              if ($src) {
-                Write-Host "Copying DLL: $dll from $src"
-                Copy-Item -Force $src $dest
-                if ($seen.Add($dest)) { $queue.Enqueue($dest) }
-              } else {
-                Write-Host "Warning: DLL not found in search paths: $dll"
-              }
-            }
-          }
-
-          # Stage Intel oneAPI Level Zero loader if available.
-          # This DLL is typically loaded dynamically by IGCL when querying PCIe state.
-          $ze = $searchDirs |
-            ForEach-Object { Join-Path $_ "ze_loader.dll" } |
-            Where-Object { Test-Path $_ } |
-            Select-Object -First 1
-
-          if ($ze) {
-            Write-Host "Copying DLL: ze_loader.dll from $ze"
-            Copy-Item -Force $ze (Join-Path $stage "ze_loader.dll")
-          } else {
-            Write-Host "Note: ze_loader.dll not found; Intel PCIe metrics may be unavailable on some systems."
-          }
-
-          # Verify critical DLLs are present
-          $pdcursesDll = Join-Path $stage "pdcurses.dll"
-          if (!(Test-Path $pdcursesDll)) {
-            Write-Host "ERROR: pdcurses.dll was not copied to staging directory!"
-            Write-Host "Search directories were: $($searchDirs -join ', ')"
-            Write-Host "Attempting manual search..."
-            $manualFind = Get-ChildItem -Path (Join-Path $PWD "build-release") -Recurse -Filter "pdcurses.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($manualFind) {
-              Write-Host "Found pdcurses.dll at: $($manualFind.FullName)"
-              Copy-Item -Force $manualFind.FullName $pdcursesDll
+          
+          foreach ($dll in $requiredDlls) {
+            $src = Join-Path $msys2Bin $dll
+            if (Test-Path $src) {
+              Copy-Item $src $stage
+              Write-Host "Copied: $dll"
             } else {
-              throw "pdcurses.dll not found anywhere in build directory"
+              Write-Host "Warning: $dll not found at $src"
             }
           }
 
@@ -193,12 +139,12 @@ jobs:
       - name: Create zip
         shell: pwsh
         run: |
-          $zipVersioned = Join-Path $PWD "dist\\ai-z-${{ env.TAG }}-windows-x64.zip"
-          $zipLatest = Join-Path $PWD "dist\\ai-z-windows-x64.zip"
+          $zipVersioned = Join-Path $PWD "dist\ai-z-${{ env.TAG }}-windows-x64.zip"
+          $zipLatest = Join-Path $PWD "dist\ai-z-windows-x64.zip"
           if (Test-Path $zipVersioned) { Remove-Item -Force $zipVersioned }
           if (Test-Path $zipLatest) { Remove-Item -Force $zipLatest }
 
-          Compress-Archive -Path (Join-Path $PWD "dist\\ai-z-${{ env.TAG }}-windows-x64\\*") -DestinationPath $zipVersioned
+          Compress-Archive -Path (Join-Path $PWD "dist\ai-z-${{ env.TAG }}-windows-x64\*") -DestinationPath $zipVersioned
           Copy-Item -Force $zipVersioned $zipLatest
 
       - name: Build installer (Inno Setup)
@@ -209,14 +155,14 @@ jobs:
 
           $version = "${{ env.TAG }}" -replace '^v', ''
 
-          $iscc = "C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe"
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (!(Test-Path $iscc)) {
             throw "ISCC.exe not found at $iscc"
           }
 
           $outDir = Join-Path $PWD "dist"
-          $sourceDir = Join-Path $PWD "dist\\ai-z-${{ env.TAG }}-windows-x64"
-          $iconFile = Join-Path $PWD "packaging\\windows\\ai-z.ico"
+          $sourceDir = Join-Path $PWD "dist\ai-z-${{ env.TAG }}-windows-x64"
+          $iconFile = Join-Path $PWD "packaging\windows\ai-z.ico"
           
           $isccArgs = @(
             "/DAppVersion=$version"
@@ -227,7 +173,7 @@ jobs:
           if (Test-Path $iconFile) {
             $isccArgs += "/DIconFile=$iconFile"
           }
-          $isccArgs += "packaging\\windows\\ai-z.iss"
+          $isccArgs += "packaging\windows\ai-z.iss"
           
           & $iscc @isccArgs
 
@@ -272,11 +218,33 @@ jobs:
             cmake \
             ninja-build \
             pkg-config \
-            libncursesw5-dev \
+            libncurses-dev \
+            libunistring-dev \
+            libdeflate-dev \
             opencl-headers \
             ocl-icd-opencl-dev \
             libvulkan-dev \
             dpkg-dev
+
+      - name: Build notcurses from source
+        run: |
+          cd /tmp
+          git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
+          cd notcurses
+          mkdir build && cd build
+          cmake .. -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DUSE_MULTIMEDIA=none \
+            -DUSE_PANDOC=off \
+            -DUSE_DOCTEST=off \
+            -DUSE_QRCODEGEN=off \
+            -DUSE_STATIC=off \
+            -DBUILD_EXECUTABLES=off
+          ninja
+          sudo ninja install
+          sudo ldconfig
+          pkg-config --modversion notcurses
 
       - name: Configure
         run: |
