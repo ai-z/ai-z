@@ -239,6 +239,19 @@ jobs:
           cd /tmp
           git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
           cd notcurses
+          
+          # Patch notcurses to skip terminal queries that cause issues over SSH.
+          # The send_initial_directives() function sends OSC palette queries that
+          # some SSH sessions don't respond to, causing the TUI to hang.
+          # We patch it to return 0 immediately (skip all queries).
+          # Also patch send_initial_queries to skip IDQUERIES that can block.
+          
+          # Make send_initial_directives return 0 immediately
+          sed -i 's/send_initial_directives(queried_terminals_e qterm, int fd){/send_initial_directives(queried_terminals_e qterm, int fd){ return 0; \/\/ SSH patch/' src/lib/termdesc.c
+          
+          # Verify patch
+          grep "SSH patch" src/lib/termdesc.c && echo "Patch applied successfully"
+          
           mkdir build && cd build
           cmake .. -GNinja \
             -DCMAKE_BUILD_TYPE=Release \

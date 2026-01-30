@@ -245,6 +245,11 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
   // Initialize notcurses.
   struct notcurses_options opts{};
   opts.flags = NCOPTION_SUPPRESS_BANNERS;
+  
+  // Enable verbose logging in debug mode to diagnose terminal issues
+  if (debugMode) {
+    opts.loglevel = NCLOGLEVEL_DEBUG;
+  }
 
   // Avoid sending queries that some terminals/SSH sessions don't handle well.
   // This prevents notcurses from blocking on terminal capability detection.
@@ -278,6 +283,10 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
   // causing notcurses to hang or display nothing. Drain any pending input
   // to avoid blocking.
   opts.flags |= NCOPTION_DRAIN_INPUT;
+  
+  // SSH sessions may have issues with font changes and bitmap clearing
+  opts.flags |= NCOPTION_NO_FONT_CHANGES;
+  opts.flags |= NCOPTION_NO_CLEAR_BITMAPS;
 
   // If TERM is not set or is "dumb", force a reasonable default
   const char* term = std::getenv("TERM");
