@@ -2,6 +2,9 @@
 
 #if defined(_WIN32)
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
@@ -37,6 +40,18 @@ std::optional<D3dkmtVideoMemoryInfo> queryD3dkmtLocalVideoMemoryForLuid(const LU
 // Best-effort: queries adapter performance data (temp, power, fan) via D3DKMT.
 // Returns nullopt if D3DKMT is unavailable or the query fails.
 std::optional<D3dkmtAdapterPerfData> queryD3dkmtAdapterPerfData(const LUID& luid);
+
+// PCIe link info from Windows SetupAPI (works for any GPU vendor).
+struct WinPcieLinkInfo {
+  int currentLinkSpeed = 0;   // PCIe generation (1=2.5GT/s, 2=5GT/s, 3=8GT/s, 4=16GT/s, 5=32GT/s)
+  int currentLinkWidth = 0;   // Number of lanes (e.g., 16)
+  int maxLinkSpeed = 0;       // Max supported generation
+  int maxLinkWidth = 0;       // Max supported lanes
+};
+
+// Best-effort: queries PCIe link info via Windows SetupAPI for a DXGI adapter.
+// Returns nullopt if the query fails or info is unavailable.
+std::optional<WinPcieLinkInfo> queryWinPcieLinkInfo(const LUID& luid);
 
 // Diagnostics: list adapters and their D3DKMT local memory stats.
 std::string d3dkmtDiagnostics();

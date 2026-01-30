@@ -101,6 +101,11 @@ jobs:
           )
 
           $searchDirs = @()
+          # Manifest mode: vcpkg installs to build-dir/vcpkg_installed/{triplet}/bin
+          $manifestBinDir = Join-Path $PWD "build-ci\vcpkg_installed\x64-windows\bin"
+          if (Test-Path $manifestBinDir) {
+            $searchDirs += $manifestBinDir
+          }
           if ($env:VCPKG_INSTALLED_DIR) {
             $searchDirs += Join-Path $env:VCPKG_INSTALLED_DIR "x64-windows\bin"
           }
@@ -135,6 +140,19 @@ jobs:
                 if ($seen.Add($dest)) { $queue.Enqueue($dest) }
               }
             }
+          }
+
+          # Stage Intel oneAPI Level Zero loader if available.
+          # This DLL is typically loaded dynamically by IGCL when querying PCIe state.
+          $ze = $searchDirs |
+            ForEach-Object { Join-Path $_ "ze_loader.dll" } |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1
+
+          if ($ze) {
+            Copy-Item -Force $ze (Join-Path $stage "ze_loader.dll")
+          } else {
+            Write-Host "Note: ze_loader.dll not found; Intel PCIe metrics may be unavailable on some systems."
           }
 
           $zip = Join-Path $PWD "ai-z-windows-${{ github.sha }}.zip"

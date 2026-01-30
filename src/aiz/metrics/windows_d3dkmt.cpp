@@ -5,10 +5,27 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <dxgi1_4.h>
+// initguid.h must be included BEFORE devpkey.h to define (not just declare) the GUIDs
+#include <initguid.h>
+#include <devpkey.h>
+#include <setupapi.h>
+#include <devguid.h>
 
 #include <cstdint>
 #include <mutex>
 #include <sstream>
+
+// PCIe device property keys (these are in devpkey.h but we need initguid.h before it)
+// GUID: {3AB22E31-8264-4B4E-9AF5-A8D2D8E33E62}
+// PID 9 = CurrentLinkSpeed, 10 = CurrentLinkWidth, 11 = MaxLinkSpeed, 12 = MaxLinkWidth
+static const DEVPROPKEY AI_Z_DEVPKEY_PciDevice_CurrentLinkSpeed = {
+    {0x3ab22e31, 0x8264, 0x4b4e, {0x9a, 0xf5, 0xa8, 0xd2, 0xd8, 0xe3, 0x3e, 0x62}}, 9};
+static const DEVPROPKEY AI_Z_DEVPKEY_PciDevice_CurrentLinkWidth = {
+    {0x3ab22e31, 0x8264, 0x4b4e, {0x9a, 0xf5, 0xa8, 0xd2, 0xd8, 0xe3, 0x3e, 0x62}}, 10};
+static const DEVPROPKEY AI_Z_DEVPKEY_PciDevice_MaxLinkSpeed = {
+    {0x3ab22e31, 0x8264, 0x4b4e, {0x9a, 0xf5, 0xa8, 0xd2, 0xd8, 0xe3, 0x3e, 0x62}}, 11};
+static const DEVPROPKEY AI_Z_DEVPKEY_PciDevice_MaxLinkWidth = {
+    {0x3ab22e31, 0x8264, 0x4b4e, {0x9a, 0xf5, 0xa8, 0xd2, 0xd8, 0xe3, 0x3e, 0x62}}, 12};
 
 namespace aiz {
 
@@ -194,6 +211,110 @@ std::optional<D3dkmtAdapterPerfData> queryD3dkmtAdapterPerfData(const LUID& luid
   return out;
 }
 
+std::optional<WinPcieLinkInfo> queryWinPcieLinkInfo(const LUID& luid) {
+  // First get the PCI device path from DXGI adapter
+  IDXGIFactory1* factory = nullptr;
+  if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) {
+    return std::nullopt;
+  }
+
+  std::wstring deviceInstanceId;
+  for (UINT i = 0; ; ++i) {
+    IDXGIAdapter1* adapter = nullptr;
+    if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND) break;
+    DXGI_ADAPTER_DESC1 desc{};
+    if (SUCCEEDED(adapter->GetDesc1(&desc))) {
+      if (desc.AdapterLuid.LowPart == luid.LowPart && desc.AdapterLuid.HighPart == luid.HighPart) {
+        // Found matching adapter. Use vendor/device ID to find PCI device.
+        adapter->Release();
+        factory->Release();
+
+        // Enumerate display adapters via SetupAPI
+        HDEVINFO devInfo = SetupDiGetClassDevsW(&GUID_DEVCLASS_DISPLAY, nullptr, nullptr,
+                                                 DIGCF_PRESENT);
+        if (devInfo == INVALID_HANDLE_VALUE) return std::nullopt;
+
+        SP_DEVINFO_DATA devInfoData{};
+        devInfoData.cbSize = sizeof(devInfoData);
+
+        for (DWORD j = 0; SetupDiEnumDeviceInfo(devInfo, j, &devInfoData); ++j) {
+          // Check if vendor/device IDs match
+          DWORD hardwareIds[2] = {0};
+          DEVPROPTYPE propType = 0;
+
+          // Get VendorID and DeviceID
+          DWORD vendorId = 0, deviceId = 0;
+          if (SetupDiGetDevicePropertyW(devInfo, &devInfoData, &DEVPKEY_Device_Address,
+                                        &propType, reinterpret_cast<PBYTE>(&hardwareIds),
+                                        sizeof(hardwareIds), nullptr, 0)) {
+            // DEVPKEY_Device_Address contains bus/device/function, not vendor/device.
+            // Try matching via DEVPKEY_Device_HardwareIds instead.
+          }
+
+          // Get Hardware ID string to match vendor/device
+          wchar_t hwIdBuf[512] = {0};
+          if (SetupDiGetDevicePropertyW(devInfo, &devInfoData, &DEVPKEY_Device_HardwareIds,
+                                        &propType, reinterpret_cast<PBYTE>(hwIdBuf),
+                                        sizeof(hwIdBuf), nullptr, 0)) {
+            // Parse VEN_XXXX&DEV_XXXX from hwIdBuf
+            std::wstring hwId(hwIdBuf);
+            wchar_t searchVen[32], searchDev[32];
+            swprintf_s(searchVen, L"VEN_%04X", desc.VendorId);
+            swprintf_s(searchDev, L"DEV_%04X", desc.DeviceId);
+            if (hwId.find(searchVen) != std::wstring::npos &&
+                hwId.find(searchDev) != std::wstring::npos) {
+              // Found matching device. Query PCIe link properties.
+              WinPcieLinkInfo linkInfo{};
+              DWORD val = 0;
+              DWORD size = sizeof(val);
+
+              // AI_Z_DEVPKEY_PciDevice_CurrentLinkSpeed: 1=Gen1, 2=Gen2, 3=Gen3, 4=Gen4, 5=Gen5
+              if (SetupDiGetDevicePropertyW(devInfo, &devInfoData,
+                                            &AI_Z_DEVPKEY_PciDevice_CurrentLinkSpeed, &propType,
+                                            reinterpret_cast<PBYTE>(&val), size, nullptr, 0)) {
+                linkInfo.currentLinkSpeed = static_cast<int>(val);
+              }
+
+              if (SetupDiGetDevicePropertyW(devInfo, &devInfoData,
+                                            &AI_Z_DEVPKEY_PciDevice_CurrentLinkWidth, &propType,
+                                            reinterpret_cast<PBYTE>(&val), size, nullptr, 0)) {
+                linkInfo.currentLinkWidth = static_cast<int>(val);
+              }
+
+              if (SetupDiGetDevicePropertyW(devInfo, &devInfoData,
+                                            &AI_Z_DEVPKEY_PciDevice_MaxLinkSpeed, &propType,
+                                            reinterpret_cast<PBYTE>(&val), size, nullptr, 0)) {
+                linkInfo.maxLinkSpeed = static_cast<int>(val);
+              }
+
+              if (SetupDiGetDevicePropertyW(devInfo, &devInfoData,
+                                            &AI_Z_DEVPKEY_PciDevice_MaxLinkWidth, &propType,
+                                            reinterpret_cast<PBYTE>(&val), size, nullptr, 0)) {
+                linkInfo.maxLinkWidth = static_cast<int>(val);
+              }
+
+              SetupDiDestroyDeviceInfoList(devInfo);
+
+              // Check if we got valid data (values >0)
+              if (linkInfo.currentLinkSpeed > 0 || linkInfo.maxLinkSpeed > 0) {
+                return linkInfo;
+              }
+              return std::nullopt;
+            }
+          }
+        }
+
+        SetupDiDestroyDeviceInfoList(devInfo);
+        return std::nullopt;
+      }
+    }
+    adapter->Release();
+  }
+
+  factory->Release();
+  return std::nullopt;
+}
+
 namespace {
 
 static std::string wideToUtf8(const wchar_t* s) {
@@ -261,6 +382,13 @@ std::string d3dkmtDiagnostics() {
               << " pcie_bw: " << (perf->pcieBandwidthBytes / 1048576) << " MB\n";
         } else {
           oss << "    d3dkmt perf: unavailable\n";
+        }
+        // PCIe link info via SetupAPI
+        if (const auto pcie = queryWinPcieLinkInfo(desc.AdapterLuid)) {
+          oss << "    pcie link: Gen" << pcie->currentLinkSpeed << " x" << pcie->currentLinkWidth
+              << " (max: Gen" << pcie->maxLinkSpeed << " x" << pcie->maxLinkWidth << ")\n";
+        } else {
+          oss << "    pcie link: unavailable\n";
         }
       }
     }

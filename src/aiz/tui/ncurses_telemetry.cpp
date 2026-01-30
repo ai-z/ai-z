@@ -704,12 +704,23 @@ std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index) {
       if (igcl->powerW) t.watts = *igcl->powerW;
       if (igcl->gpuClockMHz) t.gpuClockMHz = *igcl->gpuClockMHz;
       if (igcl->memClockMHz) t.memClockMHz = *igcl->memClockMHz;
-      // PCIe link info.
+      // PCIe link info from IGCL.
       if (igcl->pcieLinkWidth && *igcl->pcieLinkWidth > 0) {
         t.pcieLinkWidth = static_cast<unsigned int>(*igcl->pcieLinkWidth);
       }
       if (igcl->pcieLinkGen && *igcl->pcieLinkGen > 0) {
         t.pcieLinkGen = static_cast<unsigned int>(*igcl->pcieLinkGen);
+      }
+      // Fallback: use Windows SetupAPI for PCIe link if IGCL didn't provide it.
+      // Only use if values look plausible (Gen2+ and at least x4 lanes for discrete GPUs).
+      if (!t.pcieLinkWidth && memInfo) {
+        if (const auto pcie = queryWinPcieLinkInfo(memInfo->luid)) {
+          // Intel discrete GPUs should be at least PCIe 3.0 x8 - filter out implausible values
+          if (pcie->currentLinkWidth >= 4 && pcie->currentLinkSpeed >= 2) {
+            t.pcieLinkWidth = static_cast<unsigned int>(pcie->currentLinkWidth);
+            t.pcieLinkGen = static_cast<unsigned int>(pcie->currentLinkSpeed);
+          }
+        }
       }
       // Throttle state as pstate for Intel GPUs.
       if (!igcl->throttleState.empty()) {
@@ -750,15 +761,19 @@ std::optional<GpuTelemetry> readGpuTelemetryPreferNvml(unsigned int index) {
     }
   }
 
-  // D3DKMT fallback for performance data (temp, power, fan) - works for any vendor.
+  // D3DKMT fallback for performance data (temp, power, fan, memory clock) - works for any vendor.
   if (memInfo) {
-    if (!t.tempC || !t.watts) {
+    if (!t.tempC || !t.watts || !t.memClockMHz) {
       if (const auto perf = queryD3dkmtAdapterPerfData(memInfo->luid)) {
         if (!t.tempC && perf->temperatureC > 0.0) {
           t.tempC = perf->temperatureC;
         }
         if (!t.watts && perf->powerWatts && *perf->powerWatts > 0.0) {
           t.watts = *perf->powerWatts;
+        }
+        // Memory clock from D3DKMT (Hz to MHz conversion)
+        if (!t.memClockMHz && perf->memoryFrequencyHz > 0) {
+          t.memClockMHz = static_cast<unsigned int>(perf->memoryFrequencyHz / 1000000);
         }
         if (t.source.empty()) t.source = "d3dkmt";
         any = true;

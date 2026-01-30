@@ -38,6 +38,27 @@ Direct downloads (always point at the latest release):
 - Portable: unzip and run `ai-z.exe`
 - Installer: run `ai-z-windows-x64-setup.exe`
 
+#### Intel GPU metrics
+
+On Intel Arc/Iris GPUs, metrics are queried via Intel Graphics Control Library (IGCL) and Windows D3DKMT API:
+
+**Supported metrics:**
+- Temperature (°C)
+- Power draw (W) - via D3DKMT
+- GPU utilization (%)
+- GPU/Memory clock speed (MHz)
+- Fan speed (RPM)
+- VRAM temperature (°C)
+- Throttle state (power/thermal limiting)
+
+**Known limitations:**
+- **PCIe link info**: The IGCL `ctlPciGetState()` API may return error `0x40000019` on some systems. This is a [known Intel issue](https://github.com/intel/drivers.gpu.control-library/issues/115). The app attempts to fall back to Windows SetupAPI, but some Intel drivers don't report accurate PCIe link speed/width.
+- If you see `PCIE:--` in the UI, this is expected on affected systems.
+
+**Troubleshooting:**
+1. Update to the latest Intel GPU driver.
+2. Run `ai-z.exe --diag-igcl-full` to verify IGCL is working and see available metrics.
+
 ## Build
 
 ### Linux

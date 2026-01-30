@@ -1,4 +1,5 @@
 #include <aiz/metrics/intel_igcl.h>
+#include <aiz/metrics/windows_d3dkmt.h>
 
 #if defined(_WIN32)
 

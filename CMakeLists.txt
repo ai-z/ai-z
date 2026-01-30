@@ -459,6 +459,39 @@ install(TARGETS ai-z
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
+# Windows: best-effort staging of Intel Level Zero loader next to ai-z.exe.
+# IGCL loads ze_loader.dll dynamically (not a link-time dependency), but having it
+# app-local improves portability and enables Intel PCIe telemetry on systems that
+# don't already have the loader on PATH.
+if (AI_Z_PLATFORM_WINDOWS)
+  set(AI_Z_ZE_LOADER_HINTS
+    "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin"
+    "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/bin"
+  )
+  if (DEFINED ENV{VCPKG_INSTALLED_DIR})
+    list(APPEND AI_Z_ZE_LOADER_HINTS "$ENV{VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+    list(APPEND AI_Z_ZE_LOADER_HINTS "$ENV{VCPKG_INSTALLED_DIR}/x64-windows/bin")
+  endif()
+
+  find_file(AI_Z_ZE_LOADER_DLL
+    NAMES ze_loader.dll
+    HINTS ${AI_Z_ZE_LOADER_HINTS}
+  )
+
+  if (AI_Z_ZE_LOADER_DLL)
+    add_custom_command(TARGET ai-z POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${AI_Z_ZE_LOADER_DLL}"
+        "$<TARGET_FILE_DIR:ai-z>/ze_loader.dll"
+      VERBATIM
+    )
+    install(FILES "${AI_Z_ZE_LOADER_DLL}"
+      DESTINATION ${CMAKE_INSTALL_BINDIR}
+      OPTIONAL
+    )
+  endif()
+endif()
+
 # Windows: bundle MSVC runtime DLLs app-locally when installing.
 # This makes portable zips/installers runnable on clean machines without requiring
 # the Visual C++ Redistributable to be preinstalled.
