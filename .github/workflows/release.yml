@@ -63,6 +63,13 @@ jobs:
           cd /tmp
           git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
           cd notcurses
+          
+          # Patch notcurses to not send OSC 4 palette queries on Windows
+          # Classic Windows console (conhost) bleeds these sequences as garbage text.
+          # The patch modifies send_initial_directives() to skip OSC 4 queries for
+          # TERMINAL_MSTERMINAL, similar to how TERMINAL_LINUX is already excluded.
+          sed -i 's/if(qterm != TERMINAL_LINUX)/if(qterm != TERMINAL_LINUX \&\& qterm != TERMINAL_MSTERMINAL)/' src/lib/termdesc.c
+          
           mkdir build && cd build
           cmake .. \
             -GNinja \

@@ -249,19 +249,21 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
   // 1. Windows Terminal (WT_SESSION set) - supports most VT/OSC sequences
   // 2. Classic Console (conhost) - limited VT support, no OSC palette queries
   //
-  // The classic console will print OSC 4 palette sequences as garbage text.
-  // We detect Windows Terminal via WT_SESSION and adjust accordingly.
+  // Note: We patch notcurses in CI to not send OSC 4 palette queries on
+  // Windows (TERMINAL_MSTERMINAL) since classic conhost bleeds them as garbage.
+  // The termtype setting here is mostly ignored by Windows builds since
+  // notcurses uses Windows Console API directly, but we set it anyway.
   const char* wtSession = std::getenv("WT_SESSION");
   if (wtSession && wtSession[0] != '\0') {
     // Windows Terminal: full xterm-256color support
     opts.termtype = "xterm-256color";
-  } else {
-    // Classic Console (conhost): use vt220 which has no OSC capabilities
-    // and won't attempt to set/query palette colors. This provides basic
-    // 16-color support without sending unsupported escape sequences.
-    opts.termtype = "vt220";
   }
+  // For classic console, notcurses uses Windows Console API directly,
+  // termtype setting has no effect. Our patched notcurses skips OSC queries.
+  
   opts.flags |= NCOPTION_DRAIN_INPUT;
+  // Don't attempt to change fonts or send advanced sequences
+  opts.flags |= NCOPTION_NO_FONT_CHANGES;
   // Don't clear the screen with DECALN (DEC Screen Alignment Test) which
   // some terminals don't support
   opts.flags |= NCOPTION_NO_CLEAR_BITMAPS;
