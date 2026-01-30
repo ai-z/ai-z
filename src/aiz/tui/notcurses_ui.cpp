@@ -245,11 +245,21 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
   opts.flags |= NCOPTION_NO_WINCH_SIGHANDLER;
 
 #if defined(AI_Z_PLATFORM_WINDOWS)
-  // On Windows, notcurses may emit OSC sequences (e.g., palette queries) that
-  // are not properly handled by the console, resulting in garbage output.
-  // Using "xterm-256color" as the terminal type and draining input helps
-  // avoid these issues.
-  opts.termtype = "xterm-256color";
+  // On Windows, we need to handle two different console environments:
+  // 1. Windows Terminal (WT_SESSION set) - supports most VT/OSC sequences
+  // 2. Classic Console (conhost) - limited VT support, no OSC palette queries
+  //
+  // The classic console will print OSC sequences as garbage text, so we use
+  // a minimal terminal type that avoids sending them.
+  const char* wtSession = std::getenv("WT_SESSION");
+  if (wtSession && wtSession[0] != '\0') {
+    // Windows Terminal: full xterm-256color support
+    opts.termtype = "xterm-256color";
+  } else {
+    // Classic Console: use a minimal type that won't send OSC sequences
+    // "ansi" avoids palette queries while still supporting basic colors
+    opts.termtype = "ansi";
+  }
   opts.flags |= NCOPTION_DRAIN_INPUT;
 #else
   // On Linux over SSH, the terminal may not respond to capability queries,
