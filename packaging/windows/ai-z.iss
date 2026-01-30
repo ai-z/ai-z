@@ -54,8 +54,23 @@ Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "A
 Source: "{#SourceDir}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\\{#AppDisplayName}"; Filename: "{app}\\{#AppExeName}"
-Name: "{autodesktop}\\{#AppDisplayName}"; Filename: "{app}\\{#AppExeName}"; Tasks: desktopicon
+; Use Windows Terminal (wt.exe) to launch ai-z for better terminal support
+; Falls back to direct execution if wt.exe is not found
+Name: "{autoprograms}\\{#AppDisplayName}"; Filename: "{localappdata}\\Microsoft\\WindowsApps\\wt.exe"; Parameters: "-d ""{app}"" -- ""{app}\\{#AppExeName}"""; Check: WindowsTerminalExists
+Name: "{autoprograms}\\{#AppDisplayName}"; Filename: "{app}\\{#AppExeName}"; Check: not WindowsTerminalExists
+Name: "{autodesktop}\\{#AppDisplayName}"; Filename: "{localappdata}\\Microsoft\\WindowsApps\\wt.exe"; Parameters: "-d ""{app}"" -- ""{app}\\{#AppExeName}"""; Tasks: desktopicon; Check: WindowsTerminalExists
+Name: "{autodesktop}\\{#AppDisplayName}"; Filename: "{app}\\{#AppExeName}"; Tasks: desktopicon; Check: not WindowsTerminalExists
 
 [Run]
-Filename: "{app}\\{#AppExeName}"; Description: "Run {#AppDisplayName}"; Flags: nowait postinstall skipifsilent
+; Post-install run: prefer Windows Terminal if available
+Filename: "{localappdata}\\Microsoft\\WindowsApps\\wt.exe"; Parameters: "-d ""{app}"" -- ""{app}\\{#AppExeName}"""; Description: "Run {#AppDisplayName}"; Flags: nowait postinstall skipifsilent; Check: WindowsTerminalExists
+Filename: "{app}\\{#AppExeName}"; Description: "Run {#AppDisplayName}"; Flags: nowait postinstall skipifsilent; Check: not WindowsTerminalExists
+
+[Code]
+function WindowsTerminalExists: Boolean;
+var
+  WTPath: String;
+begin
+  WTPath := ExpandConstant('{localappdata}\Microsoft\WindowsApps\wt.exe');
+  Result := FileExists(WTPath);
+end;
