@@ -1,7 +1,7 @@
 {
   "name": "ai-z",
   "version": "0.1.0",
-  "builtin-baseline": "66c0373dc7fca549e5803087b9487edfe3aca0a1",
+  "builtin-baseline": "6d7bf7ef2193e2d1c5798a5ff8811d533104c861",
   "dependencies": [
     "ftxui",
     {
