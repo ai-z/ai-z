@@ -103,8 +103,9 @@ configure_file(
 
 include(CTest)
 
-set(AI_Z_COMMON_SOURCES
-  src/main.cpp
+# Core library sources (shared between CLI app and Python bindings)
+# Excludes main.cpp and TUI sources which are app-specific
+set(AI_Z_CORE_SOURCES
   src/aiz/app.cpp
   src/aiz/i18n.cpp
   src/aiz/config/config.cpp
@@ -134,6 +135,7 @@ set(AI_Z_COMMON_SOURCES
   src/aiz/bench/gpu_compute_vulkan.cpp
   src/aiz/bench/onnxruntime_bench.cpp
   src/aiz/bench/npu_bench.cpp
+  src/aiz/metrics/gpu_sampler.cpp
 )
 
 if (AI_Z_PLATFORM_LINUX)
@@ -167,7 +169,38 @@ elseif (AI_Z_PLATFORM_WINDOWS)
   )
 endif()
 
-add_executable(ai-z ${AI_Z_COMMON_SOURCES} ${AI_Z_PLATFORM_SOURCES})
+# Build the core metrics library (shared with Python bindings)
+add_library(aiz-core STATIC ${AI_Z_CORE_SOURCES} ${AI_Z_PLATFORM_SOURCES})
+set_target_properties(aiz-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(aiz-core PUBLIC include)
+target_include_directories(aiz-core PUBLIC ${AI_Z_GENERATED_DIR})
+
+# Platform compile definitions for core library
+target_compile_definitions(aiz-core PUBLIC
+  $<$<BOOL:${AI_Z_PLATFORM_LINUX}>:AI_Z_PLATFORM_LINUX>
+  $<$<BOOL:${AI_Z_PLATFORM_WINDOWS}>:AI_Z_PLATFORM_WINDOWS>
+)
+
+target_compile_definitions(aiz-core PUBLIC
+  $<$<BOOL:${AI_Z_ENABLE_NVML}>:AI_Z_ENABLE_NVML>
+  $<$<BOOL:${AI_Z_ENABLE_CUDA}>:AI_Z_ENABLE_CUDA>
+  $<$<BOOL:${AI_Z_ENABLE_OPENCL}>:AI_Z_ENABLE_OPENCL>
+  $<$<BOOL:${AI_Z_ENABLE_VULKAN}>:AI_Z_ENABLE_VULKAN>
+  $<$<BOOL:${AI_Z_ENABLE_HIP}>:AI_Z_ENABLE_HIP>
+  $<$<BOOL:${AI_Z_ENABLE_LIBTORCH}>:AI_Z_ENABLE_LIBTORCH>
+  $<$<BOOL:${AI_Z_ENABLE_LEVEL_ZERO}>:AI_Z_ENABLE_LEVEL_ZERO>
+  $<$<BOOL:${AI_Z_ENABLE_SYCL}>:AI_Z_ENABLE_SYCL>
+)
+
+if (AI_Z_PLATFORM_LINUX)
+  target_link_libraries(aiz-core PUBLIC dl)
+elseif (AI_Z_PLATFORM_WINDOWS)
+  target_link_libraries(aiz-core PUBLIC dxgi pdh setupapi iphlpapi psapi advapi32 shell32 ole32)
+endif()
+
+# Build the CLI executable
+add_executable(ai-z src/main.cpp)
+target_link_libraries(ai-z PRIVATE aiz-core)
 
 # Windows: embed application icon and version info
 if (AI_Z_PLATFORM_WINDOWS)
@@ -176,9 +209,6 @@ if (AI_Z_PLATFORM_WINDOWS)
     target_sources(ai-z PRIVATE ${AI_Z_RC_FILE})
   endif()
 endif()
-
-target_include_directories(ai-z PRIVATE include)
-target_include_directories(ai-z PRIVATE ${AI_Z_GENERATED_DIR})
 
 if (AI_Z_PLATFORM_WINDOWS)
   set(AI_Z_ADLX_INCLUDE_HINTS "${CMAKE_CURRENT_SOURCE_DIR}/../ADLX/SDK/Include")
@@ -193,11 +223,11 @@ if (AI_Z_PLATFORM_WINDOWS)
   )
 
   if (AI_Z_ADLX_INCLUDE_DIR)
-    target_include_directories(ai-z PRIVATE ${AI_Z_ADLX_INCLUDE_DIR})
-    target_compile_definitions(ai-z PRIVATE AI_Z_HAS_ADLX_HEADERS=1)
+    target_include_directories(aiz-core PUBLIC ${AI_Z_ADLX_INCLUDE_DIR})
+    target_compile_definitions(aiz-core PUBLIC AI_Z_HAS_ADLX_HEADERS=1)
     message(STATUS "ADLX headers found: ${AI_Z_ADLX_INCLUDE_DIR} (ADLX integration enabled)")
   else()
-    target_compile_definitions(ai-z PRIVATE AI_Z_HAS_ADLX_HEADERS=0)
+    target_compile_definitions(aiz-core PUBLIC AI_Z_HAS_ADLX_HEADERS=0)
     message(STATUS "ADLX headers not found; AMD ADLX telemetry disabled. To enable, set -DAI_Z_ADLX_ROOT=... (expects SDK/Include) or provide ../ADLX/SDK/Include.")
   endif()
 
@@ -229,12 +259,12 @@ if (AI_Z_PLATFORM_WINDOWS)
   )
 
   if (AI_Z_IGCL_INCLUDE_DIR AND AI_Z_IGCL_WRAPPER_CPP)
-    target_include_directories(ai-z PRIVATE ${AI_Z_IGCL_INCLUDE_DIR})
-    target_sources(ai-z PRIVATE ${AI_Z_IGCL_WRAPPER_CPP})
-    target_compile_definitions(ai-z PRIVATE AI_Z_HAS_IGCL_HEADERS=1)
+    target_include_directories(aiz-core PUBLIC ${AI_Z_IGCL_INCLUDE_DIR})
+    target_sources(aiz-core PRIVATE ${AI_Z_IGCL_WRAPPER_CPP})
+    target_compile_definitions(aiz-core PUBLIC AI_Z_HAS_IGCL_HEADERS=1)
     message(STATUS "IGCL headers+wrapper found (Intel telemetry enabled): ${AI_Z_IGCL_INCLUDE_DIR}")
   else()
-    target_compile_definitions(ai-z PRIVATE AI_Z_HAS_IGCL_HEADERS=0)
+    target_compile_definitions(aiz-core PUBLIC AI_Z_HAS_IGCL_HEADERS=0)
     message(STATUS "IGCL headers+wrapper not found; Intel IGCL telemetry disabled. To enable, set -DAI_Z_IGCL_ROOT=... or place igcl_api.h + cApiWrapper.cpp under third_party/igcl/.")
   endif()
 endif()
@@ -255,12 +285,6 @@ target_sources(ai-z PRIVATE
 # FTXUI TUI library (cross-platform, header-only with static libs)
 find_package(ftxui CONFIG REQUIRED)
 target_link_libraries(ai-z PRIVATE ftxui::screen ftxui::dom ftxui::component)
-
-if (AI_Z_PLATFORM_LINUX)
-  target_link_libraries(ai-z PRIVATE dl)
-elseif (AI_Z_PLATFORM_WINDOWS)
-  target_link_libraries(ai-z PRIVATE dxgi pdh setupapi)
-endif()
 
 # Enable real ONNX Runtime benchmarks when headers are available.
 # Note: ONNX Runtime C API headers use MSVC-specific calling conventions that
@@ -286,8 +310,8 @@ else()
 endif()
 
 if (AI_Z_ONNXRUNTIME_INCLUDE_DIR)
-  target_include_directories(ai-z PRIVATE ${AI_Z_ONNXRUNTIME_INCLUDE_DIR})
-  target_compile_definitions(ai-z PRIVATE AI_Z_HAS_ONNXRUNTIME_C_API=1)
+  target_include_directories(aiz-core PUBLIC ${AI_Z_ONNXRUNTIME_INCLUDE_DIR})
+  target_compile_definitions(aiz-core PUBLIC AI_Z_HAS_ONNXRUNTIME_C_API=1)
   message(STATUS "ONNX Runtime C API headers found: ${AI_Z_ONNXRUNTIME_INCLUDE_DIR} (real ORT benchmarks enabled)")
 elseif (MINGW)
   message(STATUS "ONNX Runtime C API headers skipped on MinGW (MSVC-specific calling conventions not supported)")
@@ -303,7 +327,7 @@ endif()
 
 if (AI_Z_ENABLE_CUDA)
   # CUDA is runtime-loaded via libcuda (driver API). No compile-time CUDA toolkit required.
-  target_sources(ai-z PRIVATE
+  target_sources(aiz-core PRIVATE
     src/aiz/bench/pcie_bandwidth_cuda.cpp
     src/aiz/bench/gpu_compute_cuda.cpp
   )
@@ -319,10 +343,10 @@ if (AI_Z_ENABLE_OPENCL)
     if (TARGET OpenCL::OpenCL)
       get_target_property(AI_Z_OPENCL_INCLUDES OpenCL::OpenCL INTERFACE_INCLUDE_DIRECTORIES)
       if (AI_Z_OPENCL_INCLUDES)
-        target_include_directories(ai-z PRIVATE ${AI_Z_OPENCL_INCLUDES})
+        target_include_directories(aiz-core PUBLIC ${AI_Z_OPENCL_INCLUDES})
       endif()
     else()
-      target_include_directories(ai-z PRIVATE ${OpenCL_INCLUDE_DIRS})
+      target_include_directories(aiz-core PUBLIC ${OpenCL_INCLUDE_DIRS})
     endif()
   endif()
 endif()
@@ -337,10 +361,10 @@ if (AI_Z_ENABLE_VULKAN)
     if (TARGET Vulkan::Vulkan)
       get_target_property(AI_Z_VULKAN_INCLUDES Vulkan::Vulkan INTERFACE_INCLUDE_DIRECTORIES)
       if (AI_Z_VULKAN_INCLUDES)
-        target_include_directories(ai-z PRIVATE ${AI_Z_VULKAN_INCLUDES})
+        target_include_directories(aiz-core PUBLIC ${AI_Z_VULKAN_INCLUDES})
       endif()
     else()
-      target_include_directories(ai-z PRIVATE ${Vulkan_INCLUDE_DIRS})
+      target_include_directories(aiz-core PUBLIC ${Vulkan_INCLUDE_DIRS})
     endif()
 
     # Optional: shaderc enables runtime GLSL->SPIR-V compilation for Vulkan compute benchmarks.
@@ -350,11 +374,11 @@ if (AI_Z_ENABLE_VULKAN)
     if (shaderc_FOUND)
       set(AI_Z_SHADERC_FOUND TRUE)
       if (TARGET shaderc::shaderc)
-        target_link_libraries(ai-z PRIVATE shaderc::shaderc)
+        target_link_libraries(aiz-core PUBLIC shaderc::shaderc)
       elseif (TARGET shaderc_shared)
-        target_link_libraries(ai-z PRIVATE shaderc_shared)
+        target_link_libraries(aiz-core PUBLIC shaderc_shared)
       elseif (TARGET shaderc)
-        target_link_libraries(ai-z PRIVATE shaderc)
+        target_link_libraries(aiz-core PUBLIC shaderc)
       endif()
     else()
       # Many distros ship shaderc without a CMake config package; try pkg-config and plain find.
@@ -372,47 +396,28 @@ if (AI_Z_ENABLE_VULKAN)
       )
       if (SHADERC_INCLUDE_DIR AND SHADERC_LIBRARY)
         set(AI_Z_SHADERC_FOUND TRUE)
-        target_include_directories(ai-z PRIVATE ${SHADERC_INCLUDE_DIR})
-        target_link_libraries(ai-z PRIVATE ${SHADERC_LIBRARY})
+        target_include_directories(aiz-core PUBLIC ${SHADERC_INCLUDE_DIR})
+        target_link_libraries(aiz-core PUBLIC ${SHADERC_LIBRARY})
       endif()
     endif()
 
     if (AI_Z_SHADERC_FOUND)
-      target_compile_definitions(ai-z PRIVATE AI_Z_HAS_SHADERC)
+      target_compile_definitions(aiz-core PUBLIC AI_Z_HAS_SHADERC)
     else()
       message(STATUS "shaderc not found; runtime GLSL->SPIR-V compilation disabled (Vulkan FP32 uses embedded SPIR-V).")
     endif()
   endif()
 endif()
 
-# Platform compile definitions
-target_compile_definitions(ai-z PRIVATE
-  $<$<BOOL:${AI_Z_PLATFORM_LINUX}>:AI_Z_PLATFORM_LINUX>
-  $<$<BOOL:${AI_Z_PLATFORM_WINDOWS}>:AI_Z_PLATFORM_WINDOWS>
-)
-
-target_compile_definitions(ai-z PRIVATE
-  $<$<BOOL:${AI_Z_ENABLE_NVML}>:AI_Z_ENABLE_NVML>
-  $<$<BOOL:${AI_Z_ENABLE_CUDA}>:AI_Z_ENABLE_CUDA>
-  $<$<BOOL:${AI_Z_ENABLE_OPENCL}>:AI_Z_ENABLE_OPENCL>
-  $<$<BOOL:${AI_Z_ENABLE_VULKAN}>:AI_Z_ENABLE_VULKAN>
-  $<$<BOOL:${AI_Z_ENABLE_HIP}>:AI_Z_ENABLE_HIP>
-  $<$<BOOL:${AI_Z_ENABLE_LIBTORCH}>:AI_Z_ENABLE_LIBTORCH>
-  $<$<BOOL:${AI_Z_ENABLE_LEVEL_ZERO}>:AI_Z_ENABLE_LEVEL_ZERO>
-  $<$<BOOL:${AI_Z_ENABLE_SYCL}>:AI_Z_ENABLE_SYCL>
-)
-
 # Opt-in warnings.
 if (AI_Z_ENABLE_WARNINGS)
   if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(ai-z PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(aiz-core PRIVATE -Wall -Wextra -Wpedantic)
   elseif (MSVC)
     target_compile_options(ai-z PRIVATE /W4)
+    target_compile_options(aiz-core PRIVATE /W4)
   endif()
-endif()
-
-if (AI_Z_PLATFORM_WINDOWS)
-  target_link_libraries(ai-z PRIVATE iphlpapi psapi advapi32 shell32 ole32)
 endif()
 
 if (BUILD_TESTING)
