@@ -64,28 +64,8 @@ jobs:
           git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
           cd notcurses
           
-          # Patch notcurses to skip terminal queries that break Windows Console.
-          # Windows Console (ConHost) and Windows Terminal don't respond to many VT queries,
-          # causing notcurses to either hang or output garbage escape sequences.
-          # 
-          # The query flow is: send_initial_queries -> DSRCPR -> KKBDENTER -> IDQUERIES -> send_initial_directives
-          # Windows (TERMINAL_MSTERMINAL) is pre-identified via prepare_windows_terminal().
-          # 
-          # Fix 1: Make send_initial_queries return early for TERMINAL_MSTERMINAL
-          # Fix 2: Make send_initial_directives return early for TERMINAL_MSTERMINAL
-          # This skips all problematic queries while keeping other terminal types working.
-          
-          # Patch send_initial_queries - add early return at the start of the function
-          # Use line-based addressing to only modify the first occurrence (in send_initial_queries, not locate_cursor)
-          sed -i '520,530 s/int fd = ti->ttyfd;/int fd = ti->ttyfd;\n  if(ti->qterm == TERMINAL_MSTERMINAL){ return 0; }/' src/lib/termdesc.c
-          
-          # Also patch send_initial_directives to return early for MSTERMINAL
-          # This skips palette queries and DIRECTIVES for Windows
-          sed -i 's/send_initial_directives(queried_terminals_e qterm, int fd){/send_initial_directives(queried_terminals_e qterm, int fd){\n  if(qterm == TERMINAL_MSTERMINAL){ return 0; }/' src/lib/termdesc.c
-          
-          # Verify the patches were applied
-          echo "=== Checking patches ==="
-          grep -n "TERMINAL_MSTERMINAL.*return 0" src/lib/termdesc.c && echo "Patches applied successfully" || echo "WARNING: Patches may not have applied"
+          # Build vanilla notcurses - handle Windows/SSH compatibility at runtime
+          # in ai-z's notcurses_ui.cpp via notcurses_options flags
           
           mkdir build && cd build
           cmake .. \
@@ -257,26 +237,8 @@ jobs:
           git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
           cd notcurses
           
-          # Patch notcurses to skip queries that can cause problems in SSH sessions.
-          # SSH terminals may not respond to VT queries properly, causing hangs or garbage output.
-          # We detect SSH via environment variables and skip queries in that case.
-          # 
-          # The query flow is: send_initial_queries -> DSRCPR -> KKBDENTER -> IDQUERIES -> send_initial_directives
-          # 
-          # Fix 1: Make send_initial_queries return early when SSH detected
-          # Fix 2: Make send_initial_directives return early when SSH detected
-          # This skips all problematic queries while keeping local terminal usage working.
-          
-          # Patch send_initial_queries - add early return for SSH sessions
-          # Use line-based addressing to only modify the first occurrence (in send_initial_queries, not locate_cursor)
-          sed -i '520,530 s/int fd = ti->ttyfd;/int fd = ti->ttyfd;\n  if(getenv("SSH_CLIENT") || getenv("SSH_TTY") || getenv("SSH_CONNECTION")){ return 0; }/' src/lib/termdesc.c
-          
-          # Also patch send_initial_directives to return early for SSH sessions
-          sed -i 's/send_initial_directives(queried_terminals_e qterm, int fd){/send_initial_directives(queried_terminals_e qterm, int fd){\n  if(getenv("SSH_CLIENT") || getenv("SSH_TTY") || getenv("SSH_CONNECTION")){ return 0; }/' src/lib/termdesc.c
-          
-          # Verify patches were applied
-          echo "=== Checking patches ==="
-          grep -n "SSH_CLIENT" src/lib/termdesc.c && echo "SSH patches applied successfully" || echo "WARNING: SSH patches may not have applied"
+          # Build vanilla notcurses - handle SSH compatibility at runtime
+          # in ai-z's notcurses_ui.cpp via notcurses_options flags
           
           mkdir build && cd build
           cmake .. -GNinja \

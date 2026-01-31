@@ -251,22 +251,21 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
     opts.loglevel = NCLOGLEVEL_DEBUG;
   }
 
-  // Avoid sending queries that some terminals/SSH sessions don't handle well.
-  // This prevents notcurses from blocking on terminal capability detection.
+  // Common flags for all platforms
   opts.flags |= NCOPTION_NO_WINCH_SIGHANDLER;
+  opts.flags |= NCOPTION_NO_FONT_CHANGES;
+  opts.flags |= NCOPTION_NO_CLEAR_BITMAPS;
 
 #if defined(AI_Z_PLATFORM_WINDOWS)
-  // On Windows classic console, notcurses queries cause garbage output.
-  // We force a simple terminal type and disable input draining so keys work.
+  // Windows Console (ConHost) has limited VT support.
+  // Force xterm-256color and use alternate screen mode normally.
+  // If this still causes issues, user can try Windows Terminal instead.
   opts.termtype = "xterm-256color";
-  // Don't attempt to change fonts or send advanced sequences
-  opts.flags |= NCOPTION_NO_FONT_CHANGES;
-  opts.flags |= NCOPTION_NO_CLEAR_BITMAPS;
+  
+  if (debugMode) {
+    std::cerr << "ai-z: Windows platform detected\n";
+  }
 #else
-  // SSH sessions may have issues with font changes and bitmap clearing
-  opts.flags |= NCOPTION_NO_FONT_CHANGES;
-  opts.flags |= NCOPTION_NO_CLEAR_BITMAPS;
-
   // Detect SSH session
   const bool isSSH = std::getenv("SSH_CLIENT") != nullptr || 
                      std::getenv("SSH_TTY") != nullptr ||
@@ -279,13 +278,17 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
     std::cerr << "ai-z: SSH session detected: " << (isSSH ? "yes" : "no") << "\n";
   }
   
-  // Always force xterm-256color for SSH to bypass query-based detection
-  if (isSSH || !term || std::strcmp(term, "") == 0 || std::strcmp(term, "dumb") == 0) {
+  // For SSH or problematic TERM values, force xterm-256color
+  if (!term || std::strcmp(term, "") == 0 || std::strcmp(term, "dumb") == 0) {
     opts.termtype = "xterm-256color";
     if (debugMode) {
       std::cerr << "ai-z: forcing termtype to xterm-256color\n";
     }
   }
+  
+  // SSH sessions: Don't force any special options - let notcurses work normally.
+  // The terminal emulator on the client side should handle escape sequences.
+  // If there are issues, the user's SSH client/terminal is the problem.
 #endif
 
   if (debugMode) {
