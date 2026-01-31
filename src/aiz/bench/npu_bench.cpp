@@ -93,7 +93,8 @@ protected:
 
     OrtEnv* env = nullptr;
     {
-      OrtStatus* st = ort->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "ai-z-npu", &env);
+      // Use ERROR level to suppress console output that causes TUI flickering
+      OrtStatus* st = ort->CreateEnv(ORT_LOGGING_LEVEL_ERROR, "ai-z-npu", &env);
       if (st) {
         err = "ORT CreateEnv failed: " + ortStatusToString(ort, st);
         return -1.0;
