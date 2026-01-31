@@ -13,6 +13,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Disable CLI build - we only need the aiz-core library for Python bindings
+# This skips FTXUI dependency which isn't available in manylinux containers
+set(AI_Z_BUILD_CLI OFF CACHE BOOL "" FORCE)
+
 # Include the parent project to build aiz-core library
 # This avoids duplicating source lists
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_BINARY_DIR}/ai-z-build EXCLUDE_FROM_ALL)

@@ -79,6 +79,7 @@ option(AI_Z_ENABLE_LIBTORCH "Enable LibTorch (PyTorch C++ API) benchmark" OFF)
 option(AI_Z_ENABLE_LEVEL_ZERO "Enable Intel Level Zero backend" OFF)
 option(AI_Z_ENABLE_SYCL "Enable SYCL/oneAPI backend" OFF)
 option(AI_Z_ENABLE_WARNINGS "Enable -Wall/-Wextra style warnings" OFF)
+option(AI_Z_BUILD_CLI "Build the ai-z CLI executable (requires FTXUI)" ON)
 
 # Optional: ONNX Runtime headers.
 # ai-z runtime-loads libonnxruntime via dlopen(), but a real ORT model-execution
@@ -198,15 +199,17 @@ elseif (AI_Z_PLATFORM_WINDOWS)
   target_link_libraries(aiz-core PUBLIC dxgi pdh setupapi iphlpapi psapi advapi32 shell32 ole32)
 endif()
 
-# Build the CLI executable
-add_executable(ai-z src/main.cpp)
-target_link_libraries(ai-z PRIVATE aiz-core)
+# Build the CLI executable (optional - requires FTXUI)
+if (AI_Z_BUILD_CLI)
+  add_executable(ai-z src/main.cpp)
+  target_link_libraries(ai-z PRIVATE aiz-core)
 
-# Windows: embed application icon and version info
-if (AI_Z_PLATFORM_WINDOWS)
-  set(AI_Z_RC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/ai-z.rc")
-  if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/ai-z.ico")
-    target_sources(ai-z PRIVATE ${AI_Z_RC_FILE})
+  # Windows: embed application icon and version info
+  if (AI_Z_PLATFORM_WINDOWS)
+    set(AI_Z_RC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/ai-z.rc")
+    if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/ai-z.ico")
+      target_sources(ai-z PRIVATE ${AI_Z_RC_FILE})
+    endif()
   endif()
 endif()
 
@@ -269,22 +272,24 @@ if (AI_Z_PLATFORM_WINDOWS)
   endif()
 endif()
 
-# TUI sources (FTXUI backend)
-target_sources(ai-z PRIVATE
-  src/aiz/tui/ftxui_ui.cpp
-  src/aiz/tui/tui_core.cpp
-  # Shared helpers
-  src/aiz/tui/ncurses_probe.cpp
-  src/aiz/tui/ncurses_telemetry.cpp
-  src/aiz/tui/ncurses_bench.cpp
-  src/aiz/tui/ncurses_bench_rows.cpp
-  src/aiz/tui/ncurses_sampler.cpp
-  src/aiz/tui/ncurses_bootprobe.cpp
-)
+# TUI sources and FTXUI (only for CLI build)
+if (AI_Z_BUILD_CLI)
+  target_sources(ai-z PRIVATE
+    src/aiz/tui/ftxui_ui.cpp
+    src/aiz/tui/tui_core.cpp
+    # Shared helpers
+    src/aiz/tui/ncurses_probe.cpp
+    src/aiz/tui/ncurses_telemetry.cpp
+    src/aiz/tui/ncurses_bench.cpp
+    src/aiz/tui/ncurses_bench_rows.cpp
+    src/aiz/tui/ncurses_sampler.cpp
+    src/aiz/tui/ncurses_bootprobe.cpp
+  )
 
-# FTXUI TUI library (cross-platform, header-only with static libs)
-find_package(ftxui CONFIG REQUIRED)
-target_link_libraries(ai-z PRIVATE ftxui::screen ftxui::dom ftxui::component)
+  # FTXUI TUI library (cross-platform, header-only with static libs)
+  find_package(ftxui CONFIG REQUIRED)
+  target_link_libraries(ai-z PRIVATE ftxui::screen ftxui::dom ftxui::component)
+endif()
 
 # Enable real ONNX Runtime benchmarks when headers are available.
 # Note: ONNX Runtime C API headers use MSVC-specific calling conventions that
@@ -412,10 +417,14 @@ endif()
 # Opt-in warnings.
 if (AI_Z_ENABLE_WARNINGS)
   if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(ai-z PRIVATE -Wall -Wextra -Wpedantic)
+    if (AI_Z_BUILD_CLI)
+      target_compile_options(ai-z PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
     target_compile_options(aiz-core PRIVATE -Wall -Wextra -Wpedantic)
   elseif (MSVC)
-    target_compile_options(ai-z PRIVATE /W4)
+    if (AI_Z_BUILD_CLI)
+      target_compile_options(ai-z PRIVATE /W4)
+    endif()
     target_compile_options(aiz-core PRIVATE /W4)
   endif()
 endif()
@@ -424,96 +433,98 @@ if (BUILD_TESTING)
   add_subdirectory(tests)
 endif()
 
-# Install
-set(AI_Z_INSTALL_BINDIR "${CMAKE_INSTALL_BINDIR}")
-if (AI_Z_INSTALL_BINDIR STREQUAL "")
-  set(AI_Z_INSTALL_BINDIR "bin")
-endif()
-
-install(TARGETS ai-z
-  RUNTIME DESTINATION "${AI_Z_INSTALL_BINDIR}"
-)
-
-# Windows: best-effort staging of Intel Level Zero loader next to ai-z.exe.
-# IGCL loads ze_loader.dll dynamically (not a link-time dependency), but having it
-# app-local improves portability and enables Intel PCIe telemetry on systems that
-# don't already have the loader on PATH.
-if (AI_Z_PLATFORM_WINDOWS)
-  set(AI_Z_ZE_LOADER_HINTS
-    "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin"
-    "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/bin"
-  )
-  if (DEFINED ENV{VCPKG_INSTALLED_DIR})
-    list(APPEND AI_Z_ZE_LOADER_HINTS "$ENV{VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
-    list(APPEND AI_Z_ZE_LOADER_HINTS "$ENV{VCPKG_INSTALLED_DIR}/x64-windows/bin")
+# Install (CLI only)
+if (AI_Z_BUILD_CLI)
+  set(AI_Z_INSTALL_BINDIR "${CMAKE_INSTALL_BINDIR}")
+  if (AI_Z_INSTALL_BINDIR STREQUAL "")
+    set(AI_Z_INSTALL_BINDIR "bin")
   endif()
 
-  find_file(AI_Z_ZE_LOADER_DLL
-    NAMES ze_loader.dll
-    HINTS ${AI_Z_ZE_LOADER_HINTS}
+  install(TARGETS ai-z
+    RUNTIME DESTINATION "${AI_Z_INSTALL_BINDIR}"
   )
 
-  if (AI_Z_ZE_LOADER_DLL)
-    add_custom_command(TARGET ai-z POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${AI_Z_ZE_LOADER_DLL}"
-        "$<TARGET_FILE_DIR:ai-z>/ze_loader.dll"
-      VERBATIM
+  # Windows: best-effort staging of Intel Level Zero loader next to ai-z.exe.
+  # IGCL loads ze_loader.dll dynamically (not a link-time dependency), but having it
+  # app-local improves portability and enables Intel PCIe telemetry on systems that
+  # don't already have the loader on PATH.
+  if (AI_Z_PLATFORM_WINDOWS)
+    set(AI_Z_ZE_LOADER_HINTS
+      "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin"
+      "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/bin"
     )
-    install(FILES "${AI_Z_ZE_LOADER_DLL}"
-      DESTINATION "${AI_Z_INSTALL_BINDIR}"
-      OPTIONAL
+    if (DEFINED ENV{VCPKG_INSTALLED_DIR})
+      list(APPEND AI_Z_ZE_LOADER_HINTS "$ENV{VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+      list(APPEND AI_Z_ZE_LOADER_HINTS "$ENV{VCPKG_INSTALLED_DIR}/x64-windows/bin")
+    endif()
+
+    find_file(AI_Z_ZE_LOADER_DLL
+      NAMES ze_loader.dll
+      HINTS ${AI_Z_ZE_LOADER_HINTS}
     )
+
+    if (AI_Z_ZE_LOADER_DLL)
+      add_custom_command(TARGET ai-z POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${AI_Z_ZE_LOADER_DLL}"
+          "$<TARGET_FILE_DIR:ai-z>/ze_loader.dll"
+        VERBATIM
+      )
+      install(FILES "${AI_Z_ZE_LOADER_DLL}"
+        DESTINATION "${AI_Z_INSTALL_BINDIR}"
+        OPTIONAL
+      )
+    endif()
   endif()
-endif()
 
-# Windows: bundle MSVC runtime DLLs app-locally when installing.
-# This makes portable zips/installers runnable on clean machines without requiring
-# the Visual C++ Redistributable to be preinstalled.
-if (MSVC)
-  include(InstallRequiredSystemLibraries)
-  if (CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
-    install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
-      DESTINATION "${AI_Z_INSTALL_BINDIR}"
-    )
+  # Windows: bundle MSVC runtime DLLs app-locally when installing.
+  # This makes portable zips/installers runnable on clean machines without requiring
+  # the Visual C++ Redistributable to be preinstalled.
+  if (MSVC)
+    include(InstallRequiredSystemLibraries)
+    if (CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+      install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
+        DESTINATION "${AI_Z_INSTALL_BINDIR}"
+      )
+    endif()
   endif()
-endif()
 
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/docs/ai-z.1
-  DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
-)
-
-# Linux: install desktop entry and icons
-if (AI_Z_PLATFORM_LINUX)
-  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/ai-z.desktop
-    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/docs/ai-z.1
+    DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
   )
-  
-  # Install icons to hicolor theme
-  set(AI_Z_ICON_SIZES 16 32 48 256)
-  foreach(size ${AI_Z_ICON_SIZES})
-    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/icons/hicolor/${size}x${size}/apps/ai-z.png
-      DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/${size}x${size}/apps
+
+  # Linux: install desktop entry and icons
+  if (AI_Z_PLATFORM_LINUX)
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/ai-z.desktop
+      DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications
     )
-  endforeach()
-endif()
+    
+    # Install icons to hicolor theme
+    set(AI_Z_ICON_SIZES 16 32 48 256)
+    foreach(size ${AI_Z_ICON_SIZES})
+      install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/icons/hicolor/${size}x${size}/apps/ai-z.png
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/${size}x${size}/apps
+      )
+    endforeach()
+  endif()
 
-# Packaging
-set(CPACK_PACKAGE_NAME "ai-z")
-set(CPACK_PACKAGE_VENDOR "ai-z")
-set(CPACK_PACKAGE_CONTACT "ai-z")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "C++ TUI app for performance timelines (CPU/GPU/Disk/PCIe) and benchmarks")
-set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+  # Packaging
+  set(CPACK_PACKAGE_NAME "ai-z")
+  set(CPACK_PACKAGE_VENDOR "ai-z")
+  set(CPACK_PACKAGE_CONTACT "ai-z")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "C++ TUI app for performance timelines (CPU/GPU/Disk/PCIe) and benchmarks")
+  set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
 
-if (AI_Z_PLATFORM_LINUX)
-  set(CPACK_GENERATOR "DEB")
-  set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
-  set(CPACK_DEBIAN_PACKAGE_MAINTAINER "ai-z")
-  set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
-  set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+  if (AI_Z_PLATFORM_LINUX)
+    set(CPACK_GENERATOR "DEB")
+    set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "ai-z")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+    set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 
-  # Let dpkg-shlibdeps compute shared-library dependencies when available.
-  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-endif()
+    # Let dpkg-shlibdeps compute shared-library dependencies when available.
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+  endif()
 
-include(CPack)
+  include(CPack)
+endif()  # AI_Z_BUILD_CLI
