@@ -1,5 +1,7 @@
 #include <aiz/metrics/timeline.h>
 
+#include <limits>
+
 namespace aiz {
 
 Timeline::Timeline(std::size_t capacity) : buf_(capacity, 0.0) {}
@@ -28,6 +30,24 @@ std::vector<double> Timeline::values() const {
     out.push_back(buf_[idx]);
   }
   return out;
+}
+
+double Timeline::maxLast(std::size_t n) const {
+  if (size_ == 0) return 0.0;
+  const std::size_t count = (n < size_) ? n : size_;
+  double maxVal = -std::numeric_limits<double>::infinity();
+  
+  // Iterate backwards from most recent sample
+  for (std::size_t i = 0; i < count; ++i) {
+    // head_ points to next write position, so most recent is at (head_ - 1)
+    const std::size_t idx = (head_ + buf_.size() - 1 - i) % buf_.size();
+    if (buf_[idx] > maxVal) maxVal = buf_[idx];
+  }
+  return maxVal;
+}
+
+double Timeline::max() const {
+  return maxLast(size_);
 }
 
 }  // namespace aiz

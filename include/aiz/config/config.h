@@ -67,6 +67,10 @@ struct Config {
   std::uint32_t refreshMs = 500;
   std::uint32_t timelineSamples = 120;
 
+  // Peak value display
+  bool showPeakValues = true;
+  std::uint32_t peakWindowSec = 30;  // Peak window in seconds (default 30s)
+
   // Timeline rendering
   TimelineAgg timelineAgg = TimelineAgg::Max;
   TimelineGraphStyle timelineGraphStyle = TimelineGraphStyle::Braille;

@@ -47,6 +47,8 @@ enum class MsgId {
 
   ConfigToggleOn,
   ConfigToggleOff,
+  ConfigTogglePeakValues,
+  ConfigReadonlyPeakWindow,
   ConfigResetToDefaults,
   ConfigResetTag,
   ConfigReadonlySamplesPerBucket,

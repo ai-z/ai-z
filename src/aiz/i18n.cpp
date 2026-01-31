@@ -75,6 +75,8 @@ constexpr std::wstring_view en(MsgId id) {
 
     case MsgId::ConfigToggleOn: return L"ON";
     case MsgId::ConfigToggleOff: return L"OFF";
+    case MsgId::ConfigTogglePeakValues: return L"Show peak values";
+    case MsgId::ConfigReadonlyPeakWindow: return L"Peak window";
     case MsgId::ConfigResetToDefaults: return L"Reset to Defaults";
     case MsgId::ConfigResetTag: return L"RESET";
     case MsgId::ConfigReadonlySamplesPerBucket: return L"Samples per bucket (bars)";
@@ -138,6 +140,8 @@ constexpr std::wstring_view zhCN(MsgId id) {
 
     case MsgId::ConfigToggleOn: return L"开";
     case MsgId::ConfigToggleOff: return L"关";
+    case MsgId::ConfigTogglePeakValues: return L"显示峰值";
+    case MsgId::ConfigReadonlyPeakWindow: return L"峰值窗口";
     case MsgId::ConfigResetToDefaults: return L"恢复默认设置";
     case MsgId::ConfigResetTag: return L"重置";
     case MsgId::ConfigReadonlySamplesPerBucket: return L"每桶采样（柱）";

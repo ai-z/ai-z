@@ -177,6 +177,8 @@ Config Config::load() {
     else if (key == "showVramBars") { cfg.showVramBars = parseBool(val, cfg.showVramBars); }
     else if (key == "refreshMs") cfg.refreshMs = static_cast<std::uint32_t>(std::stoul(val));
     else if (key == "timelineSamples") cfg.timelineSamples = static_cast<std::uint32_t>(std::stoul(val));
+    else if (key == "showPeakValues") cfg.showPeakValues = parseBool(val, cfg.showPeakValues);
+    else if (key == "peakWindowSec") cfg.peakWindowSec = static_cast<std::uint32_t>(std::stoul(val));
     else if (key == "timelineAgg") cfg.timelineAgg = parseTimelineAgg(val, cfg.timelineAgg);
     else if (key == "timelineGraphStyle") cfg.timelineGraphStyle = parseTimelineGraphStyle(val, cfg.timelineGraphStyle);
     else if (key == "metricNameColor") cfg.metricNameColor = parseMetricNameColor(val, cfg.metricNameColor);
@@ -232,6 +234,8 @@ void Config::save() const {
   out << "showVramBars=" << (showVramBars ? "true" : "false") << "\n";
   out << "refreshMs=" << refreshMs << "\n";
   out << "timelineSamples=" << timelineSamples << "\n";
+  out << "showPeakValues=" << (showPeakValues ? "true" : "false") << "\n";
+  out << "peakWindowSec=" << peakWindowSec << "\n";
   out << "timelineAgg=" << timelineAggToString(timelineAgg) << "\n";
   out << "timelineGraphStyle=" << timelineGraphStyleToString(timelineGraphStyle) << "\n";
   out << "metricNameColor=" << metricNameColorToString(metricNameColor) << "\n";

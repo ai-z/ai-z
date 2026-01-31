@@ -71,17 +71,28 @@ static constexpr int configToggleCount() {
 }
 
 static constexpr int configItemCount() {
-  return configToggleCount() + 5;  // read-only misc rows (samples, rate, value color, metric color, graph style)
+  // read-only misc rows: samples/bucket, rate, peak toggle, peak window, value color, metric color, graph style
+  return configToggleCount() + 7;
+}
+
+static constexpr int configPeakToggleRowIndex() {
+  // Read-only misc rows follow toggles in order:
+  // Samples per bucket, Sampling rate, Peak toggle, Peak window, Value color, Metric name color, Graph style.
+  return configToggleCount() + 2;
+}
+
+static constexpr int configPeakWindowRowIndex() {
+  return configToggleCount() + 3;
 }
 
 static constexpr int configMetricNameColorRowIndex() {
   // Read-only misc rows follow toggles in order:
-  // Samples per bucket, Sampling rate, Value color, Metric name color, Graph style.
-  return configToggleCount() + 3;
+  // Samples per bucket, Sampling rate, Peak toggle, Peak window, Value color, Metric name color, Graph style.
+  return configToggleCount() + 5;
 }
 
 static constexpr int configGraphStyleRowIndex() {
-  return configToggleCount() + 4;
+  return configToggleCount() + 6;
 }
 
 void Frame::resize(int w, int h) {
@@ -278,6 +289,14 @@ void applyCommand(TuiState& state, Config& cfg, Command cmd) {
         const auto& items = (state.configCol == 0) ? kConfigToggleItems : kConfigToggleItemsBars;
         const auto& it = items[static_cast<std::size_t>(state.configSel)];
         cfg.*(it.field) = !(cfg.*(it.field));
+      } else if (state.configSel == configPeakToggleRowIndex()) {
+        cfg.showPeakValues = !cfg.showPeakValues;
+      } else if (state.configSel == configPeakWindowRowIndex()) {
+        // Cycle through peak window values: 10s -> 30s -> 60s -> 120s -> 10s
+        if (cfg.peakWindowSec <= 10) cfg.peakWindowSec = 30;
+        else if (cfg.peakWindowSec <= 30) cfg.peakWindowSec = 60;
+        else if (cfg.peakWindowSec <= 60) cfg.peakWindowSec = 120;
+        else cfg.peakWindowSec = 10;
       } else if (state.configSel == configMetricNameColorRowIndex()) {
         cfg.metricNameColor = (cfg.metricNameColor == MetricNameColor::Cyan)
             ? MetricNameColor::Green
@@ -489,7 +508,8 @@ static void drawSectionTitleLineSplit(
     const std::string& left,
     const std::string& value,
   const std::string& right,
-  Style nameStyle) {
+  Style nameStyle,
+  const std::string& peakStr = {}) {
   if (y < 0 || y >= out.height) return;
 
   // Clear line.
@@ -528,13 +548,59 @@ static void drawSectionTitleLineSplit(
     }
   }
 
-  // Fill separator dashes in the gap between left and right.
+  // Fill separator dashes in the gap between left and right, with optional peak label.
   const int dashStart = std::min(out.width, static_cast<int>(title.size()) + 1);
   const int dashEnd = std::min(out.width, rightStart);
-  for (int x = dashStart; x < dashEnd; ++x) {
-    auto& c = out.at(x, y);
-    c.ch = L'-';
-    c.style = static_cast<std::uint16_t>(nameStyle);
+
+  if (!peakStr.empty()) {
+    // Format: ---PEAK: xxx---
+    const std::string peakLabel = "PEAK: " + peakStr;
+    const int gapWidth = dashEnd - dashStart;
+    const int peakLen = static_cast<int>(peakLabel.size());
+
+    if (gapWidth >= peakLen + 6) {
+      // Enough room for ---PEAK: xxx---
+      const int leadingDashes = 3;
+      const int peakStart = dashStart + leadingDashes;
+      const int trailingDashStart = peakStart + peakLen;
+
+      // Leading dashes
+      for (int x = dashStart; x < peakStart; ++x) {
+        auto& c = out.at(x, y);
+        c.ch = L'-';
+        c.style = static_cast<std::uint16_t>(nameStyle);
+      }
+
+      // Peak label
+      const std::wstring wpeakLabel = widenAscii(peakLabel);
+      for (std::size_t i = 0; i < wpeakLabel.size() && peakStart + static_cast<int>(i) < dashEnd; ++i) {
+        auto& c = out.at(peakStart + static_cast<int>(i), y);
+        c.ch = wpeakLabel[i];
+        // "PEAK:" in nameStyle, value in Default (white)
+        c.style = static_cast<std::uint16_t>(i < 5 ? nameStyle : Style::Default);
+      }
+
+      // Trailing dashes
+      for (int x = trailingDashStart; x < dashEnd; ++x) {
+        auto& c = out.at(x, y);
+        c.ch = L'-';
+        c.style = static_cast<std::uint16_t>(nameStyle);
+      }
+    } else {
+      // Not enough room, just fill with dashes
+      for (int x = dashStart; x < dashEnd; ++x) {
+        auto& c = out.at(x, y);
+        c.ch = L'-';
+        c.style = static_cast<std::uint16_t>(nameStyle);
+      }
+    }
+  } else {
+    // No peak, just fill with dashes
+    for (int x = dashStart; x < dashEnd; ++x) {
+      auto& c = out.at(x, y);
+      c.ch = L'-';
+      c.style = static_cast<std::uint16_t>(nameStyle);
+    }
   }
 }
 
@@ -1085,6 +1151,7 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
     double maxV;
     bool twoLine = false;
     std::string device;
+    std::string unit;  // Unit for peak value display
   };
 
   auto gpuContext = [&](std::size_t index) -> std::string {
@@ -1107,27 +1174,27 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   }
 
   std::vector<Panel> panels;
-  panels.push_back(Panel{"CPU", showCpu, &state.latest.cpu, &state.cpuTl, nullptr, 100.0, false, state.cpuDevice});
-  panels.push_back(Panel{"Hottest Core", showCpuHot, &state.latest.cpuMax, &state.cpuMaxTl, nullptr, 100.0, false, state.cpuDevice});
+  panels.push_back(Panel{"CPU", showCpu, &state.latest.cpu, &state.cpuTl, nullptr, 100.0, false, state.cpuDevice, "%"});
+  panels.push_back(Panel{"Hottest Core", showCpuHot, &state.latest.cpuMax, &state.cpuMaxTl, nullptr, 100.0, false, state.cpuDevice, "%"});
 
   // CPU/RAM first.
-  panels.push_back(Panel{"RAM", showRam, &state.latest.ramPct, &state.ramTl, nullptr, 100.0, false, state.ramDevice});
+  panels.push_back(Panel{"RAM", showRam, &state.latest.ramPct, &state.ramTl, nullptr, 100.0, false, state.ramDevice, "%"});
 
   // GPU usage before VRAM and MemCtrl.
   if (showGpu) {
     const std::size_t n = std::min(state.gpuTls.size(), gpuUsageSamples.size());
     for (std::size_t i = 0; i < n; ++i) {
-      panels.push_back(Panel{gpuPrefix(i) + " USAGE", true, &gpuUsageSamples[i], &state.gpuTls[i], nullptr, 100.0, false, gpuContext(i)});
+      panels.push_back(Panel{gpuPrefix(i) + " USAGE", true, &gpuUsageSamples[i], &state.gpuTls[i], nullptr, 100.0, false, gpuContext(i), "%"});
     }
   }
 
-  panels.push_back(Panel{gpuPrefix(0) + " VRAM", showVram, &state.latest.vramPct, &state.vramTl, nullptr, 100.0, false, gpuContext(0)});
-  panels.push_back(Panel{gpuPrefix(0) + " MemCtrl", showGpuMem, &state.latest.gpuMemUtil, &state.gpuMemUtilTl, nullptr, 100.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " VRAM", showVram, &state.latest.vramPct, &state.vramTl, nullptr, 100.0, false, gpuContext(0), "%"});
+  panels.push_back(Panel{gpuPrefix(0) + " MemCtrl", showGpuMem, &state.latest.gpuMemUtil, &state.gpuMemUtilTl, nullptr, 100.0, false, gpuContext(0), "%"});
 
-  panels.push_back(Panel{gpuPrefix(0) + " MHz", showGpuClock, &state.latest.gpuClock, &state.gpuClockTl, nullptr, 3000.0, false, gpuContext(0)});
-  panels.push_back(Panel{gpuPrefix(0) + " Mem MHz", showGpuMemClock, &state.latest.gpuMemClock, &state.gpuMemClockTl, nullptr, 14000.0, false, gpuContext(0)});
-  panels.push_back(Panel{gpuPrefix(0) + " Enc", showGpuEnc, &state.latest.gpuEnc, &state.gpuEncTl, nullptr, 100.0, false, gpuContext(0)});
-  panels.push_back(Panel{gpuPrefix(0) + " Dec", showGpuDec, &state.latest.gpuDec, &state.gpuDecTl, nullptr, 100.0, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " MHz", showGpuClock, &state.latest.gpuClock, &state.gpuClockTl, nullptr, 3000.0, false, gpuContext(0), "MHz"});
+  panels.push_back(Panel{gpuPrefix(0) + " Mem MHz", showGpuMemClock, &state.latest.gpuMemClock, &state.gpuMemClockTl, nullptr, 14000.0, false, gpuContext(0), "MHz"});
+  panels.push_back(Panel{gpuPrefix(0) + " Enc", showGpuEnc, &state.latest.gpuEnc, &state.gpuEncTl, nullptr, 100.0, false, gpuContext(0), "%"});
+  panels.push_back(Panel{gpuPrefix(0) + " Dec", showGpuDec, &state.latest.gpuDec, &state.gpuDecTl, nullptr, 100.0, false, gpuContext(0), "%"});
 
   // PCIe split RX/TX (tweak restored).
   double pcieMax = 32'000.0;
@@ -1139,15 +1206,15 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
       }
     }
   }
-  panels.push_back(Panel{gpuPrefix(0) + " PCIe RX", showPcieRx, &state.latest.pcieRx, &state.pcieRxTl, nullptr, pcieMax, false, gpuContext(0)});
-  panels.push_back(Panel{gpuPrefix(0) + " PCIe TX", showPcieTx, &state.latest.pcieTx, &state.pcieTxTl, nullptr, pcieMax, false, gpuContext(0)});
+  panels.push_back(Panel{gpuPrefix(0) + " PCIe RX", showPcieRx, &state.latest.pcieRx, &state.pcieRxTl, nullptr, pcieMax, false, gpuContext(0), "MB/s"});
+  panels.push_back(Panel{gpuPrefix(0) + " PCIe TX", showPcieTx, &state.latest.pcieTx, &state.pcieTxTl, nullptr, pcieMax, false, gpuContext(0), "MB/s"});
 
   // Disk/network last.
-  panels.push_back(Panel{"Disk Read", showDiskRead, &state.latest.diskRead, &state.diskReadTl, nullptr, 5000.0, false, state.diskDevice});
-  panels.push_back(Panel{"Disk Write", showDiskWrite, &state.latest.diskWrite, &state.diskWriteTl, nullptr, 5000.0, false, state.diskDevice});
+  panels.push_back(Panel{"Disk Read", showDiskRead, &state.latest.diskRead, &state.diskReadTl, nullptr, 5000.0, false, state.diskDevice, "MB/s"});
+  panels.push_back(Panel{"Disk Write", showDiskWrite, &state.latest.diskWrite, &state.diskWriteTl, nullptr, 5000.0, false, state.diskDevice, "MB/s"});
 
-  panels.push_back(Panel{"Net RX", showNetRx, &state.latest.netRx, &state.netRxTl, nullptr, 5000.0, false, state.netDevice});
-  panels.push_back(Panel{"Net TX", showNetTx, &state.latest.netTx, &state.netTxTl, nullptr, 5000.0, false, state.netDevice});
+  panels.push_back(Panel{"Net RX", showNetRx, &state.latest.netRx, &state.netRxTl, nullptr, 5000.0, false, state.netDevice, "MB/s"});
+  panels.push_back(Panel{"Net TX", showNetTx, &state.latest.netTx, &state.netTxTl, nullptr, 5000.0, false, state.netDevice, "MB/s"});
 
   panels.erase(
       std::remove_if(panels.begin(), panels.end(), [](const Panel& p) { return !p.enabled; }),
@@ -1183,6 +1250,12 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
   }
 
   std::string lastDeviceShown;
+
+  // Compute peak samples based on config: peakWindowSec * 1000 / refreshMs
+  const std::size_t peakSamples = (cfg.refreshMs > 0)
+      ? static_cast<std::size_t>((cfg.peakWindowSec * 1000u) / cfg.refreshMs)
+      : 60u;
+
   for (int i = 0; i < n; ++i) {
     const auto& p = panels[static_cast<std::size_t>(i)];
 
@@ -1200,6 +1273,13 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
     if (height <= 0) break;
 
     const std::string right;
+
+    // Compute peak value string if enabled and timeline available
+    std::string peakStr;
+    if (cfg.showPeakValues && p.tl && p.tl->size() > 0) {
+      const double peakVal = p.tl->maxLast(peakSamples);
+      peakStr = fmt1(peakVal) + " " + p.unit;
+    }
 
     std::string section = p.name;
     const int titleY = barView ? y : (y + height - 1);
@@ -1233,7 +1313,7 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
         drawBarLineWithDots(out, titleY, section, value, right, barStartCol, (*p.sample)->value, p.maxV,
                             metricNameStyle(cfg));
       } else {
-        drawSectionTitleLineSplit(out, titleY, section, value, right, metricNameStyle(cfg));
+        drawSectionTitleLineSplit(out, titleY, section, value, right, metricNameStyle(cfg), peakStr);
       }
     } else if (p.sample != nullptr) {
       section += ": ";
@@ -1241,14 +1321,14 @@ static void renderTimelines(Frame& out, int /*bodyTop*/, const TuiState& state, 
         drawBarLineWithDots(out, titleY, section, "unavailable", right, barStartCol,
                             std::numeric_limits<double>::quiet_NaN(), p.maxV, metricNameStyle(cfg));
       } else {
-        drawSectionTitleLineSplit(out, titleY, section, "unavailable", right, metricNameStyle(cfg));
+        drawSectionTitleLineSplit(out, titleY, section, "unavailable", right, metricNameStyle(cfg), peakStr);
       }
     } else {
       if (barView) {
         drawBarLineWithDots(out, titleY, section, std::string{}, right, barStartCol,
                             std::numeric_limits<double>::quiet_NaN(), p.maxV, metricNameStyle(cfg));
       } else {
-        drawSectionTitleLineSplit(out, titleY, section, std::string{}, right, metricNameStyle(cfg));
+        drawSectionTitleLineSplit(out, titleY, section, std::string{}, right, metricNameStyle(cfg), peakStr);
       }
     }
 
@@ -1562,6 +1642,8 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
   }
   maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigReadonlySamplesPerBucket)));
   maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigReadonlySamplingRate)));
+  maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigTogglePeakValues)));
+  maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigReadonlyPeakWindow)));
   maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigReadonlyValueColor)));
   maxLabelW = std::max<std::size_t>(maxLabelW, textWidth(i18n::tr(i18n::MsgId::ConfigReadonlyMetricNameColor)));
 
@@ -1632,6 +1714,11 @@ static void renderConfig(Frame& out, int bodyTop, const Config& cfg, const TuiSt
   drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlySamplesPerBucket)), std::to_wstring(bucket));
   drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlySamplingRate)),
                std::to_wstring(cfg.refreshMs) + L"ms");
+  drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigTogglePeakValues)),
+               cfg.showPeakValues ? std::wstring(i18n::tr(i18n::MsgId::ConfigToggleOn))
+                                  : std::wstring(i18n::tr(i18n::MsgId::ConfigToggleOff)));
+  drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlyPeakWindow)),
+               std::to_wstring(cfg.peakWindowSec) + L"s");
   drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlyValueColor)), L"white (default)");
   drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlyMetricNameColor)), metricNameColorLabel(cfg));
   drawReadonly(std::wstring(i18n::tr(i18n::MsgId::ConfigReadonlyGraphStyle)), graphStyleLabel(cfg));

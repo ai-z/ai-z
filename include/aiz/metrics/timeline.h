@@ -16,6 +16,12 @@ public:
   // Oldest -> newest.
   std::vector<double> values() const;
 
+  // Maximum value over the last n samples (or all samples if n >= size()).
+  double maxLast(std::size_t n) const;
+
+  // Maximum value over all stored samples.
+  double max() const;
+
 private:
   std::vector<double> buf_;
   std::size_t head_ = 0;
