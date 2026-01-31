@@ -379,15 +379,26 @@ static Command eventToCommand(const ftxui::Event& event, Screen currentScreen) {
     return Command::NavProcesses;
   }
   
-  // View modes
-  if (event == Event::Character('1')) {
-    return Command::ViewTimelines;
-  }
-  if (event == Event::Character('2')) {
-    return Command::ViewBars;
-  }
-  if (event == Event::Character('3')) {
-    return Command::ViewMinimal;
+  // Screen-specific number keys
+  if (currentScreen == Screen::Benchmarks) {
+    // Benchmark screen: 1=Run All, 2=Report
+    if (event == Event::Character('1')) {
+      return Command::BenchRunAll;
+    }
+    if (event == Event::Character('2')) {
+      return Command::BenchReport;
+    }
+  } else if (currentScreen == Screen::Timelines || currentScreen == Screen::Minimal) {
+    // View modes on timeline screens
+    if (event == Event::Character('1')) {
+      return Command::ViewTimelines;
+    }
+    if (event == Event::Character('2')) {
+      return Command::ViewBars;
+    }
+    if (event == Event::Character('3')) {
+      return Command::ViewMinimal;
+    }
   }
   
   // Back to timelines
@@ -396,24 +407,20 @@ static Command eventToCommand(const ftxui::Event& event, Screen currentScreen) {
   }
   
   // Config screen actions
-  if (event == Event::Character('s') || event == Event::Character('S')) {
-    return Command::Save;
-  }
-  if (event == Event::Character('d') || event == Event::Character('D')) {
-    return Command::Defaults;
-  }
-  
-  // Refresh
-  if (event == Event::Character('r') || event == Event::Character('R')) {
-    return Command::Refresh;
+  if (currentScreen == Screen::Config) {
+    if (event == Event::Character('s') || event == Event::Character('S')) {
+      return Command::Save;
+    }
+    if (event == Event::Character('d') || event == Event::Character('D')) {
+      return Command::Defaults;
+    }
   }
   
-  // Benchmark actions
-  if (event == Event::Character('a') || event == Event::Character('A')) {
-    return Command::BenchRunAll;
-  }
-  if (event == Event::Character('e') || event == Event::Character('E')) {
-    return Command::BenchReport;
+  // Refresh (Hardware screen)
+  if (currentScreen == Screen::Hardware) {
+    if (event == Event::Character('r') || event == Event::Character('R')) {
+      return Command::Refresh;
+    }
   }
   
   // Process sort keys
