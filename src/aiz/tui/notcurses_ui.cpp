@@ -286,9 +286,11 @@ int NotcursesUi::run(Config& cfg, bool debugMode) {
     }
   }
   
-  // SSH sessions: Don't force any special options - let notcurses work normally.
-  // The terminal emulator on the client side should handle escape sequences.
-  // If there are issues, the user's SSH client/terminal is the problem.
+  // SSH sessions: Enable a minimal log level which seems to help establish
+  // proper terminal state. This outputs to stderr and doesn't affect the UI.
+  if (isSSH && !debugMode) {
+    opts.loglevel = NCLOGLEVEL_WARNING;
+  }
 #endif
 
   if (debugMode) {

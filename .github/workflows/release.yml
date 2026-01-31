@@ -64,8 +64,10 @@ jobs:
           git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
           cd notcurses
           
-          # Build vanilla notcurses - handle Windows/SSH compatibility at runtime
-          # in ai-z's notcurses_ui.cpp via notcurses_options flags
+          # Patch: Skip OSC 4 palette queries for Windows Terminal (TERMINAL_MSTERMINAL)
+          # Windows Console doesn't understand these sequences and prints them as garbage.
+          # The condition 'qterm != TERMINAL_LINUX' needs to also exclude TERMINAL_MSTERMINAL.
+          sed -i 's/if(qterm != TERMINAL_LINUX){/if(qterm != TERMINAL_LINUX \&\& qterm != TERMINAL_MSTERMINAL){/' src/lib/termdesc.c
           
           mkdir build && cd build
           cmake .. \
