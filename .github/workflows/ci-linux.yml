@@ -30,12 +30,14 @@ jobs:
             opencl-headers \
             ocl-icd-opencl-dev \
             libvulkan-dev \
-            dpkg-dev
+            dpkg-dev \
+            curl \
+            zip \
+            unzip \
+            tar
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: '66c0373dc7fca549e5803087b9487edfe3aca0a1'
 
       - name: Configure
         run: |
