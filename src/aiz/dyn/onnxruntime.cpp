@@ -9,6 +9,16 @@
 #include <string>
 #include <vector>
 
+// Suppress stderr to prevent ORT library output from corrupting TUI
+#if defined(_WIN32)
+#include <io.h>
+#include <fcntl.h>
+#include <cstdio>
+#else
+#include <unistd.h>
+#include <fcntl.h>
+#endif
+
 // ORT C API minimal declarations (to avoid requiring headers at build time)
 extern "C" {
   typedef struct OrtApi OrtApi;
@@ -23,6 +33,49 @@ extern "C" {
 namespace aiz {
 namespace dyn {
 namespace onnxruntime {
+
+namespace {
+
+// RAII helper to suppress stderr during ORT library loading
+class StderrSuppressor {
+public:
+  StderrSuppressor() {
+#if defined(_WIN32)
+    fflush(stderr);
+    saved_stderr_ = _dup(_fileno(stderr));
+    int null_fd = _open("NUL", _O_WRONLY);
+    if (null_fd >= 0) {
+      _dup2(null_fd, _fileno(stderr));
+      _close(null_fd);
+    }
+#else
+    fflush(stderr);
+    saved_stderr_ = dup(STDERR_FILENO);
+    int null_fd = open("/dev/null", O_WRONLY);
+    if (null_fd >= 0) {
+      dup2(null_fd, STDERR_FILENO);
+      close(null_fd);
+    }
+#endif
+  }
+  ~StderrSuppressor() {
+    if (saved_stderr_ >= 0) {
+#if defined(_WIN32)
+      fflush(stderr);
+      _dup2(saved_stderr_, _fileno(stderr));
+      _close(saved_stderr_);
+#else
+      fflush(stderr);
+      dup2(saved_stderr_, STDERR_FILENO);
+      close(saved_stderr_);
+#endif
+    }
+  }
+private:
+  int saved_stderr_ = -1;
+};
+
+}  // namespace
 
 namespace {
 
@@ -105,6 +158,9 @@ struct OrtLoader {
 
   bool load(std::string* err) {
     if (api_ptr) return true;
+
+    // Suppress stderr during ORT library loading to prevent TUI corruption
+    StderrSuppressor suppressStderr;
 
     auto paths = getOrtSearchPaths();
 
