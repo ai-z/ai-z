@@ -206,6 +206,12 @@ private:
 
 #if defined(AI_Z_PLATFORM_WINDOWS)
 static bool enableWindowsVirtualTerminal() {
+  // Set console code page to UTF-8 so Unicode block characters (█▄▀ etc.)
+  // display correctly even without the Windows "Beta: Use Unicode UTF-8"
+  // option enabled.
+  SetConsoleOutputCP(CP_UTF8);
+  SetConsoleCP(CP_UTF8);
+
   HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
   if (hOut == INVALID_HANDLE_VALUE) return false;
   DWORD mode = 0;
