@@ -69,17 +69,23 @@ jobs:
           # causing notcurses to either hang or output garbage escape sequences.
           # 
           # The query flow is: send_initial_queries -> DSRCPR -> KKBDENTER -> IDQUERIES -> send_initial_directives
-          # Windows (TERMINAL_MSTERMINAL) is pre-identified so we can skip ALL queries.
+          # Windows (TERMINAL_MSTERMINAL) is pre-identified via prepare_windows_terminal().
           # 
-          # Fix: Make send_initial_queries skip all queries when ti->qterm == TERMINAL_MSTERMINAL
-          # This is safe because Windows is identified via prepare_windows_terminal() before queries.
+          # Fix 1: Make send_initial_queries return early for TERMINAL_MSTERMINAL
+          # Fix 2: Make send_initial_directives return early for TERMINAL_MSTERMINAL
+          # This skips all problematic queries while keeping other terminal types working.
           
-          # Skip all queries for Windows Terminal - find and replace in send_initial_queries function
-          # The function has "int fd = ti->ttyfd;" near the start - add our early return after it
-          sed -i 's/int fd = ti->ttyfd;/int fd = ti->ttyfd;\n  if(ti->qterm == TERMINAL_MSTERMINAL){ return 0; }/' src/lib/termdesc.c
+          # Patch send_initial_queries - add early return at the start of the function
+          # Use line-based addressing to only modify the first occurrence (in send_initial_queries, not locate_cursor)
+          sed -i '520,530 s/int fd = ti->ttyfd;/int fd = ti->ttyfd;\n  if(ti->qterm == TERMINAL_MSTERMINAL){ return 0; }/' src/lib/termdesc.c
           
-          # Verify the patch was applied
-          grep -n "TERMINAL_MSTERMINAL.*return 0" src/lib/termdesc.c || echo "WARNING: MSTERMINAL patch may not have applied"
+          # Also patch send_initial_directives to return early for MSTERMINAL
+          # This skips palette queries and DIRECTIVES for Windows
+          sed -i 's/send_initial_directives(queried_terminals_e qterm, int fd){/send_initial_directives(queried_terminals_e qterm, int fd){\n  if(qterm == TERMINAL_MSTERMINAL){ return 0; }/' src/lib/termdesc.c
+          
+          # Verify the patches were applied
+          echo "=== Checking patches ==="
+          grep -n "TERMINAL_MSTERMINAL.*return 0" src/lib/termdesc.c && echo "Patches applied successfully" || echo "WARNING: Patches may not have applied"
           
           mkdir build && cd build
           cmake .. \
@@ -254,16 +260,23 @@ jobs:
           # Patch notcurses to skip queries that can cause problems in SSH sessions.
           # SSH terminals may not respond to VT queries properly, causing hangs or garbage output.
           # We detect SSH via environment variables and skip queries in that case.
-          # Also skip queries for TERMINAL_MSTERMINAL (for Windows builds in this repo).
+          # 
+          # The query flow is: send_initial_queries -> DSRCPR -> KKBDENTER -> IDQUERIES -> send_initial_directives
+          # 
+          # Fix 1: Make send_initial_queries return early when SSH detected
+          # Fix 2: Make send_initial_directives return early when SSH detected
+          # This skips all problematic queries while keeping local terminal usage working.
           
-          # Add SSH detection to send_initial_queries - skip queries if SSH_CLIENT or SSH_TTY is set
-          sed -i 's/int fd = ti->ttyfd;/int fd = ti->ttyfd;\n  if(getenv("SSH_CLIENT") || getenv("SSH_TTY") || getenv("SSH_CONNECTION")){ return 0; }/' src/lib/termdesc.c
+          # Patch send_initial_queries - add early return for SSH sessions
+          # Use line-based addressing to only modify the first occurrence (in send_initial_queries, not locate_cursor)
+          sed -i '520,530 s/int fd = ti->ttyfd;/int fd = ti->ttyfd;\n  if(getenv("SSH_CLIENT") || getenv("SSH_TTY") || getenv("SSH_CONNECTION")){ return 0; }/' src/lib/termdesc.c
           
-          # Also skip send_initial_directives for SSH (it sends DIRECTIVES which includes color/keyboard queries)
+          # Also patch send_initial_directives to return early for SSH sessions
           sed -i 's/send_initial_directives(queried_terminals_e qterm, int fd){/send_initial_directives(queried_terminals_e qterm, int fd){\n  if(getenv("SSH_CLIENT") || getenv("SSH_TTY") || getenv("SSH_CONNECTION")){ return 0; }/' src/lib/termdesc.c
           
           # Verify patches were applied
-          grep -n "SSH_CLIENT" src/lib/termdesc.c && echo "SSH patches applied" || echo "WARNING: SSH patches may not have applied"
+          echo "=== Checking patches ==="
+          grep -n "SSH_CLIENT" src/lib/termdesc.c && echo "SSH patches applied successfully" || echo "WARNING: SSH patches may not have applied"
           
           mkdir build && cd build
           cmake .. -GNinja \
