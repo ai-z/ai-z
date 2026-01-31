@@ -1979,10 +1979,13 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
     // ESC = default white, Main = blue background, with 'a' highlighted.
     if (footer.size() >= 6 && footer.rfind(L"ESC", 0) == 0) {
       const std::size_t labelStart = 3;
-      std::size_t labelEnd = labelStart;
-      while (labelEnd < footer.size() && footer[labelEnd] != L' ') {
-        ++labelEnd;
-      }
+      std::size_t labelEnd = footer.size();
+
+      const std::size_t nextSpace = footer.find(L' ', labelStart);
+      if (nextSpace != std::wstring_view::npos) labelEnd = std::min(labelEnd, nextSpace);
+
+      const std::size_t nextF = footer.find(L'F', labelStart);
+      if (nextF != std::wstring_view::npos) labelEnd = std::min(labelEnd, nextF);
 
       for (std::size_t k = labelStart; k < labelEnd; ++k) {
         st[k] = Style::FooterBlock;
@@ -2024,13 +2027,14 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
         continue;
       }
 
-      // Label ends at the next space (tokens are space-separated).
-      std::size_t labelEnd = labelStart;
-      while (labelEnd < footer.size()) {
-        const wchar_t ch = footer[labelEnd];
-        if (ch == L' ') break;
-        ++labelEnd;
-      }
+      // Label ends at the next token boundary.
+      // Historically tokens were space-separated. Now we also support a compact
+      // format like "...F1HelpF2Hardware...".
+      std::size_t labelEnd = footer.size();
+      const std::size_t nextSpace = footer.find(L' ', labelStart);
+      if (nextSpace != std::wstring_view::npos) labelEnd = std::min(labelEnd, nextSpace);
+      const std::size_t nextF = footer.find(L'F', labelStart);
+      if (nextF != std::wstring_view::npos) labelEnd = std::min(labelEnd, nextF);
 
       for (std::size_t k = labelStart; k < labelEnd; ++k) {
         st[k] = Style::FooterBlock;
@@ -2048,7 +2052,7 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
         case 2: hot = L'W'; target = Screen::Hardware; break;    // Hardware (the 'w' in HardWare)
         case 3: hot = L'B'; target = Screen::Benchmarks; break;  // Bench
         case 4: hot = L'C'; target = Screen::Config; break;      // Config
-        case 6: hot = L'P'; target = Screen::Processes; break;   // Processes
+        case 5: hot = L'P'; target = Screen::Processes; break;   // Processes
         case 10: hot = L'Q'; break;  // Quit
         default: break;
       }
@@ -2071,7 +2075,7 @@ void renderFrame(Frame& out, const Viewport& vp, const TuiState& state, const Co
         }
       }
 
-      i = (j > 0) ? (j - 1) : i;
+      i = (labelEnd > 0) ? (labelEnd - 1) : i;
     }
 
     // View labels: highlight the active view name.

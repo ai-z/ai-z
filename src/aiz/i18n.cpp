@@ -35,7 +35,7 @@ bool isZhCnTag(const std::string& tag) {
 constexpr std::wstring_view en(MsgId id) {
   switch (id) {
     case MsgId::FooterNav:
-      return L"ESCMain F1Help F2Hardware F3Benchmark F4Config F6Processes F10Quit View: 1Timelines 2H. Bars 3Minimal";
+      return L"ESCMainF1HelpF2HardwareF3BenchmarkF4ConfigF5ProcessesF10Quit View: 1Timelines 2H. Bars 3Minimal";
 
     case MsgId::FooterViewTimelines: return L"Timelines";
     case MsgId::FooterViewBars: return L"H. Bars";
@@ -98,7 +98,7 @@ constexpr std::wstring_view en(MsgId id) {
 constexpr std::wstring_view zhCN(MsgId id) {
   switch (id) {
     case MsgId::FooterNav:
-      return L"ESCMain F1帮助 F2硬件 F3基准 F4配置 F6进程 F10退出 视图: 1时间线 2柱状 3简洁";
+      return L"ESCMainF1帮助F2硬件F3基准F4配置F5进程F10退出 视图: 1时间线 2柱状 3简洁";
 
     case MsgId::FooterViewTimelines: return L"时间线";
     case MsgId::FooterViewBars: return L"柱状";

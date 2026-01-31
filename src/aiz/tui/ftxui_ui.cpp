@@ -229,30 +229,41 @@ static bool enableWindowsVirtualTerminal() {
 #endif
 
 // Convert Frame/Cell-based rendering to FTXUI Element
-static ftxui::Color styleToColor(Style style) {
+struct FtxuiStyle {
+  std::optional<ftxui::Color> fg;
+  std::optional<ftxui::Color> bg;
+  bool bold = false;
+};
+
+static FtxuiStyle styleToFtxuiStyle(Style style) {
   using namespace ftxui;
+
+  // Light-blue footer label background (requested).
+  const Color footerBg = Color(173, 216, 230);  // "light blue"
+  const Color footerBgActive = Color(100, 170, 255);
+
   switch (style) {
     case Style::Header:
-      return Color::Cyan;
+      return {.fg = Color::Cyan};
     case Style::FooterKey:
-      return Color::Yellow;
+      return {.fg = Color::Yellow, .bold = true};
     case Style::FooterBlock:
-      return Color::Blue;
+      return {.fg = Color::Black, .bg = footerBg};
     case Style::FooterHot:
-      return Color::Red;
+      return {.fg = Color::Red, .bg = footerBg, .bold = true};
     case Style::FooterActive:
-      return Color::Green;
+      return {.fg = Color::White, .bg = footerBgActive, .bold = true};
     case Style::Hot:
-      return Color::Yellow;
+      return {.fg = Color::Yellow, .bold = true};
     case Style::Section:
-      return Color::Cyan;
+      return {.fg = Color::Cyan};
     case Style::Value:
-      return Color::Green;
+      return {.fg = Color::Green};
     case Style::Warning:
-      return Color::Red;
+      return {.fg = Color::Red, .bold = true};
     case Style::Default:
     default:
-      return Color::Default;
+      return {};
   }
 }
 
@@ -316,10 +327,10 @@ static ftxui::Element frameToElement(const Frame& frame) {
       }
       
       Element elem = text(utf8);
-      Color col = styleToColor(currentStyle);
-      if (col != Color::Default) {
-        elem = elem | color(col);
-      }
+      const FtxuiStyle style = styleToFtxuiStyle(currentStyle);
+      if (style.fg) elem = elem | color(*style.fg);
+      if (style.bg) elem = elem | bgcolor(*style.bg);
+      if (style.bold) elem = elem | bold;
       lineElements.push_back(elem);
     }
     
@@ -380,6 +391,12 @@ static Command eventToCommand(const ftxui::Event& event, Screen currentScreen) {
   }
   if (event == Event::F4 || event == Event::Character('c') || event == Event::Character('C')) {
     return Command::NavConfig;
+  }
+  if (event == Event::F5) {
+    return Command::NavProcesses;
+  }
+  if (event == Event::F10) {
+    return Command::Quit;
   }
   if (event == Event::Character('p') || event == Event::Character('P')) {
     return Command::NavProcesses;
