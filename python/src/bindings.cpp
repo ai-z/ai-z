@@ -3,7 +3,18 @@
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
-#include <pybind11/optional.h>
+
+// pybind11 moved/removed optional caster headers across major versions.
+// Prefer the newer location when available.
+#if defined(__has_include)
+    #if __has_include(<pybind11/stl/optional.h>)
+        #include <pybind11/stl/optional.h>
+    #elif __has_include(<pybind11/optional.h>)
+        #include <pybind11/optional.h>
+    #endif
+#else
+    #include <pybind11/optional.h>
+#endif
 
 #include <aiz/metrics/collectors.h>
 #include <aiz/metrics/cpu_usage.h>
