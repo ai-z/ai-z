@@ -137,6 +137,8 @@ set(AI_Z_CORE_SOURCES
   src/aiz/bench/onnxruntime_bench.cpp
   src/aiz/bench/npu_bench.cpp
   src/aiz/metrics/gpu_sampler.cpp
+  src/aiz/snapshot/snapshot.cpp
+  src/aiz/snapshot/json_writer.cpp
 )
 
 if (AI_Z_PLATFORM_LINUX)
@@ -166,6 +168,8 @@ elseif (AI_Z_PLATFORM_WINDOWS)
     src/aiz/metrics/windows_d3dkmt.cpp
     src/aiz/metrics/npu_intel_windows.cpp
     src/aiz/metrics/npu_amd_windows.cpp
+    src/aiz/metrics/linux_gpu_sysfs.cpp
+    src/aiz/metrics/amd_rocm_smi_stub.cpp
     src/aiz/hw/hardware_info_windows.cpp
   )
 endif()

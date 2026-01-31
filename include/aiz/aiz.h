@@ -20,6 +20,9 @@
 // Hardware info - system probing
 #include <aiz/hw/hardware_info.h>         // HardwareInfo::probe()
 
+// Snapshot - JSON telemetry output
+#include <aiz/snapshot/snapshot.h>        // captureSystemSnapshot(), snapshotToJson()
+
 // Vendor-specific (optional, for advanced use)
 #include <aiz/metrics/nvidia_nvml.h>      // NVIDIA NVML direct access
 #include <aiz/metrics/amd_rocm_smi.h>     // AMD ROCm SMI direct access

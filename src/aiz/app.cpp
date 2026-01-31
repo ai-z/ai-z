@@ -7,6 +7,7 @@
 #include <aiz/metrics/intel_igcl.h>
 #include <aiz/metrics/windows_d3dkmt.h>
 #include <aiz/bench/report.h>
+#include <aiz/snapshot/snapshot.h>
 #include <aiz/tui/ui.h>
 #include <aiz/version.h>
 
@@ -44,6 +45,7 @@ static void printHelp(std::ostream& os) {
         "\n"
         "Usage:\n"
         "  ai-z [--debug] [--help|-h] [--version] [--hardware] [--bench-report] [--lang <tag>]\n"
+        "  ai-z --snapshot [--format json] [--snapshot-loop [MS]]\n"
         "\n"
         "Options:\n"
         "  --debug      Run with synthetic/fake timelines\n"
@@ -51,11 +53,14 @@ static void printHelp(std::ostream& os) {
         "  --version    Print version and exit\n"
         "  --hardware   Print hardware info and exit (no TUI)\n"
         "  --bench-report  Run all benchmarks and write an HTML report\n"
-      "  --diag-pcie  Print Windows PCIe link diagnostics and exit (Windows)\n"
+        "  --snapshot   Print JSON snapshot of all device telemetry and exit\n"
+        "  --format FMT Output format for snapshot: json (default: json)\n"
+        "  --snapshot-loop [MS]  Continuous snapshot loop (default: 500ms interval)\n"
+        "  --diag-pcie  Print Windows PCIe link diagnostics and exit (Windows)\n"
         "  --diag-adlx  Print AMD ADLX diagnostics and exit (Windows)\n"
         "  --diag-igcl  Print Intel IGCL diagnostics and exit (Windows)\n"
         "  --diag-igcl-full  Print detailed Intel IGCL diagnostics (Windows)\n"
-      "  --diag-d3dkmt  Print D3DKMT VRAM diagnostics (Windows)\n"
+        "  --diag-d3dkmt  Print D3DKMT VRAM diagnostics (Windows)\n"
         "  --diag-pdh-gpu  Print PDH GPU memory diagnostics (Windows)\n"
         "  --lang TAG   UI language (en, zh-CN). Also reads AI_Z_LANG / LANG\n";
 }
@@ -130,6 +135,36 @@ int App::run(int argc, char** argv) {
   if (hasFlag(argc, argv, "--version")) {
     std::cout << kAppDisplayName << " " << AIZ_VERSION << "\n";
     std::cout << AIZ_WEBSITE << "\n";
+    return 0;
+  }
+
+  if (hasFlag(argc, argv, "--snapshot")) {
+    // Check format (only json supported for now)
+    auto format = flagValue(argc, argv, "--format").value_or("json");
+    if (format != "json") {
+      std::cerr << "Error: unsupported format '" << format << "'. Only 'json' is supported.\n";
+      return 1;
+    }
+
+    // Check for loop mode
+    if (hasFlag(argc, argv, "--snapshot-loop")) {
+      auto loopVal = flagValue(argc, argv, "--snapshot-loop");
+      int intervalMs = 500;  // default
+      if (loopVal && !loopVal->empty()) {
+        try {
+          intervalMs = std::stoi(std::string(*loopVal));
+          if (intervalMs < 10) intervalMs = 10;  // minimum 10ms
+        } catch (...) {
+          std::cerr << "Error: invalid interval '" << *loopVal << "'. Using default 500ms.\n";
+          intervalMs = 500;
+        }
+      }
+      return runSnapshotLoop(intervalMs);
+    }
+
+    // Single snapshot mode
+    auto snapshot = captureSystemSnapshot();
+    std::cout << snapshotToJson(snapshot) << "\n";
     return 0;
   }
 

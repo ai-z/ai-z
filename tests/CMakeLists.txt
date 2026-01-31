@@ -66,10 +66,12 @@ add_executable(ai-z-tests
   minitest.h
   test_timeline.cpp
   test_version.cpp
+  test_snapshot.cpp
 
   # Compile only small, dependency-light modules.
   ../src/aiz/config/config.cpp
   ../src/aiz/metrics/timeline.cpp
+  ../src/aiz/snapshot/json_writer.cpp
 )
 
 if (WIN32)

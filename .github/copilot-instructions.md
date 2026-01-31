@@ -16,6 +16,7 @@ AI-Z is a cross-platform (Windows/Linux) C++20 terminal application for real-tim
 - `src/aiz/bench/` — Benchmark implementations (CUDA, OpenCL, Vulkan, ONNX Runtime)
 - `src/aiz/dyn/` — Runtime-loaded APIs (CUDA, Vulkan, OpenCL, ONNX RT)
 - `src/aiz/platform/{linux,windows}/` — OS-specific implementations
+- `src/aiz/snapshot/` — JSON snapshot output for headless telemetry export
 - `src/aiz/tui/` — FTXUI-based terminal UI components
 
 ### Dynamic Loading Pattern
@@ -47,6 +48,18 @@ cmake --build build -j
 ### Run Tests
 ```bash
 ctest --test-dir build -C Release --output-on-failure
+```
+
+### JSON Snapshot Output
+```bash
+# Single snapshot of all device telemetry
+ai-z --snapshot
+
+# Continuous loop (default 500ms refresh)
+ai-z --snapshot --snapshot-loop
+
+# Custom refresh interval (200ms)
+ai-z --snapshot --snapshot-loop 200
 ```
 
 ## CMake Options
