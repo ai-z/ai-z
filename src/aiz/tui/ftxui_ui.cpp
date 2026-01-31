@@ -327,10 +327,17 @@ static ftxui::Element frameToElement(const Frame& frame) {
 static Command eventToCommand(const ftxui::Event& event, Screen currentScreen) {
   using namespace ftxui;
   
-  // Quit
-  if (event == Event::Character('q') || event == Event::Character('Q') ||
-      event == Event::Escape) {
+  // Quit (only q/Q, not ESC - ESC is for back navigation)
+  if (event == Event::Character('q') || event == Event::Character('Q')) {
     return Command::Quit;
+  }
+  
+  // ESC goes back (or quits if on main screen)
+  if (event == Event::Escape) {
+    if (currentScreen == Screen::Timelines) {
+      return Command::Quit;
+    }
+    return Command::Back;
   }
   
   // Navigation keys

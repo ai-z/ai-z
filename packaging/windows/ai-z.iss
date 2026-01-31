@@ -56,10 +56,11 @@ Source: "{#SourceDir}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 [Icons]
 ; Use Windows Terminal (wt.exe) to launch ai-z for better terminal support
 ; Falls back to direct execution if wt.exe is not found
-Name: "{autoprograms}\\{#AppDisplayName}"; Filename: "{localappdata}\\Microsoft\\WindowsApps\\wt.exe"; Parameters: "-d ""{app}"" -- ""{app}\\{#AppExeName}"""; Check: WindowsTerminalExists
-Name: "{autoprograms}\\{#AppDisplayName}"; Filename: "{app}\\{#AppExeName}"; Check: not WindowsTerminalExists
-Name: "{autodesktop}\\{#AppDisplayName}"; Filename: "{localappdata}\\Microsoft\\WindowsApps\\wt.exe"; Parameters: "-d ""{app}"" -- ""{app}\\{#AppExeName}"""; Tasks: desktopicon; Check: WindowsTerminalExists
-Name: "{autodesktop}\\{#AppDisplayName}"; Filename: "{app}\\{#AppExeName}"; Tasks: desktopicon; Check: not WindowsTerminalExists
+; IconFilename uses the embedded icon from the exe
+Name: "{autoprograms}\\{#AppDisplayName}"; Filename: "{localappdata}\\Microsoft\\WindowsApps\\wt.exe"; Parameters: "-d ""{app}"" -- ""{app}\\{#AppExeName}"""; IconFilename: "{app}\\{#AppExeName}"; Check: WindowsTerminalExists
+Name: "{autoprograms}\\{#AppDisplayName}"; Filename: "{app}\\{#AppExeName}"; IconFilename: "{app}\\{#AppExeName}"; Check: not WindowsTerminalExists
+Name: "{autodesktop}\\{#AppDisplayName}"; Filename: "{localappdata}\\Microsoft\\WindowsApps\\wt.exe"; Parameters: "-d ""{app}"" -- ""{app}\\{#AppExeName}"""; IconFilename: "{app}\\{#AppExeName}"; Tasks: desktopicon; Check: WindowsTerminalExists
+Name: "{autodesktop}\\{#AppDisplayName}"; Filename: "{app}\\{#AppExeName}"; IconFilename: "{app}\\{#AppExeName}"; Tasks: desktopicon; Check: not WindowsTerminalExists
 
 [Run]
 ; Post-install run: prefer Windows Terminal if available
