@@ -12,10 +12,6 @@ Build-Depends:
  g++,
  git,
  pkg-config,
- libncurses-dev,
- libtinfo-dev,
- libunistring-dev,
- libdeflate-dev,
  opencl-headers,
  ocl-icd-opencl-dev,
  libvulkan-dev

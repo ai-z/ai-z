@@ -27,39 +27,22 @@ jobs:
             cmake \
             ninja-build \
             pkg-config \
-            libncurses-dev \
-            libunistring-dev \
-            libdeflate-dev \
             opencl-headers \
             ocl-icd-opencl-dev \
             libvulkan-dev \
             dpkg-dev
 
-      - name: Build notcurses from source
-        run: |
-          cd /tmp
-          git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
-          cd notcurses
-          mkdir build && cd build
-          cmake .. -GNinja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/usr \
-            -DUSE_MULTIMEDIA=none \
-            -DUSE_PANDOC=off \
-            -DUSE_DOCTEST=off \
-            -DUSE_QRCODEGEN=off \
-            -DUSE_STATIC=off \
-            -DBUILD_EXECUTABLES=off
-          ninja
-          sudo ninja install
-          sudo ldconfig
-          pkg-config --modversion notcurses
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '66c0373dc7fca549e5803087b9487edfe3aca0a1'
 
       - name: Configure
         run: |
           cmake -S . -B build-ci -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake \
             -DBUILD_TESTING=ON \
             -DAI_Z_TEST_BACKEND=minitest \
             -DAI_Z_ENABLE_CUDA=ON \

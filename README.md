@@ -64,8 +64,10 @@ On Intel Arc/Iris GPUs, metrics are queried via Intel Graphics Control Library (
 ### Linux
 
 ```bash
-sudo apt-get install -y build-essential cmake pkg-config libnotcurses-dev
-cmake -S . -B build
+sudo apt-get install -y build-essential cmake ninja-build pkg-config git
+git clone https://github.com/microsoft/vcpkg.git
+./vcpkg/bootstrap-vcpkg.sh
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build -j
 ./build/ai-z
 ```
@@ -111,49 +113,31 @@ sudo apt install ./ai-z_0.1.0_amd64.deb
 ### Windows
 
 **Prerequisites:**
-- [MSYS2](https://www.msys2.org/) with UCRT64 environment
+- Visual Studio 2022 with C++ development tools
 - CMake 3.16+
+- Git
 
-**One-time setup:**
+**Build:**
 
-1. Install MSYS2 from https://www.msys2.org/
-2. Open the **UCRT64** terminal (not MSYS or MINGW64)
-3. Install dependencies:
+1. Clone the vcpkg package manager and bootstrap it:
 
-```bash
-pacman -S base-devel git \
-  mingw-w64-ucrt-x86_64-cmake \
-  mingw-w64-ucrt-x86_64-ninja \
-  mingw-w64-ucrt-x86_64-toolchain \
-  mingw-w64-ucrt-x86_64-ncurses \
-  mingw-w64-ucrt-x86_64-libunistring \
-  mingw-w64-ucrt-x86_64-libdeflate \
-  mingw-w64-ucrt-x86_64-pkg-config
+```powershell
+git clone https://github.com/microsoft/vcpkg.git
+.\vcpkg\bootstrap-vcpkg.bat
 ```
 
-4. Build and install notcurses:
+3. Configure and build ai-z with Visual Studio:
 
-```bash
-cd /tmp
-git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
-cd notcurses && mkdir build && cd build
-cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/ucrt64 \
-  -DUSE_MULTIMEDIA=none -DUSE_PANDOC=off -DUSE_DOCTEST=off -DUSE_QRCODEGEN=off
-ninja && ninja install
-```
-
-**Build ai-z:**
-
-```bash
-# In MSYS2 UCRT64 terminal, from the ai-z source directory:
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+  -DCMAKE_TOOLCHAIN_FILE=.\vcpkg\scripts\buildsystems\vcpkg.cmake
+cmake --build build --config Release
 ```
 
 **Run:**
 
-```bash
-./build/ai-z.exe
+```powershell
+.\build\Release\ai-z.exe
 ```
 
 The TUI application will launch in your terminal. Use:

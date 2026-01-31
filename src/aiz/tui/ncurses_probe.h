@@ -4,7 +4,7 @@
 #include <vector>
 
 namespace aiz {
-class HardwareInfo;
+struct HardwareInfo;
 
 namespace ncurses {
 

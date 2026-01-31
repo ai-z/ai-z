@@ -5,7 +5,7 @@
 
 namespace aiz {
 
-class NotcursesUi : public Ui {
+class FtxuiUi : public Ui {
 public:
   int run(Config& cfg, bool debugMode) override;
 };

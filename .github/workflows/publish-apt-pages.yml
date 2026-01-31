@@ -31,47 +31,27 @@ jobs:
             cmake \
             ninja-build \
             pkg-config \
-            libncurses-dev \
-            libunistring-dev \
-            libdeflate-dev \
             opencl-headers \
             ocl-icd-opencl-dev \
             libvulkan-dev \
             dpkg-dev \
             apt-utils
 
-      - name: Build notcurses from source (static)
-        run: |
-          cd /tmp
-          git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
-          cd notcurses
-          mkdir build && cd build
-          cmake .. -GNinja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/usr \
-            -DUSE_MULTIMEDIA=none \
-            -DUSE_PANDOC=off \
-            -DUSE_DOCTEST=off \
-            -DUSE_QRCODEGEN=off \
-            -DUSE_STATIC=on \
-            -DBUILD_EXECUTABLES=off
-          ninja
-          sudo ninja install
-          sudo ldconfig
-          pkg-config --modversion notcurses
-          # Verify static libraries exist
-          ls -la /usr/lib/libnotcurses*.a || ls -la /usr/lib/x86_64-linux-gnu/libnotcurses*.a || true
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '66c0373dc7fca549e5803087b9487edfe3aca0a1'
 
       - name: Configure
         run: |
           cmake -S . -B build-release -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake \
             -DBUILD_TESTING=OFF \
             -DAI_Z_ENABLE_CUDA=ON \
             -DAI_Z_ENABLE_OPENCL=ON \
-            -DAI_Z_ENABLE_VULKAN=ON \
-            -DAI_Z_STATIC_NOTCURSES=ON
+            -DAI_Z_ENABLE_VULKAN=ON
 
       - name: Build
         run: cmake --build build-release

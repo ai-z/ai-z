@@ -16,23 +16,18 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build pkg-config \
-            libncurses-dev libunistring-dev libdeflate-dev
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config
 
-      - name: Build notcurses from source
-        run: |
-          cd /tmp
-          git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
-          cd notcurses && mkdir build && cd build
-          cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
-            -DUSE_MULTIMEDIA=none -DUSE_PANDOC=off -DUSE_DOCTEST=off -DUSE_QRCODEGEN=off \
-            -DUSE_STATIC=off -DBUILD_EXECUTABLES=off
-          ninja
-          sudo ninja install
-          sudo ldconfig
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '66c0373dc7fca549e5803087b9487edfe3aca0a1'
 
       - name: Configure
-        run: cmake -S . -B build
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
 
       - name: Build
         run: cmake --build build -j
@@ -40,46 +35,21 @@ jobs:
   build-windows:
     name: Build (Windows)
     runs-on: windows-latest
-    defaults:
-      run:
-        shell: msys2 {0}
-
-    env:
-      COLORTERM: truecolor
-      TERM: xterm
 
     steps:
-      - name: Install MSYS2 and dependencies
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >
-            base-devel
-            git
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-ncurses
-            mingw-w64-ucrt-x86_64-libunistring
-            mingw-w64-ucrt-x86_64-libdeflate
-            mingw-w64-ucrt-x86_64-pkg-config
-
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build notcurses from source
-        run: |
-          cd /tmp
-          git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
-          cd notcurses && mkdir build && cd build
-          cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/ucrt64 \
-            -DUSE_MULTIMEDIA=none -DUSE_PANDOC=off -DUSE_DOCTEST=off -DUSE_QRCODEGEN=off \
-            -DUSE_STATIC=off -DBUILD_EXECUTABLES=off
-          ninja
-          ninja install
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '66c0373dc7fca549e5803087b9487edfe3aca0a1'
 
       - name: Configure
         run: |
-          export PKG_CONFIG_PATH="/ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig:$PKG_CONFIG_PATH"
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/ucrt64
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Build
+        run: cmake --build build --config Release

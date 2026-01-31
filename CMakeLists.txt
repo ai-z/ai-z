@@ -5,8 +5,8 @@ cmake_minimum_required(VERSION 3.16)
 # - Release builds should pass an explicit override (e.g. from a tag).
 # - Developer builds can derive from git tags (vX.Y.Z) when available.
 # - If neither is available (e.g. source archive without .git), fall back.
-set(AI_Z_VERSION_FALLBACK "0.1.16")
-set(AI_Z_VERSION_OVERRIDE "" CACHE STRING "Override ai-z version (e.g. 0.1.17)")
+set(AI_Z_VERSION_FALLBACK "0.1.17")
+set(AI_Z_VERSION_OVERRIDE "" CACHE STRING "Override ai-z version (e.g. 0.1.18)")
 option(AI_Z_VERSION_FROM_GIT "Derive version from git tags (vX.Y.Z) when available" ON)
 
 set(AI_Z_VERSION "${AI_Z_VERSION_FALLBACK}")
@@ -30,26 +30,7 @@ endif()
 
 project(ai-z VERSION ${AI_Z_VERSION} LANGUAGES C CXX)
 
-# Helpful error message for Windows users building outside MSYS2
-if(WIN32 AND NOT MSYS AND NOT MINGW)
-  message(WARNING "
-  ╔══════════════════════════════════════════════════════════════════╗
-  ║  MSYS2/MinGW environment recommended for Windows builds.        ║
-  ║                                                                  ║
-  ║  notcurses (TUI library) requires MSYS2 with UCRT64 toolchain.  ║
-  ║                                                                  ║
-  ║  Quick setup:                                                    ║
-  ║    1. Install MSYS2 from https://www.msys2.org/                 ║
-  ║    2. Open UCRT64 terminal                                       ║
-  ║    3. pacman -S mingw-w64-ucrt-x86_64-toolchain                 ║
-  ║       mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja   ║
-  ║       mingw-w64-ucrt-x86_64-ncurses mingw-w64-ucrt-x86_64-libunistring ║
-  ║    4. Build notcurses from source, then build ai-z              ║
-  ║                                                                  ║
-  ║  See README.md for full Windows build instructions.             ║
-  ╚══════════════════════════════════════════════════════════════════╝
-  ")
-endif()
+# FTXUI is provided by vcpkg - no special Windows setup needed
 
 include(GNUInstallDirs)
 
@@ -258,14 +239,11 @@ if (AI_Z_PLATFORM_WINDOWS)
   endif()
 endif()
 
-# TUI sources (notcurses backend)
+# TUI sources (FTXUI backend)
 target_sources(ai-z PRIVATE
-  src/aiz/tui/platform_ui_notcurses.cpp
-  src/aiz/tui/notcurses_render.cpp
-  src/aiz/tui/notcurses_input.cpp
-  src/aiz/tui/notcurses_ui.cpp
+  src/aiz/tui/ftxui_ui.cpp
   src/aiz/tui/tui_core.cpp
-  # Shared helpers (don't depend on ncurses directly)
+  # Shared helpers
   src/aiz/tui/ncurses_probe.cpp
   src/aiz/tui/ncurses_telemetry.cpp
   src/aiz/tui/ncurses_bench.cpp
@@ -274,77 +252,9 @@ target_sources(ai-z PRIVATE
   src/aiz/tui/ncurses_bootprobe.cpp
 )
 
-# notcurses TUI library (cross-platform)
-# Static linking is preferred for distribution packages to avoid runtime dependencies
-option(AI_Z_STATIC_NOTCURSES "Link notcurses statically (recommended for distribution)" OFF)
-
-# Try CMake config first (works better on Windows), fall back to pkg-config
-find_package(Notcurses CONFIG QUIET)
-if (Notcurses_FOUND)
-  message(STATUS "Found notcurses via CMake config")
-  # notcurses CMake config sets variables with -l flags, not imported targets
-  # Use the library names directly without the -l prefix
-  target_include_directories(ai-z PRIVATE ${Notcurses_INCLUDE_DIRS})
-  target_link_directories(ai-z PRIVATE ${Notcurses_LIBRARY_DIRS})
-  if (AI_Z_STATIC_NOTCURSES)
-    # Look for static libraries
-    find_library(NOTCURSES_CORE_STATIC NAMES libnotcurses-core.a notcurses-core HINTS ${Notcurses_LIBRARY_DIRS})
-    find_library(NOTCURSES_STATIC NAMES libnotcurses.a notcurses HINTS ${Notcurses_LIBRARY_DIRS})
-    if (NOTCURSES_CORE_STATIC AND NOTCURSES_STATIC)
-      message(STATUS "Using static notcurses libraries")
-      # Link order matters: notcurses -> notcurses-core -> dependencies
-      # On Linux, tinfo provides terminfo functions (tigetstr, tiparm, etc.)
-      target_link_libraries(ai-z PRIVATE
-        ${NOTCURSES_STATIC}
-        ${NOTCURSES_CORE_STATIC}
-        ncurses
-        tinfo
-        unistring
-        deflate
-      )
-    else()
-      message(WARNING "Static notcurses libraries not found, falling back to dynamic")
-      target_link_libraries(ai-z PRIVATE notcurses-core notcurses)
-    endif()
-  else()
-    target_link_libraries(ai-z PRIVATE notcurses-core notcurses)
-  endif()
-else()
-  find_package(PkgConfig REQUIRED)
-  if (AI_Z_STATIC_NOTCURSES)
-    pkg_check_modules(NOTCURSES REQUIRED IMPORTED_TARGET notcurses>=3.0)
-    pkg_check_modules(NOTCURSES_CORE REQUIRED IMPORTED_TARGET notcurses-core>=3.0)
-    # Get library directory and look for static libs
-    pkg_get_variable(NOTCURSES_LIBDIR notcurses libdir)
-    find_library(NOTCURSES_CORE_STATIC NAMES libnotcurses-core.a HINTS ${NOTCURSES_LIBDIR})
-    find_library(NOTCURSES_STATIC NAMES libnotcurses.a HINTS ${NOTCURSES_LIBDIR})
-    if (NOTCURSES_CORE_STATIC AND NOTCURSES_STATIC)
-      message(STATUS "Using static notcurses libraries: ${NOTCURSES_CORE_STATIC} ${NOTCURSES_STATIC}")
-      target_include_directories(ai-z PRIVATE ${NOTCURSES_INCLUDE_DIRS})
-      # Static notcurses needs its dependencies linked in correct order
-      # notcurses -> notcurses-core -> ncurses/tinfo -> unistring -> deflate
-      target_link_libraries(ai-z PRIVATE
-        ${NOTCURSES_STATIC}
-        ${NOTCURSES_CORE_STATIC}
-        ncurses
-        tinfo
-        unistring
-        deflate
-      )
-    else()
-      message(WARNING "Static notcurses libraries not found at ${NOTCURSES_LIBDIR}, falling back to dynamic")
-      target_include_directories(ai-z PRIVATE ${NOTCURSES_INCLUDE_DIRS})
-      target_link_libraries(ai-z PRIVATE ${NOTCURSES_LIBRARIES})
-      target_link_directories(ai-z PRIVATE ${NOTCURSES_LIBRARY_DIRS})
-    endif()
-  else()
-    pkg_check_modules(NOTCURSES REQUIRED notcurses>=3.0)
-    target_include_directories(ai-z PRIVATE ${NOTCURSES_INCLUDE_DIRS})
-    target_link_libraries(ai-z PRIVATE ${NOTCURSES_LIBRARIES})
-    target_link_directories(ai-z PRIVATE ${NOTCURSES_LIBRARY_DIRS})
-  endif()
-  target_compile_options(ai-z PRIVATE ${NOTCURSES_CFLAGS_OTHER})
-endif()
+# FTXUI TUI library (cross-platform, header-only with static libs)
+find_package(ftxui CONFIG REQUIRED)
+target_link_libraries(ai-z PRIVATE ftxui::screen ftxui::dom ftxui::component)
 
 if (AI_Z_PLATFORM_LINUX)
   target_link_libraries(ai-z PRIVATE dl)

@@ -12,86 +12,29 @@ concurrency:
 jobs:
   build-test-zip:
     runs-on: windows-latest
-    defaults:
-      run:
-        shell: msys2 {0}
-
-    env:
-      COLORTERM: truecolor
-      TERM: xterm
-      PKG_CONFIG_PATH: /ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig
 
     steps:
-      - name: Install MSYS2 and dependencies
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >
-            base-devel
-            git
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-ncurses
-            mingw-w64-ucrt-x86_64-libunistring
-            mingw-w64-ucrt-x86_64-libdeflate
-            mingw-w64-ucrt-x86_64-pkg-config
-            mingw-w64-ucrt-x86_64-opencl-headers
-            mingw-w64-ucrt-x86_64-opencl-icd
-
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build notcurses from source
-        run: |
-          cd /tmp
-          git clone --depth 1 --branch v3.0.17 https://github.com/dankamongmen/notcurses.git
-          cd notcurses
-          mkdir build && cd build
-          cmake .. \
-            -GNinja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/ucrt64 \
-            -DUSE_MULTIMEDIA=none \
-            -DUSE_PANDOC=off \
-            -DUSE_DOCTEST=off \
-            -DUSE_QRCODEGEN=off \
-            -DUSE_STATIC=off \
-            -DBUILD_EXECUTABLES=off
-          ninja
-          ninja install
-          # Verify installation
-          ls -la /ucrt64/libdata/pkgconfig/notcurses*.pc
-          export PKG_CONFIG_PATH="/ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig:$PKG_CONFIG_PATH"
-          pkg-config --modversion notcurses
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '66c0373dc7fca549e5803087b9487edfe3aca0a1'
 
       - name: Configure ai-z
         run: |
-          export PKG_CONFIG_PATH="/ucrt64/libdata/pkgconfig:/ucrt64/lib/pkgconfig:/ucrt64/share/pkgconfig:$PKG_CONFIG_PATH"
-          export CMAKE_PREFIX_PATH="/ucrt64"
-          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
-          echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
-          # Debug: show what pkg-config files exist
-          ls /ucrt64/lib/pkgconfig/ || true
-          ls /ucrt64/libdata/pkgconfig/ || true
-          # Debug: check for CMake config files
-          ls /ucrt64/lib/cmake/ || true
-          ls /ucrt64/lib/cmake/Notcurses/ || true
-          pkg-config --modversion notcurses
-          pkg-config --libs notcurses || true
-          cmake -S . -B build-ci -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_BINDIR=. \
-            -DCMAKE_PREFIX_PATH=/ucrt64 \
-            -DAI_Z_ENABLE_VULKAN=OFF \
+          cmake -S . -B build-ci -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DAI_Z_ENABLE_VULKAN=OFF `
             -DAI_Z_ENABLE_OPENCL=ON
 
       - name: Build ai-z
-        run: cmake --build build-ci
+        run: cmake --build build-ci --config Release
 
       - name: Test
-        run: ctest --test-dir build-ci --output-on-failure
+        run: ctest --test-dir build-ci -C Release --output-on-failure
 
       - name: Package (zip)
         shell: pwsh
@@ -101,49 +44,11 @@ jobs:
           New-Item -ItemType Directory -Path $stage | Out-Null
 
           # Copy the built executable
-          $exe = "build-ci/ai-z.exe"
+          $exe = "build-ci/Release/ai-z.exe"
           if (!(Test-Path $exe)) {
             throw "Expected ai-z.exe at $exe"
           }
           Copy-Item $exe $stage
-
-          # Copy required MSYS2/MinGW DLLs
-          $msys2Bin = "D:\a\_temp\msys64\ucrt64\bin"
-          $requiredDlls = @(
-            "libnotcurses.dll",
-            "libnotcurses-core.dll",
-            "libncursesw6.dll",
-            "libunistring-5.dll",
-            "libdeflate.dll",
-            "libgcc_s_seh-1.dll",
-            "libstdc++-6.dll",
-            "libwinpthread-1.dll",
-            "libiconv-2.dll",
-            "libintl-8.dll"
-          )
-          
-          foreach ($dll in $requiredDlls) {
-            $src = Join-Path $msys2Bin $dll
-            if (Test-Path $src) {
-              Copy-Item $src $stage
-              Write-Host "Copied: $dll"
-            } else {
-              Write-Host "Warning: $dll not found at $src"
-            }
-          }
-
-          # Also copy any additional DLLs that dumpbin finds
-          $exePath = Join-Path $stage "ai-z.exe"
-          $systemDlls = @(
-            'KERNEL32.dll','USER32.dll','GDI32.dll','ADVAPI32.dll','SHELL32.dll','OLE32.dll','OLEAUT32.dll',
-            'WS2_32.dll','IPHLPAPI.dll','PSAPI.dll','NTDLL.dll','CRYPT32.dll','COMDLG32.dll','COMCTL32.dll',
-            'SHLWAPI.dll','VERSION.dll','IMM32.dll','UXTHEME.dll','DWMAPI.dll','SETUPAPI.dll','WINMM.dll',
-            'api-ms-win-crt-runtime-l1-1-0.dll','api-ms-win-crt-heap-l1-1-0.dll','api-ms-win-crt-stdio-l1-1-0.dll',
-            'api-ms-win-crt-locale-l1-1-0.dll','api-ms-win-crt-math-l1-1-0.dll','api-ms-win-crt-string-l1-1-0.dll',
-            'api-ms-win-crt-time-l1-1-0.dll','api-ms-win-crt-filesystem-l1-1-0.dll','api-ms-win-crt-environment-l1-1-0.dll',
-            'api-ms-win-crt-convert-l1-1-0.dll','api-ms-win-crt-utility-l1-1-0.dll','api-ms-win-crt-multibyte-l1-1-0.dll',
-            'msvcrt.dll','ucrtbase.dll','DXGI.dll','PDH.dll'
-          )
 
           $zip = Join-Path $PWD "ai-z-windows-${{ github.sha }}.zip"
           if (Test-Path $zip) { Remove-Item -Force $zip }
