@@ -1,0 +1,7 @@
+ai-z (0.1.0-1) unstable; urgency=medium
+
+  * Initial Debian packaging for Launchpad/PPA builds.
+  * Enable OpenCL and Vulkan backends by default.
+  * Keep CUDA runtime-optional (driver API); no CUDA toolkit dependency.
+
+ -- AI-Z Team <team@ai-z.org>  Sat, 18 Jan 2026 00:00:00 +0000

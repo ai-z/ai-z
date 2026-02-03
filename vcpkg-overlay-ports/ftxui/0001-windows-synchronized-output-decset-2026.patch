@@ -1,0 +1,22 @@
+--- a/src/ftxui/component/screen_interactive.cpp
++++ b/src/ftxui/component/screen_interactive.cpp
+@@ -906,6 +906,9 @@
+   if (frame_valid_) {
+     return;
+   }
++#if defined(_WIN32)
++  std::cout << "\x1b[?2026h";
++#endif
+   auto document = component->Render();
+   int dimx = 0;
+   int dimy = 0;
+@@ -1010,6 +1013,9 @@
+   }
+ 
+   std::cout << ToString() << set_cursor_position;
++#if defined(_WIN32)
++  std::cout << "\x1b[?2026l";
++#endif
+   Flush();
+   Clear();
+   frame_valid_ = true;

@@ -1,0 +1,11 @@
+#version 450
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(set = 0, binding = 0) buffer OutBuf { float outData[]; } outBuf;
+void main() {
+  uint id = gl_GlobalInvocationID.x;
+  float x = float(id);
+  for (int i = 0; i < 4096; ++i) {
+    x = x * 1.0000001 + 0.0000001;
+  }
+  outBuf.outData[id] = x;
+}

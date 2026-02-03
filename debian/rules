@@ -1,0 +1,13 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@ --buildsystem=cmake --builddirectory=build
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DBUILD_TESTING=OFF \
+		-DAI_Z_ENABLE_CUDA=ON \
+		-DAI_Z_ENABLE_OPENCL=ON \
+		-DAI_Z_ENABLE_VULKAN=ON
+

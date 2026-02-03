@@ -1,0 +1,217 @@
+# Build and publish Python wheels for AI-Z metrics library
+name: Python Wheels
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+    paths:
+      - 'python/**'
+      - 'src/**'
+      - 'include/**'
+      - '.github/workflows/python-wheels.yml'
+  pull_request:
+    paths:
+      - 'python/**'
+      - 'src/**'
+      - 'include/**'
+      - '.github/workflows/python-wheels.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish_pypi:
+        description: "Publish built distributions to PyPI (opt-in)"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build_wheels:
+    name: Build wheels on Linux
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set version from tag
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'release'
+        env:
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VERSION="${TAG#v}"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+
+          pyproject = Path("python/pyproject.toml")
+          text = pyproject.read_text(encoding="utf-8")
+          text = __import__("re").sub(r'(?m)^version\s*=\s*"[^"]+"\s*$', f'version = "{version}"', text)
+          pyproject.write_text(text, encoding="utf-8")
+
+          init_py = Path("python/aiz/__init__.py")
+          text = init_py.read_text(encoding="utf-8")
+          text = __import__("re").sub(r'(?m)^__version__\s*=\s*"[^"]+"\s*$', f'__version__ = "{version}"', text)
+          init_py.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Install cibuildwheel
+        run: python -m pip install cibuildwheel==2.16.2
+
+      - name: Build wheels
+        env:
+          CIBW_BUILD: "cp39-manylinux_x86_64 cp310-manylinux_x86_64 cp311-manylinux_x86_64 cp312-manylinux_x86_64"
+          CIBW_SKIP: "*-musllinux*"
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
+          CIBW_BEFORE_ALL_LINUX: |
+            yum install -y cmake3 || yum install -y cmake
+            pip install pybind11 scikit-build-core
+          CIBW_ENVIRONMENT: |
+            CMAKE_BUILD_PARALLEL_LEVEL=4
+          CIBW_BUILD_VERBOSITY: "3"
+        run: python -m cibuildwheel python/ --output-dir wheelhouse
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels
+          path: wheelhouse/*.whl
+
+  build_sdist:
+    name: Build source distribution
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set version from tag
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'release'
+        env:
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          export VERSION="$version"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+
+          version = os.environ["VERSION"]
+
+          pyproject = Path("python/pyproject.toml")
+          text = pyproject.read_text(encoding="utf-8")
+          text = re.sub(r'(?m)^version\s*=\s*"[^"]+"\s*$', f'version = "{version}"', text)
+          pyproject.write_text(text, encoding="utf-8")
+
+          init_py = Path("python/aiz/__init__.py")
+          text = init_py.read_text(encoding="utf-8")
+          text = re.sub(r'(?m)^__version__\s*=\s*"[^"]+"\s*$', f'__version__ = "{version}"', text)
+          init_py.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Install build tools
+        run: python -m pip install build
+
+      - name: Build sdist
+        working-directory: python
+        run: python -m build --sdist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-sdist
+          path: python/dist/*.tar.gz
+
+  publish:
+    name: Publish to PyPI
+    needs: [build_wheels, build_sdist]
+    runs-on: ubuntu-22.04
+    # Publishing to PyPI is intentionally opt-in.
+    # This job only runs when manually dispatched with publish_pypi=true.
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_pypi
+
+    permissions:
+      id-token: write  # Required for trusted publishing
+
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheels
+          path: dist/
+
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Configure trusted publishing in PyPI project settings
+          # https://docs.pypi.org/trusted-publishers/
+          skip-existing: true
+
+  release:
+    name: Upload to GitHub Release
+    needs: [build_wheels, build_sdist]
+    runs-on: ubuntu-22.04
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'release'
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheels
+          path: dist/
+
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdist
+          path: dist/
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          files=(dist/*)
+          if (( ${#files[@]} == 0 )); then
+            echo "No files found under dist/" >&2
+            exit 0
+          fi
+
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "AI-Z $TAG" --generate-notes
+          fi
+
+          gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"

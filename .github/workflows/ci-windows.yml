@@ -1,0 +1,62 @@
+name: CI (Windows)
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-zip:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+
+      - name: Configure ai-z
+        run: |
+          cmake -S . -B build-ci -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DAI_Z_ENABLE_VULKAN=OFF `
+            -DAI_Z_ENABLE_OPENCL=ON
+
+      - name: Build ai-z
+        run: cmake --build build-ci --config Release
+
+      - name: Test
+        run: ctest --test-dir build-ci -C Release --output-on-failure
+
+      - name: Package (zip)
+        shell: pwsh
+        run: |
+          $stage = Join-Path $PWD "dist\ai-z-windows-${{ github.sha }}"
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+
+          # Copy the built executable
+          $exe = "build-ci/Release/ai-z.exe"
+          if (!(Test-Path $exe)) {
+            throw "Expected ai-z.exe at $exe"
+          }
+          Copy-Item $exe $stage
+
+          $zip = Join-Path $PWD "ai-z-windows-${{ github.sha }}.zip"
+          if (Test-Path $zip) { Remove-Item -Force $zip }
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-z-windows-zip-${{ github.sha }}
+          path: ai-z-windows-${{ github.sha }}.zip
+          if-no-files-found: error

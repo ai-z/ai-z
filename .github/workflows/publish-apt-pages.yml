@@ -1,0 +1,78 @@
+name: Build APT repo (artifact)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Build on Ubuntu 22.04 to keep runtime dependencies compatible with Jammy.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            opencl-headers \
+            ocl-icd-opencl-dev \
+            libvulkan-dev \
+            dpkg-dev \
+            apt-utils
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '66c0373dc7fca549e5803087b9487edfe3aca0a1'
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DBUILD_TESTING=OFF \
+            -DAI_Z_ENABLE_CUDA=ON \
+            -DAI_Z_ENABLE_OPENCL=ON \
+            -DAI_Z_ENABLE_VULKAN=ON
+
+      - name: Build
+        run: cmake --build build-release
+
+      - name: Package (.deb)
+        run: |
+          cd build-release
+          cpack -G DEB
+
+      - name: Generate APT repository tree
+        run: |
+          rm -rf public
+          mkdir -p public
+          deb_path="$(ls -1 build-release/*.deb | head -n 1)"
+          ./packaging/apt/make_repo.sh "$deb_path" ./public stable main
+
+      - name: Upload APT repo artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apt-repo
+          path: public
+          if-no-files-found: error

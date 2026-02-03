@@ -1,0 +1,27 @@
+Source: ai-z
+Section: utils
+Priority: optional
+Maintainer: AI-Z Team <team@ai-z.org>
+Homepage: https://www.ai-z.org
+Rules-Requires-Root: no
+Standards-Version: 4.6.2
+Build-Depends:
+ debhelper-compat (= 13),
+ cmake,
+ ninja-build,
+ g++,
+ git,
+ pkg-config,
+ opencl-headers,
+ ocl-icd-opencl-dev,
+ libvulkan-dev
+
+Package: ai-z
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: ocl-icd-libopencl1, libvulkan1
+Suggests: clinfo, vulkan-tools
+Description: TUI performance timelines and benchmarks (CPU/GPU/Disk/PCIe)
+ ai-z is a terminal UI (TUI) app that displays performance timelines and runs
+ quick benchmarks. OpenCL/Vulkan benchmarks are built in by default, but remain
+ runtime-optional via dynamic loading.

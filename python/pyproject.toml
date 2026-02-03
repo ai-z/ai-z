@@ -1,0 +1,57 @@
+[build-system]
+requires = ["scikit-build-core>=0.5", "pybind11>=2.11"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "ai-z"
+version = "0.1.64"
+description = "Hardware metrics library for CPU, RAM, GPU telemetry on Linux"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "AI-Z Contributors"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Hardware",
+    "Topic :: System :: Monitoring",
+]
+keywords = ["gpu", "cpu", "metrics", "telemetry", "nvidia", "amd", "monitoring", "hardware"]
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+demo = ["rich>=13.0"]
+dev = ["pytest>=7.0", "rich>=13.0"]
+
+[project.urls]
+Homepage = "https://github.com/your-org/ai-z"
+Documentation = "https://github.com/your-org/ai-z#readme"
+Repository = "https://github.com/your-org/ai-z"
+Issues = "https://github.com/your-org/ai-z/issues"
+
+[tool.scikit-build]
+cmake.source-dir = "."
+cmake.build-type = "Release"
+wheel.packages = ["aiz"]
+wheel.py-api = "cp312"
+
+[tool.scikit-build.cmake.define]
+CMAKE_BUILD_TYPE = "Release"
+
+[tool.cibuildwheel]
+build = "cp39-manylinux* cp310-manylinux* cp311-manylinux* cp312-manylinux*"
+skip = "*-musllinux*"
+manylinux-x86_64-image = "manylinux2014"
+
+[tool.cibuildwheel.linux]
+before-all = "yum install -y pybind11-devel || pip install pybind11"

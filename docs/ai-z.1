@@ -1,0 +1,86 @@
+.TH AI-Z 1 "January 2026" "ai-z" "User Commands"
+.SH NAME
+ai-z \- performance timelines (CPU/GPU/Disk/PCIe) and benchmarks
+.SH SYNOPSIS
+.B ai-z
+.RI [ options ]
+.SH DESCRIPTION
+.B ai-z
+is a terminal UI (TUI) application that displays performance timelines and runs quick benchmarks.
+.TP
+.B F5
+or
+.B M
+Minimal
+.TP
+.B F6
+or
+.B P
+Processes
+
+Use function keys (or the listed letter shortcuts) to switch views.
+.SH OPTIONS
+.TP
+.BR \-\-help " , " \-h
+Print help and exit.
+.TP
+.BR \-\-version
+Print version and exit.
+.TP
+.BR \-\-debug
+.TP
+Run with synthetic/fake timelines (useful for debugging the timeline renderer).
+.SH KEYS
+.TP
+.B F1
+or
+.B H
+Help
+.TP
+.B F2
+or
+.B W
+Hardware info
+.TP
+.B F3
+or
+.B B
+Benchmarks
+.TP
+.B F4
+or
+.B C
+Config display
+.TP
+.B F5
+or
+.B M
+Minimal
+.TP
+.B F6
+or
+.B P
+Processes
+.TP
+.B F10
+or
+.B Q
+Quit
+.SH BENCHMARKS
+Some benchmarks depend on optional GPU backends (e.g. CUDA, Vulkan, OpenCL).
+If a backend was not built in, or if the required runtime libraries/drivers are missing on the system,
+the benchmark may appear as unavailable.
+
+CUDA support is runtime-optional: it becomes available when the NVIDIA driver (libcuda) is present.
+The CUDA Toolkit (nvcc) is not required to run the built-in CUDA benchmarks.
+Some CUDA compute benchmarks may use a compatibility fallback when native instructions are not supported
+by the current GPU/driver (results may be labeled as emulated).
+.SH FILES
+.TP
+.I ~/.config/ai-z/config.ini
+Configuration file (or
+.BR $XDG_CONFIG_HOME/ai-z/config.ini
+if set).
+.SH SEE ALSO
+Project website:
+.I https://www.ai-z.org

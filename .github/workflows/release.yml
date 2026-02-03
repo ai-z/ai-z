@@ -1,0 +1,258 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish (e.g. v0.1.11). Create/push the tag first; this workflow will not create it."
+        required: true
+        type: string
+      build_installer:
+        description: "Also build a Windows installer (.exe) using Inno Setup"
+        required: false
+        default: true
+        type: boolean
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.event.release.tag_name }}
+
+jobs:
+  build-windows:
+    name: Build Windows zip
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '66c0373dc7fca549e5803087b9487edfe3aca0a1'
+
+      - name: Configure
+        run: |
+          $version = "${{ env.TAG }}" -replace '^v', ''
+          cmake -S . -B build-release -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DAI_Z_VERSION_OVERRIDE="$version" `
+            -DAI_Z_ENABLE_VULKAN=OFF `
+            -DAI_Z_ENABLE_OPENCL=ON
+
+      - name: Build
+        run: cmake --build build-release --config Release
+
+      - name: Stage portable folder
+        shell: pwsh
+        run: |
+          $stage = Join-Path $PWD "dist\ai-z-${{ env.TAG }}-windows-x64"
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+
+          # Copy the built executable
+          $exe = "build-release/Release/ai-z.exe"
+          if (!(Test-Path $exe)) {
+            throw "Expected ai-z.exe at $exe"
+          }
+          Copy-Item $exe $stage
+
+          Copy-Item -Force LICENSE (Join-Path $stage "LICENSE")
+          Copy-Item -Force README.md (Join-Path $stage "README.md")
+
+      - name: Create zip
+        shell: pwsh
+        run: |
+          $zipVersioned = Join-Path $PWD "dist\ai-z-${{ env.TAG }}-windows-x64.zip"
+          $zipLatest = Join-Path $PWD "dist\ai-z-windows-x64.zip"
+          if (Test-Path $zipVersioned) { Remove-Item -Force $zipVersioned }
+          if (Test-Path $zipLatest) { Remove-Item -Force $zipLatest }
+
+          Compress-Archive -Path (Join-Path $PWD "dist\ai-z-${{ env.TAG }}-windows-x64\*") -DestinationPath $zipVersioned
+          Copy-Item -Force $zipVersioned $zipLatest
+
+      - name: Build installer (Inno Setup)
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_installer) || github.event_name == 'release' }}
+        shell: pwsh
+        run: |
+          choco install innosetup -y
+
+          $version = "${{ env.TAG }}" -replace '^v', ''
+
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) {
+            throw "ISCC.exe not found at $iscc"
+          }
+
+          $outDir = Join-Path $PWD "dist"
+          $sourceDir = Join-Path $PWD "dist\ai-z-${{ env.TAG }}-windows-x64"
+          $iconFile = Join-Path $PWD "packaging\windows\ai-z.ico"
+          
+          $isccArgs = @(
+            "/DAppVersion=$version"
+            "/DSourceDir=$sourceDir"
+            "/DOutputDir=$outDir"
+            "/DOutputBaseFilename=ai-z-${{ env.TAG }}-windows-x64-setup"
+          )
+          if (Test-Path $iconFile) {
+            $isccArgs += "/DIconFile=$iconFile"
+          }
+          $isccArgs += "packaging\windows\ai-z.iss"
+          
+          & $iscc @isccArgs
+
+          # Also emit a stable filename for /releases/latest/download/...
+          Copy-Item -Force (Join-Path $outDir "ai-z-${{ env.TAG }}-windows-x64-setup.exe") (Join-Path $outDir "ai-z-windows-x64-setup.exe")
+
+      - name: Upload artifact (zip)
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: |
+            dist/ai-z-${{ env.TAG }}-windows-x64.zip
+            dist/ai-z-windows-x64.zip
+          if-no-files-found: error
+
+      - name: Upload artifact (installer)
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_installer) || github.event_name == 'release' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-installer
+          path: |
+            dist/ai-z-${{ env.TAG }}-windows-x64-setup.exe
+            dist/ai-z-windows-x64-setup.exe
+          if-no-files-found: error
+
+  build-linux:
+    name: Build Linux .deb
+    # Build on Ubuntu 22.04 so the .deb installs on Ubuntu 22.04+.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            opencl-headers \
+            ocl-icd-opencl-dev \
+            libvulkan-dev \
+            dpkg-dev
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '66c0373dc7fca549e5803087b9487edfe3aca0a1'
+
+      - name: Configure
+        run: |
+          version="${TAG#v}"
+          cmake -S . -B build-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DAI_Z_VERSION_OVERRIDE="$version" \
+            -DBUILD_TESTING=OFF \
+            -DAI_Z_ENABLE_CUDA=ON \
+            -DAI_Z_ENABLE_OPENCL=ON \
+            -DAI_Z_ENABLE_VULKAN=ON
+
+      - name: Build
+        run: cmake --build build-release
+
+      - name: Package (.deb)
+        run: |
+          cd build-release
+          cpack -G DEB
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          deb_path="$(ls -1 build-release/*.deb | head -n 1)"
+          cp -v "$deb_path" "dist/ai-z-${TAG}-linux-amd64.deb"
+          cp -v "$deb_path" "dist/ai-z-linux-amd64.deb"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: dist/*.deb
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-windows, build-linux]
+
+    steps:
+      - name: Verify tag exists (safety check)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ env.TAG }}
+        run: |
+          set -euo pipefail
+          # Fail fast if the tag doesn't exist on the remote (avoid accidentally creating it).
+          gh api -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" > /dev/null
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: List files
+        run: |
+          set -euo pipefail
+          find dist -type f -maxdepth 3 -print
+
+      - name: Create GitHub Release (manual runs)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ai-z ${{ env.TAG }}
+          generate_release_notes: true
+
+      - name: Upload assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          files=(
+            dist/**/ai-z-${TAG}-windows-x64.zip
+            dist/**/ai-z-windows-x64.zip
+            dist/**/ai-z-${TAG}-windows-x64-setup.exe
+            dist/**/ai-z-windows-x64-setup.exe
+            dist/**/ai-z-${TAG}-linux-amd64.deb
+            dist/**/ai-z-linux-amd64.deb
+          )
+          if (( ${#files[@]} == 0 )); then
+            echo "ERROR: no release assets found under dist/" >&2
+            find dist -maxdepth 4 -type f -print >&2 || true
+            exit 1
+          fi
+
+          echo "Uploading to release tag: ${TAG}"
+          printf ' - %s\n' "${files[@]}"
+          gh release upload "${TAG}" "${files[@]}" --clobber --repo "${GITHUB_REPOSITORY}"

@@ -1,0 +1,16 @@
+{
+  "name": "ai-z",
+  "version": "0.1.0",
+  "builtin-baseline": "6d7bf7ef2193e2d1c5798a5ff8811d533104c861",
+  "dependencies": [
+    "ftxui",
+    {
+      "name": "opencl",
+      "platform": "windows"
+    },
+    {
+      "name": "level-zero",
+      "platform": "windows"
+    }
+  ]
+}
