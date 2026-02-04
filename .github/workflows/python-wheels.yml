@@ -77,7 +77,48 @@ jobs:
           CIBW_SKIP: "*-musllinux*"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
           CIBW_BEFORE_ALL_LINUX: |
+            set -euo pipefail
+
+            # Tooling
+            yum install -y curl tar gzip git || true
             yum install -y cmake3 || yum install -y cmake
+
+            # OpenCL headers (required by default build)
+            yum install -y opencl-headers ocl-icd-devel || true
+            if [[ ! -f /usr/include/CL/cl.h && ! -f /usr/local/include/CL/cl.h ]]; then
+              echo "OpenCL headers not found via yum; bootstrapping Khronos OpenCL-Headers..."
+              tmpdir="$(mktemp -d)"
+              curl -fsSL -o "$tmpdir/opencl-headers.tgz" \
+                https://github.com/KhronosGroup/OpenCL-Headers/archive/refs/heads/main.tar.gz
+              tar -xzf "$tmpdir/opencl-headers.tgz" -C "$tmpdir"
+              srcdir="$(find "$tmpdir" -maxdepth 1 -type d -name 'OpenCL-Headers-*' | head -n 1)"
+              if [[ -z "$srcdir" || ! -d "$srcdir" ]]; then
+                echo "Failed to unpack OpenCL-Headers" >&2
+                exit 1
+              fi
+              mkdir -p /usr/local/include
+              cp -R "$srcdir/CL" /usr/local/include/
+              rm -rf "$tmpdir"
+            fi
+
+            # Vulkan headers (required by default build)
+            yum install -y vulkan-headers || true
+            if [[ ! -f /usr/include/vulkan/vulkan.h && ! -f /usr/local/include/vulkan/vulkan.h ]]; then
+              echo "Vulkan headers not found via yum; bootstrapping Khronos Vulkan-Headers..."
+              tmpdir="$(mktemp -d)"
+              curl -fsSL -o "$tmpdir/vulkan-headers.tgz" \
+                https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/heads/main.tar.gz
+              tar -xzf "$tmpdir/vulkan-headers.tgz" -C "$tmpdir"
+              srcdir="$(find "$tmpdir" -maxdepth 1 -type d -name 'Vulkan-Headers-*' | head -n 1)"
+              if [[ -z "$srcdir" || ! -d "$srcdir" ]]; then
+                echo "Failed to unpack Vulkan-Headers" >&2
+                exit 1
+              fi
+              mkdir -p /usr/local/include
+              cp -R "$srcdir/include/vulkan" /usr/local/include/
+              rm -rf "$tmpdir"
+            fi
+
             pip install pybind11 scikit-build-core
           CIBW_ENVIRONMENT: |
             CMAKE_BUILD_PARALLEL_LEVEL=4
