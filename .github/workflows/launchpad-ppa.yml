@@ -1,0 +1,181 @@
+name: Upload to Launchpad PPA
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to upload (e.g. v0.1.11). Defaults to the ref tag on tag push."
+        required: false
+        type: string
+      ppa:
+        description: "Launchpad PPA in the form owner/ppa (e.g. myuser/ai-z). Defaults to secret LAUNCHPAD_PPA."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  PPA: ${{ inputs.ppa || secrets.LAUNCHPAD_PPA }}
+
+jobs:
+  upload:
+    name: Build source packages + dput
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Validate configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${PPA}" ]]; then
+            echo "ERROR: PPA not set. Provide workflow input 'ppa' or secret LAUNCHPAD_PPA (owner/ppa)." >&2
+            exit 1
+          fi
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "ERROR: TAG must look like vX.Y.Z (got '${TAG}')." >&2
+            exit 1
+          fi
+
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          fetch-depth: 0
+
+      - name: Install packaging tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            devscripts \
+            debhelper \
+            dpkg-dev \
+            dput-ng \
+            gnupg \
+            openssh-client \
+            rsync \
+            ca-certificates
+
+      - name: Import GPG key (for signing uploads)
+        shell: bash
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.LAUNCHPAD_GPG_PASSPHRASE }}
+          GPG_FINGERPRINT: ${{ secrets.LAUNCHPAD_GPG_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GPG_PRIVATE_KEY}" || -z "${GPG_FINGERPRINT}" ]]; then
+            echo "ERROR: Missing secrets LAUNCHPAD_GPG_PRIVATE_KEY and/or LAUNCHPAD_GPG_FINGERPRINT." >&2
+            exit 1
+          fi
+
+          mkdir -p ~/.gnupg
+          chmod 700 ~/.gnupg
+
+          # Allow loopback pinentry for non-interactive signing.
+          printf 'allow-loopback-pinentry\n' >> ~/.gnupg/gpg-agent.conf
+          printf 'pinentry-mode loopback\n' >> ~/.gnupg/gpg.conf
+
+          echo "${GPG_PRIVATE_KEY}" | gpg --batch --import
+
+          # Mark the key as ultimately trusted (CI-only keyring).
+          echo "${GPG_FINGERPRINT}:6:" | gpg --batch --import-ownertrust
+
+          # Verify key exists.
+          gpg --batch --list-secret-keys --keyid-format LONG "${GPG_FINGERPRINT}" >/dev/null
+
+      - name: Setup SSH key (Launchpad upload)
+        shell: bash
+        env:
+          LAUNCHPAD_SSH_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${LAUNCHPAD_SSH_PRIVATE_KEY}" ]]; then
+            echo "ERROR: Missing secret LAUNCHPAD_SSH_PRIVATE_KEY (SSH key registered with Launchpad)." >&2
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          eval "$(ssh-agent -s)"
+          echo "${LAUNCHPAD_SSH_PRIVATE_KEY}" | tr -d '\r' | ssh-add - >/dev/null
+
+          # Trust Launchpad host key.
+          ssh-keyscan -H ppa.launchpad.net >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Build and upload (jammy + noble)
+        shell: bash
+        env:
+          DEBEMAIL: ${{ secrets.DEBEMAIL || 'team@ai-z.org' }}
+          DEBFULLNAME: ${{ secrets.DEBFULLNAME || 'AI-Z Team' }}
+          GPG_FINGERPRINT: ${{ secrets.LAUNCHPAD_GPG_FINGERPRINT }}
+          GPG_PASSPHRASE: ${{ secrets.LAUNCHPAD_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+
+          version="${TAG#v}"
+
+          build_one() {
+            local dist="$1"
+            local suffix="$2"
+            local debver="${version}-1~${suffix}"
+
+            echo "=== Building source for ${dist}: ${debver} ==="
+
+            local srcdir="$PWD/src-${dist}"
+            rm -rf "${srcdir}"
+            mkdir -p "${srcdir}"
+            rsync -a \
+              --exclude='.git' \
+              --exclude='build' \
+              --exclude='build-*' \
+              --exclude='vcpkg' \
+              --exclude='vcpkg_installed' \
+              ./ "${srcdir}/"
+
+            pushd "${srcdir}" >/dev/null
+
+            dch --distribution "${dist}" \
+                --force-distribution \
+                --newversion "${debver}" \
+                "Release ${version} for ${dist}."
+
+            # Build a signed source package (.dsc + .orig.tar.* + .debian.tar.* + .changes)
+            # Note: debuild will place outputs in the parent directory of the source tree.
+            export GPG_TTY=/dev/tty || true
+            if [[ -n "${GPG_PASSPHRASE:-}" ]]; then
+              export DEBSIGN_KEYID="${GPG_FINGERPRINT}"
+              export DEB_SIGN_KEYID="${GPG_FINGERPRINT}"
+              export GPG_PASSPHRASE
+            fi
+
+            # Use gpg directly via debuild/debsign; loopback pinentry is enabled above.
+            debuild -S -sa -k"${GPG_FINGERPRINT}" \
+              --no-lintian \
+              --preserve-envvar GPG_PASSPHRASE \
+              --preserve-envvar DEBEMAIL \
+              --preserve-envvar DEBFULLNAME
+
+            popd >/dev/null
+
+            local changes
+            changes="$(ls -1 "${srcdir}/.."/ai-z_*"${debver}"*_source.changes 2>/dev/null | head -n 1 || true)"
+            if [[ -z "${changes}" ]]; then
+              echo "ERROR: Could not find source .changes for ${dist} (${debver})." >&2
+              ls -la "${srcdir}/.." | sed -n '1,200p' >&2 || true
+              exit 1
+            fi
+
+            echo "Uploading: ${changes}"
+            dput "ppa:${PPA}" "${changes}"
+          }
+
+          build_one jammy ubuntu22.04.1
+          build_one noble ubuntu24.04.1
