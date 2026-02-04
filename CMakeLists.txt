@@ -106,8 +106,6 @@ set(AI_Z_CORE_SOURCES
   src/aiz/i18n.cpp
   src/aiz/config/config.cpp
   src/aiz/dyn/cuda.cpp
-  src/aiz/dyn/opencl.cpp
-  src/aiz/dyn/vulkan.cpp
   src/aiz/dyn/onnxruntime.cpp
   src/aiz/metrics/cpu_usage.cpp
   src/aiz/metrics/disk_bandwidth.cpp
@@ -125,10 +123,6 @@ set(AI_Z_CORE_SOURCES
   src/aiz/bench/bench_stub.cpp
   src/aiz/bench/report.cpp
   src/aiz/bench/pcie_bandwidth_cuda_pergpu.cpp
-  src/aiz/bench/pcie_bandwidth_opencl.cpp
-  src/aiz/bench/gpu_compute_opencl.cpp
-  src/aiz/bench/pcie_bandwidth_vulkan.cpp
-  src/aiz/bench/gpu_compute_vulkan.cpp
   src/aiz/bench/onnxruntime_bench.cpp
   src/aiz/bench/npu_bench.cpp
   src/aiz/metrics/gpu_sampler.cpp
@@ -348,38 +342,81 @@ if (AI_Z_ENABLE_CUDA)
 endif()
 
 if (AI_Z_ENABLE_OPENCL)
-  find_package(OpenCL QUIET)
-  if (NOT OpenCL_FOUND)
-    message(WARNING "AI_Z_ENABLE_OPENCL=ON but OpenCL not found; disabling OpenCL backend. Configure with -DAI_Z_ENABLE_OPENCL=OFF to silence.")
-    set(AI_Z_ENABLE_OPENCL OFF CACHE BOOL "Enable OpenCL benchmarks/backends" FORCE)
-  else()
-    # Runtime-loaded; only need headers at build time.
-    if (TARGET OpenCL::OpenCL)
-      get_target_property(AI_Z_OPENCL_INCLUDES OpenCL::OpenCL INTERFACE_INCLUDE_DIRECTORIES)
-      if (AI_Z_OPENCL_INCLUDES)
-        target_include_directories(aiz-core PUBLIC ${AI_Z_OPENCL_INCLUDES})
-      endif()
+  # Runtime-loaded; only need headers at build time.
+  set(AI_Z_VCPKG_INCLUDE_HINTS "")
+  if (DEFINED VCPKG_TARGET_TRIPLET)
+    list(APPEND AI_Z_VCPKG_INCLUDE_HINTS
+      "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/include"
+      "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/include"
+    )
+  endif()
+  if (DEFINED ENV{VCPKG_INSTALLED_DIR} AND DEFINED VCPKG_TARGET_TRIPLET)
+    list(APPEND AI_Z_VCPKG_INCLUDE_HINTS
+      "$ENV{VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include"
+      "$ENV{VCPKG_INSTALLED_DIR}/x64-windows/include"
+    )
+  endif()
+
+  find_path(AI_Z_OPENCL_INCLUDE_DIR
+    NAMES CL/cl.h OpenCL/opencl.h
+    HINTS ${AI_Z_VCPKG_INCLUDE_HINTS}
+    PATH_SUFFIXES include
+  )
+
+  if (NOT AI_Z_OPENCL_INCLUDE_DIR)
+    if (AI_Z_PLATFORM_WINDOWS)
+      message(FATAL_ERROR "AI_Z_ENABLE_OPENCL=ON but OpenCL headers were not found. On Windows we expect these via vcpkg (dependency: opencl).")
     else()
-      target_include_directories(aiz-core PUBLIC ${OpenCL_INCLUDE_DIRS})
+      message(WARNING "AI_Z_ENABLE_OPENCL=ON but OpenCL headers were not found; disabling OpenCL backend. Configure with -DAI_Z_ENABLE_OPENCL=OFF to silence.")
+      set(AI_Z_ENABLE_OPENCL OFF CACHE BOOL "Enable OpenCL benchmarks/backends" FORCE)
     endif()
+  else()
+    target_sources(aiz-core PRIVATE
+      src/aiz/dyn/opencl.cpp
+      src/aiz/bench/pcie_bandwidth_opencl.cpp
+      src/aiz/bench/gpu_compute_opencl.cpp
+    )
+    target_include_directories(aiz-core PUBLIC ${AI_Z_OPENCL_INCLUDE_DIR})
   endif()
 endif()
 
 if (AI_Z_ENABLE_VULKAN)
-  find_package(Vulkan QUIET)
-  if (NOT Vulkan_FOUND)
-    message(WARNING "AI_Z_ENABLE_VULKAN=ON but Vulkan not found; disabling Vulkan backend. Configure with -DAI_Z_ENABLE_VULKAN=OFF to silence.")
-    set(AI_Z_ENABLE_VULKAN OFF CACHE BOOL "Enable Vulkan benchmarks/backends" FORCE)
-  else()
-    # Runtime-loaded; only need headers at build time.
-    if (TARGET Vulkan::Vulkan)
-      get_target_property(AI_Z_VULKAN_INCLUDES Vulkan::Vulkan INTERFACE_INCLUDE_DIRECTORIES)
-      if (AI_Z_VULKAN_INCLUDES)
-        target_include_directories(aiz-core PUBLIC ${AI_Z_VULKAN_INCLUDES})
-      endif()
+  # Runtime-loaded; only need headers at build time (no Vulkan SDK required).
+  set(AI_Z_VCPKG_INCLUDE_HINTS "")
+  if (DEFINED VCPKG_TARGET_TRIPLET)
+    list(APPEND AI_Z_VCPKG_INCLUDE_HINTS
+      "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/include"
+      "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/include"
+    )
+  endif()
+  if (DEFINED ENV{VCPKG_INSTALLED_DIR} AND DEFINED VCPKG_TARGET_TRIPLET)
+    list(APPEND AI_Z_VCPKG_INCLUDE_HINTS
+      "$ENV{VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include"
+      "$ENV{VCPKG_INSTALLED_DIR}/x64-windows/include"
+    )
+  endif()
+
+  find_path(AI_Z_VULKAN_INCLUDE_DIR
+    NAMES vulkan/vulkan.h
+    HINTS ${AI_Z_VCPKG_INCLUDE_HINTS}
+    PATH_SUFFIXES include
+  )
+
+  if (NOT AI_Z_VULKAN_INCLUDE_DIR)
+    if (AI_Z_PLATFORM_WINDOWS)
+      message(FATAL_ERROR "AI_Z_ENABLE_VULKAN=ON but Vulkan headers were not found. On Windows we expect these via vcpkg (dependency: vulkan).")
     else()
-      target_include_directories(aiz-core PUBLIC ${Vulkan_INCLUDE_DIRS})
+      message(WARNING "AI_Z_ENABLE_VULKAN=ON but Vulkan headers were not found; disabling Vulkan backend. Configure with -DAI_Z_ENABLE_VULKAN=OFF to silence.")
+      set(AI_Z_ENABLE_VULKAN OFF CACHE BOOL "Enable Vulkan benchmarks/backends" FORCE)
     endif()
+  else()
+    target_sources(aiz-core PRIVATE
+      src/aiz/dyn/vulkan.cpp
+      src/aiz/bench/pcie_bandwidth_vulkan.cpp
+      src/aiz/bench/gpu_compute_vulkan.cpp
+    )
+
+    target_include_directories(aiz-core PUBLIC ${AI_Z_VULKAN_INCLUDE_DIR})
 
     # Optional: shaderc enables runtime GLSL->SPIR-V compilation for Vulkan compute benchmarks.
     # Install via distro package (e.g. libshaderc-dev) to enable.

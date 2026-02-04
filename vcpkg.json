@@ -5,6 +5,10 @@
   "dependencies": [
     "ftxui",
     {
+      "name": "vulkan-headers",
+      "platform": "windows"
+    },
+    {
       "name": "opencl",
       "platform": "windows"
     },

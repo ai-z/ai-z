@@ -27,7 +27,7 @@ jobs:
           cmake -S . -B build-ci -G "Visual Studio 17 2022" -A x64 `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
-            -DAI_Z_ENABLE_VULKAN=OFF `
+            -DAI_Z_ENABLE_VULKAN=ON `
             -DAI_Z_ENABLE_OPENCL=ON
 
       - name: Build ai-z

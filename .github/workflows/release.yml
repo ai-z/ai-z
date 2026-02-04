@@ -46,7 +46,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
             -DAI_Z_VERSION_OVERRIDE="$version" `
-            -DAI_Z_ENABLE_VULKAN=OFF `
+            -DAI_Z_ENABLE_VULKAN=ON `
             -DAI_Z_ENABLE_OPENCL=ON
 
       - name: Build
