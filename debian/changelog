@@ -1,4 +1,4 @@
-ai-z (0.1.0-1) unstable; urgency=medium
+ai-z (0.1.0-1~ubuntu22.04.1) jammy; urgency=medium
 
   * Initial Debian packaging for Launchpad/PPA builds.
   * Enable OpenCL and Vulkan backends by default.

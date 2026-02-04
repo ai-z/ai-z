@@ -30,7 +30,10 @@ endif()
 
 project(ai-z VERSION ${AI_Z_VERSION} LANGUAGES C CXX)
 
-# FTXUI is provided by vcpkg - no special Windows setup needed
+# FTXUI dependency
+#
+# - Preferred (offline-friendly): bundled source under third_party/ftxui
+# - Otherwise: a system/vcpkg-provided ftxui CONFIG package
 
 include(GNUInstallDirs)
 
@@ -56,19 +59,10 @@ endif()
 # Backend defaults
 #
 # These backends are runtime-loaded, but building the benchmarks requires headers.
-# We auto-enable them when headers are available to improve the out-of-box
-# experience on systems with the relevant dev packages installed.
-set(AI_Z_ENABLE_OPENCL_DEFAULT OFF)
-find_package(OpenCL QUIET)
-if (OpenCL_FOUND)
-  set(AI_Z_ENABLE_OPENCL_DEFAULT ON)
-endif()
-
-set(AI_Z_ENABLE_VULKAN_DEFAULT OFF)
-find_package(Vulkan QUIET)
-if (Vulkan_FOUND)
-  set(AI_Z_ENABLE_VULKAN_DEFAULT ON)
-endif()
+# Default them to ON for a better out-of-box experience; the configure step will
+# automatically disable them (with a warning) if headers aren't available.
+set(AI_Z_ENABLE_OPENCL_DEFAULT ON)
+set(AI_Z_ENABLE_VULKAN_DEFAULT ON)
 
 option(AI_Z_ENABLE_NVML "Enable NVIDIA NVML backend" ON)
 option(AI_Z_ENABLE_CUDA "Enable CUDA benchmarks/backends" ON)
@@ -80,6 +74,7 @@ option(AI_Z_ENABLE_LEVEL_ZERO "Enable Intel Level Zero backend" OFF)
 option(AI_Z_ENABLE_SYCL "Enable SYCL/oneAPI backend" OFF)
 option(AI_Z_ENABLE_WARNINGS "Enable -Wall/-Wextra style warnings" OFF)
 option(AI_Z_BUILD_CLI "Build the ai-z CLI executable (requires FTXUI)" ON)
+option(AI_Z_USE_BUNDLED_FTXUI "Use bundled FTXUI from third_party/ftxui when available" ON)
 
 # Optional: ONNX Runtime headers.
 # ai-z runtime-loads libonnxruntime via dlopen(), but a real ORT model-execution
@@ -290,8 +285,18 @@ if (AI_Z_BUILD_CLI)
     src/aiz/tui/ncurses_bootprobe.cpp
   )
 
-  # FTXUI TUI library (cross-platform, header-only with static libs)
-  find_package(ftxui CONFIG REQUIRED)
+  # FTXUI TUI library (cross-platform)
+  set(AI_Z_BUNDLED_FTXUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ftxui")
+  if (AI_Z_USE_BUNDLED_FTXUI AND EXISTS "${AI_Z_BUNDLED_FTXUI_DIR}/CMakeLists.txt")
+    # Keep FTXUI lean when bundled.
+    set(FTXUI_BUILD_EXAMPLES OFF CACHE BOOL "Build FTXUI examples" FORCE)
+    set(FTXUI_BUILD_DOCS OFF CACHE BOOL "Build FTXUI docs" FORCE)
+    set(FTXUI_BUILD_TESTS OFF CACHE BOOL "Build FTXUI tests" FORCE)
+    set(FTXUI_ENABLE_INSTALL OFF CACHE BOOL "Enable FTXUI install" FORCE)
+    add_subdirectory(third_party/ftxui EXCLUDE_FROM_ALL)
+  else()
+    find_package(ftxui CONFIG REQUIRED)
+  endif()
   target_link_libraries(ai-z PRIVATE ftxui::screen ftxui::dom ftxui::component)
 endif()
 

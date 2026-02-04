@@ -1,5 +1,8 @@
 #!/usr/bin/make -f
 
+DEB_VERSION := $(shell dpkg-parsechangelog -SVersion)
+DEB_VERSION_UPSTREAM := $(shell echo "$(DEB_VERSION)" | sed 's/-[^-]*$$//')
+
 %:
 	dh $@ --buildsystem=cmake --builddirectory=build
 
@@ -7,6 +10,8 @@ override_dh_auto_configure:
 	dh_auto_configure -- \
 		-DCMAKE_INSTALL_PREFIX=/usr \
 		-DBUILD_TESTING=OFF \
+		-DAI_Z_USE_BUNDLED_FTXUI=ON \
+		-DAI_Z_VERSION_OVERRIDE="$(DEB_VERSION_UPSTREAM)" \
 		-DAI_Z_ENABLE_CUDA=ON \
 		-DAI_Z_ENABLE_OPENCL=ON \
 		-DAI_Z_ENABLE_VULKAN=ON
